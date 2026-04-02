@@ -1,0 +1,153 @@
+.panel {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(242, 244, 246, 0.72));
+  backdrop-filter: blur(22px);
+}
+
+.panel[data-mode='docked'] {
+  border-left: 1px solid rgba(172, 179, 184, 0.14);
+}
+
+.header {
+  display: grid;
+  gap: 14px;
+  padding: 20px 20px 18px;
+  border-bottom: 1px solid rgba(172, 179, 184, 0.14);
+}
+
+.tabs {
+  display: flex;
+}
+
+.chrome,
+.chromeActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.chrome {
+  align-items: flex-start;
+}
+
+.collapseButton {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  border-radius: 12px;
+}
+
+.collapseButton :global(svg) {
+  transform: rotate(180deg);
+}
+
+.intro {
+  display: grid;
+  gap: 10px;
+}
+
+.heading,
+.subtitle,
+.statusText,
+.statusError,
+.promptExcerpt {
+  margin: 0;
+}
+
+.heading {
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.subtitle,
+.statusText,
+.statusError,
+.promptExcerpt,
+.issueDetails,
+.issueList {
+  color: var(--color-text-soft);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.body {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+  gap: 18px;
+  padding: 18px 20px 20px;
+}
+
+.statusCard,
+.promptCard {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid rgba(172, 179, 184, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.statusHeader,
+.promptSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.statusVersion,
+.promptMeta {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.statusIssues {
+  display: grid;
+  gap: 8px;
+}
+
+.issueList,
+.issueDetails {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.promptCard[open] {
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.promptSummary {
+  cursor: pointer;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+}
+
+.promptSummary::-webkit-details-marker {
+  display: none;
+}
+
+.promptContent {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 14px;
+  background: rgba(244, 246, 248, 0.84);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}

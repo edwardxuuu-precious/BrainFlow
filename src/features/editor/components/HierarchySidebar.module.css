@@ -1,0 +1,198 @@
+.sidebar {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  gap: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(242, 244, 246, 0.72));
+  backdrop-filter: blur(22px);
+}
+
+.sidebar[data-mode='docked'] {
+  border-right: 1px solid rgba(172, 179, 184, 0.14);
+}
+
+.top {
+  display: grid;
+  gap: 14px;
+  padding: 20px 18px 0;
+}
+
+.chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.collapseButton {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  border-radius: 12px;
+}
+
+.heading {
+  display: grid;
+  gap: 8px;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.02;
+}
+
+.subtitle {
+  margin: 0;
+  color: var(--color-text-soft);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 4px;
+}
+
+.treeList {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.treeItem {
+  min-width: 0;
+}
+
+.treeButton {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--color-text-soft);
+  text-align: left;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}
+
+.treeButton:hover {
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--color-text);
+}
+
+.treeButton[data-selected='true'] {
+  border-color: rgba(84, 95, 110, 0.16);
+  background: rgba(84, 95, 110, 0.08);
+  color: var(--color-text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.66);
+}
+
+.treeButton[data-active='true'] {
+  border-color: color-mix(in srgb, var(--color-accent), white 68%);
+  background: color-mix(in srgb, var(--color-accent), white 92%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 0 0 4px color-mix(in srgb, var(--color-accent), white 88%);
+}
+
+.treeButton[data-depth='0'] {
+  color: var(--color-text);
+}
+
+.treeTitleLine {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.treeTitle {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.noteIndicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  border: 1px solid rgba(172, 179, 184, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--color-text-soft);
+}
+
+.treeCount {
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.treeChildren {
+  margin-top: 4px;
+}
+
+.footer {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px 20px;
+  border-top: 1px solid rgba(172, 179, 184, 0.14);
+}
+
+.footerLabel {
+  display: flex;
+}
+
+.shortcutList {
+  display: grid;
+  gap: 10px;
+}
+
+.shortcutRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shortcutText {
+  color: var(--color-text-soft);
+  font-size: 12px;
+}
+
+.shortcutKey {
+  display: inline-flex;
+  min-width: 42px;
+  justify-content: center;
+  padding: 4px 8px;
+  border: 1px solid var(--color-line-soft);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.primaryAction {
+  width: 100%;
+  justify-content: flex-start;
+}

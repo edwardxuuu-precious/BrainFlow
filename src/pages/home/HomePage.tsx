@@ -1,15 +1,25 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { NetworkConstellation } from '../../components/illustrations/NetworkConstellation'
+import { Button, SearchField, StatusPill, SurfacePanel, ToolbarGroup } from '../../components/ui'
 import {
   documentService,
   getRecentDocumentId,
   setRecentDocumentId,
 } from '../../features/documents/document-service'
-import type { DocumentService, DocumentSummary } from '../../features/documents/types'
+import type { DocumentService, DocumentSummary, MindMapDocument } from '../../features/documents/types'
 import styles from './HomePage.module.css'
 
 interface HomePageProps {
   service?: DocumentService
+}
+
+function buildRenamedDocument(document: MindMapDocument, title: string): MindMapDocument {
+  return {
+    ...document,
+    title,
+    updatedAt: Date.now(),
+  }
 }
 
 function formatUpdatedAt(timestamp: number): string {
@@ -24,15 +34,25 @@ function formatUpdatedAt(timestamp: number): string {
 export function HomePage({ service = documentService }: HomePageProps) {
   const navigate = useNavigate()
   const [documents, setDocuments] = useState<DocumentSummary[]>([])
+  const [query, setQuery] = useState('')
   const [recentId, setRecentIdState] = useState<string | null>(() => getRecentDocumentId())
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState('')
+  const deferredQuery = useDeferredValue(query)
 
   const recentDocument = useMemo(
     () => documents.find((document) => document.id === recentId) ?? documents[0] ?? null,
     [documents, recentId],
   )
+  const filteredDocuments = useMemo(() => {
+    const normalizedQuery = deferredQuery.trim().toLowerCase()
+    if (!normalizedQuery) {
+      return documents
+    }
+
+    return documents.filter((document) => document.title.toLowerCase().includes(normalizedQuery))
+  }, [deferredQuery, documents])
 
   const refreshDocuments = useCallback(async () => {
     setLoading(true)
@@ -81,10 +101,7 @@ export function HomePage({ service = documentService }: HomePageProps) {
       return
     }
 
-    await service.saveDocument({
-      ...document,
-      title: normalizedTitle,
-    })
+    await service.saveDocument(buildRenamedDocument(document, normalizedTitle))
     await refreshDocuments()
   }
 
@@ -106,41 +123,82 @@ export function HomePage({ service = documentService }: HomePageProps) {
 
   return (
     <main className={styles.page}>
-      <header className={styles.header}>
-        <div className={styles.brandBlock}>
-          <span className={styles.eyebrow}>BrainFlow</span>
-          <h1 className={styles.title}>本地脑图工作台</h1>
-          <p className={styles.subtitle}>简洁的 XMind 式思路整理体验，文档默认只保存在你的浏览器里。</p>
-        </div>
-
-        <div className={styles.headerActions}>
-          {recentDocument ? (
-            <button
-              type="button"
-              className={styles.secondaryButton}
-              onClick={() => openDocument(recentDocument.id)}
-            >
-              继续最近文档
-            </button>
-          ) : null}
-          <button type="button" className={styles.primaryButton} onClick={handleCreate}>
-            新建脑图
-          </button>
+      <header className={styles.topbar}>
+        <div className={styles.topbarBrand}>
+          <span className={styles.wordmark}>BrainFlow</span>
+          <div className={styles.topbarMeta}>
+            <span className={styles.topbarLabel}>Document Workspace</span>
+            <StatusPill tone="soft">Local First</StatusPill>
+            <StatusPill tone="soft">{loading ? 'Loading' : `${documents.length} Docs`}</StatusPill>
+          </div>
         </div>
       </header>
 
+      <section className={styles.hero}>
+        <div className={styles.heroCopy}>
+          <StatusPill tone="accent">Editorial Workspace</StatusPill>
+          <div className={styles.heroText}>
+            <h1 className={styles.title}>把想法展开成结构</h1>
+            <p className={styles.subtitle}>
+              BrainFlow 是面向深度思考者的本地优先脑图工具。文档只留在你的浏览器里，界面则像一张安静、克制的工作台。
+            </p>
+          </div>
+          <ToolbarGroup className={styles.heroActions}>
+            <Button tone="primary" size="lg" iconStart="add" onClick={handleCreate}>
+              新建脑图
+            </Button>
+            {recentDocument ? (
+              <Button
+                tone="secondary"
+                size="lg"
+                iconStart="history"
+                onClick={() => openDocument(recentDocument.id)}
+              >
+                继续最近文档
+              </Button>
+            ) : null}
+          </ToolbarGroup>
+          <div className={styles.heroMeta}>
+            <div>
+              <span className={styles.heroMetaLabel}>本地存储</span>
+              <strong className={styles.heroMetaValue}>IndexedDB / localStorage</strong>
+            </div>
+            <div>
+              <span className={styles.heroMetaLabel}>工作台状态</span>
+              <strong className={styles.heroMetaValue}>{loading ? '正在准备…' : `${documents.length} 份脑图`}</strong>
+            </div>
+          </div>
+        </div>
+        <div className={styles.heroVisual}>
+          <NetworkConstellation />
+        </div>
+      </section>
+
       <section className={styles.workspace}>
-        <div className={styles.toolbar}>
+        <div className={styles.sectionHead}>
           <div>
-            <p className={styles.sectionLabel}>文档</p>
+            <p className={styles.sectionLabel}>最近文档</p>
             <h2 className={styles.sectionTitle}>
               {loading ? '正在读取本地文档…' : `共 ${documents.length} 份脑图`}
             </h2>
+            <p className={styles.sectionHint}>双击标题可编辑，点击整行即可进入编辑器。</p>
           </div>
-          <p className={styles.sectionHint}>双击标题可编辑，点击整行可直接进入编辑器。</p>
+          <SearchField
+            aria-label="搜索文档"
+            className={styles.searchField}
+            placeholder="搜索文档..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
         </div>
 
-        <div className={styles.list}>
+        <SurfacePanel frosted className={styles.list}>
+          <div className={styles.tableHead}>
+            <span>名称</span>
+            <span>主题数</span>
+            <span>最后修改</span>
+            <span className={styles.actionHeading}>操作</span>
+          </div>
           {loading ? (
             <div className={styles.emptyState}>正在读取本地文档…</div>
           ) : documents.length === 0 ? (
@@ -148,100 +206,129 @@ export function HomePage({ service = documentService }: HomePageProps) {
               <p className={styles.emptyTitle}>还没有脑图</p>
               <p className={styles.emptyText}>先创建一份新文档，中心主题和两条一级分支会自动准备好。</p>
             </div>
+          ) : filteredDocuments.length === 0 ? (
+            <div className={styles.emptyState}>
+              <p className={styles.emptyTitle}>没有匹配的文档</p>
+              <p className={styles.emptyText}>试试其他关键词，或者直接创建新的脑图工作流。</p>
+            </div>
           ) : (
-            documents.map((document) => {
+            filteredDocuments.map((document) => {
               const isEditing = editingId === document.id
+              const isRecent = recentDocument?.id === document.id
 
               return (
                 <article
                   key={document.id}
                   className={styles.row}
                   onClick={() => openDocument(document.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      openDocument(document.id)
+                    }
+                  }}
+                  tabIndex={0}
                 >
                   <div className={styles.rowMain}>
                     <span
                       className={styles.colorDot}
-                      style={{ backgroundColor: document.previewColor }}
+                      style={{ backgroundColor: document.previewColor, color: document.previewColor }}
                       aria-hidden="true"
                     />
                     <div className={styles.rowCopy}>
-                      {isEditing ? (
-                        <input
-                          aria-label="重命名脑图"
-                          className={styles.renameInput}
-                          value={draftTitle}
-                          autoFocus
-                          onChange={(event) => setDraftTitle(event.target.value)}
-                          onBlur={() => void commitRename(document.id)}
-                          onClick={(event) => event.stopPropagation()}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') {
-                              event.preventDefault()
-                              void commitRename(document.id)
-                            }
+                      <div className={styles.rowTitleLine}>
+                        {isEditing ? (
+                          <input
+                            aria-label="重命名脑图"
+                            className={styles.renameInput}
+                            value={draftTitle}
+                            autoFocus
+                            onChange={(event) => setDraftTitle(event.target.value)}
+                            onBlur={() => void commitRename(document.id)}
+                            onClick={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault()
+                                void commitRename(document.id)
+                              }
 
-                            if (event.key === 'Escape') {
-                              event.preventDefault()
-                              cancelRename()
-                            }
-                          }}
-                        />
-                      ) : (
-                        <button
-                          type="button"
-                          className={styles.nameButton}
-                          onDoubleClick={(event) => {
-                            event.stopPropagation()
-                            beginRename(document)
-                          }}
-                        >
-                          {document.title}
-                        </button>
-                      )}
+                              if (event.key === 'Escape') {
+                                event.preventDefault()
+                                cancelRename()
+                              }
+                            }}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            className={styles.nameButton}
+                            onDoubleClick={(event) => {
+                              event.stopPropagation()
+                              beginRename(document)
+                            }}
+                          >
+                            {document.title}
+                          </button>
+                        )}
+                        {isRecent ? <StatusPill tone="accent">最近打开</StatusPill> : null}
+                      </div>
                       <p className={styles.meta}>
                         {document.topicCount} 个主题 · 最近更新于 {formatUpdatedAt(document.updatedAt)}
                       </p>
                     </div>
                   </div>
+                  <div className={styles.rowMetric}>{document.topicCount}</div>
+                  <div className={styles.rowMetric}>{formatUpdatedAt(document.updatedAt)}</div>
 
                   <div className={styles.rowActions}>
-                    <button
-                      type="button"
-                      className={styles.actionButton}
+                    <Button
+                      tone="ghost"
+                      size="sm"
                       onClick={(event) => {
                         event.stopPropagation()
                         beginRename(document)
                       }}
                     >
                       重命名
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.actionButton}
+                    </Button>
+                    <Button
+                      tone="ghost"
+                      size="sm"
                       onClick={(event) => {
                         event.stopPropagation()
                         void handleDuplicate(document.id)
                       }}
                     >
                       复制
-                    </button>
-                    <button
-                      type="button"
-                      className={`${styles.actionButton} ${styles.dangerButton}`}
+                    </Button>
+                    <Button
+                      tone="danger"
+                      size="sm"
                       onClick={(event) => {
                         event.stopPropagation()
                         void handleDelete(document.id)
                       }}
                     >
                       删除
-                    </button>
+                    </Button>
                   </div>
                 </article>
               )
             })
           )}
-        </div>
+        </SurfacePanel>
       </section>
+
+      <footer className={styles.footer}>
+        <div className={styles.footerMeta}>
+          <span className={styles.footerLabel}>本地模式</span>
+          <span>自动保存 / 离线优先 / 无云依赖</span>
+        </div>
+        <div className={styles.footerMeta}>
+          <span className={styles.footerLabel}>工作区</span>
+          <span>{loading ? '载入中' : `${documents.length} 份文档 · 当前版本 Atelier Slate`}</span>
+        </div>
+      </footer>
     </main>
   )
 }

@@ -1,6 +1,7 @@
 import type {
   BranchSide,
   MindMapDocument,
+  MindMapEditorChromeState,
   MindMapViewport,
   TopicLayout,
   TopicNode,
@@ -275,9 +276,39 @@ export function renameDocumentTitle(doc: MindMapDocument, title: string): MindMa
 }
 
 export function updateViewport(doc: MindMapDocument, viewport: MindMapViewport): MindMapDocument {
+  if (doc.viewport.x === viewport.x && doc.viewport.y === viewport.y && doc.viewport.zoom === viewport.zoom) {
+    return doc
+  }
+
   const nextDoc = cloneDocument(doc)
   nextDoc.viewport = viewport
-  nextDoc.updatedAt = Date.now()
+  return nextDoc
+}
+
+export function updateWorkspaceSelection(
+  doc: MindMapDocument,
+  selectedTopicId: string | null,
+): MindMapDocument {
+  if (doc.workspace.selectedTopicId === selectedTopicId) {
+    return doc
+  }
+
+  const nextDoc = cloneDocument(doc)
+  nextDoc.workspace.selectedTopicId = selectedTopicId
+  return nextDoc
+}
+
+export function updateWorkspaceChrome(
+  doc: MindMapDocument,
+  side: keyof MindMapEditorChromeState,
+  open: boolean,
+): MindMapDocument {
+  if (doc.workspace.chrome[side] === open) {
+    return doc
+  }
+
+  const nextDoc = cloneDocument(doc)
+  nextDoc.workspace.chrome[side] = open
   return nextDoc
 }
 

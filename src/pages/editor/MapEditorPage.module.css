@@ -3,15 +3,16 @@
   min-height: 100vh;
   grid-template-rows: auto minmax(0, 1fr);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(244, 246, 249, 0.98)),
-    var(--app-bg);
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.96), transparent 18%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(239, 242, 245, 0.96));
+  color: var(--document-text, var(--color-text));
 }
 
 .loading {
   display: grid;
   min-height: 100vh;
   place-items: center;
-  color: var(--muted);
+  color: var(--color-muted);
 }
 
 .topbar {
@@ -19,73 +20,92 @@
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  min-height: 72px;
+  min-height: 76px;
   padding: 18px 24px;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-  background: rgba(255, 255, 255, 0.74);
-  backdrop-filter: blur(18px);
+  border-bottom: 1px solid rgba(172, 179, 184, 0.14);
+  background: rgba(249, 249, 251, 0.72);
+  backdrop-filter: blur(24px);
 }
 
 .topbarLeft,
 .topbarRight,
 .titleWrap,
 .canvasToolbar,
-.canvasHint {
+.canvasHint,
+.brandBlock {
   display: flex;
   align-items: center;
 }
 
 .topbarLeft,
-.topbarRight {
+.topbarRight,
+.brandBlock {
   gap: 12px;
+}
+
+.topbarLeft {
+  min-width: 0;
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-style: italic;
+  font-weight: 700;
 }
 
 .titleWrap {
   gap: 14px;
-}
-
-.titleInput,
-.ghostButton,
-.primaryButton {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.92);
-  color: var(--text);
+  min-width: 0;
 }
 
 .titleInput {
   min-width: 280px;
-  padding: 11px 14px;
-  font-size: 15px;
+  padding: 13px 16px;
+  border: 1px solid rgba(172, 179, 184, 0.18);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--document-text, var(--color-text));
+  font-family: var(--font-display);
+  font-size: 24px;
   font-weight: 600;
+  letter-spacing: -0.03em;
   outline: none;
 }
 
-.saveState {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.ghostButton,
-.primaryButton {
-  min-height: 40px;
-  padding: 0 14px;
-}
-
-.primaryButton {
-  border-color: rgba(37, 99, 235, 0.16);
-  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.08);
-}
-
-.ghostButton:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
-}
-
 .workspace {
+  position: relative;
   display: grid;
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr) 292px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.workspace[data-viewport-mode='tablet'] {
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+}
+
+.workspace[data-viewport-mode='mobile'] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.leftSidebar,
+.rightSidebar {
+  min-width: 0;
+  min-height: 0;
+}
+
+.leftSidebar {
+  width: 300px;
+}
+
+.rightSidebar {
+  width: 320px;
+}
+
+.leftRail,
+.rightRail {
+  z-index: 6;
 }
 
 .canvasColumn {
@@ -96,6 +116,14 @@
   padding: 18px 18px 20px 24px;
 }
 
+.workspace[data-viewport-mode='tablet'] .canvasColumn {
+  padding-inline: 14px;
+}
+
+.workspace[data-viewport-mode='mobile'] .canvasColumn {
+  padding: 18px;
+}
+
 .canvasToolbar {
   justify-content: space-between;
   gap: 16px;
@@ -103,22 +131,33 @@
 
 .canvasHint {
   gap: 12px;
-  color: var(--muted);
+  flex-wrap: wrap;
+  color: var(--document-muted, var(--color-text-soft));
   font-size: 13px;
 }
 
 .canvasFrame {
+  position: relative;
   overflow: hidden;
   min-height: 0;
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  border-radius: 28px;
-  background: rgba(255, 255, 255, 0.74);
-  box-shadow: 0 30px 60px rgba(15, 23, 42, 0.06);
+  border: 1px solid rgba(172, 179, 184, 0.16);
+  border-radius: 32px;
+  background: rgba(255, 255, 255, 0.68);
+  box-shadow: 0 36px 70px -42px rgba(45, 51, 56, 0.36);
 }
 
 .canvasFrame :global(.react-flow) {
   width: 100%;
   height: 100%;
+}
+
+.canvasFrame :global(.react-flow__edge path) {
+  stroke-linecap: round;
+}
+
+.canvasFrame :global(.react-flow__edge.selected path),
+.canvasFrame :global(.react-flow__edge:hover path) {
+  opacity: 0.9;
 }
 
 .canvasFrame :global(.react-flow__pane) {
@@ -129,36 +168,70 @@
   cursor: grabbing;
 }
 
-.inspector {
+.canvasControls {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(172, 179, 184, 0.18);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(18px);
+}
+
+.drawerBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border: 0;
+  background: rgba(70, 77, 84, 0.14);
+}
+
+.drawerShell {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 5;
   min-width: 0;
 }
 
-@media (max-width: 1120px) {
-  .workspace {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) auto;
-  }
-
-  .canvasColumn {
-    padding-right: 24px;
-  }
+.leftDrawer {
+  left: 44px;
+  width: 300px;
 }
 
-@media (max-width: 780px) {
+.rightDrawer {
+  right: 44px;
+  width: 320px;
+}
+
+.drawerPanel {
+  height: 100%;
+  box-shadow: 0 36px 90px -52px rgba(34, 39, 44, 0.58);
+}
+
+.mobileInspector {
+  min-height: 0;
+  max-height: min(46vh, 420px);
+  border-top: 1px solid rgba(172, 179, 184, 0.14);
+}
+
+@media (max-width: 1199px) {
   .topbar,
   .topbarLeft,
   .topbarRight,
   .titleWrap,
   .canvasToolbar,
-  .canvasHint {
+  .canvasHint,
+  .brandBlock {
     flex-wrap: wrap;
   }
+}
 
+@media (max-width: 779px) {
   .titleInput {
     min-width: 100%;
-  }
-
-  .canvasColumn {
-    padding: 18px;
   }
 }

@@ -1,0 +1,30 @@
+.rail {
+  display: flex;
+  width: 44px;
+  min-width: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 6px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(242, 244, 246, 0.72));
+  backdrop-filter: blur(18px);
+}
+
+.rail[data-side='left'] {
+  border-right: 1px solid rgba(172, 179, 184, 0.14);
+}
+
+.rail[data-side='right'] {
+  border-left: 1px solid rgba(172, 179, 184, 0.14);
+}
+
+.toggle {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  border-radius: 12px;
+}
+
+.rail[data-side='left'] .toggle :global(svg) {
+  transform: rotate(180deg);
+}

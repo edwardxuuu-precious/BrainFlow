@@ -1,14 +1,22 @@
 import type { MindMapTheme } from './types'
 
 export const defaultTheme: MindMapTheme = {
-  id: 'paper-amber',
-  name: 'Paper Amber',
-  canvas: '#f3ecdf',
-  surface: '#fffaf1',
-  panel: '#f7f1e7',
-  text: '#2d231a',
-  mutedText: '#73624e',
-  accent: '#b76522',
-  grid: 'rgba(183, 101, 34, 0.1)',
-  branchPalette: ['#b76522', '#b88a19', '#6c7f2d', '#277c75', '#3366b2', '#8b4ec2'],
+  id: 'cupertino-slate',
+  name: 'Cupertino Slate',
+  canvas: '#f9f9fb',
+  surface: '#ffffff',
+  panel: '#f2f4f6',
+  text: '#2d3338',
+  mutedText: '#596065',
+  accent: '#545f6e',
+  grid: 'rgba(172, 179, 184, 0.12)',
+  branchPalette: ['#545f6e', '#6d7785', '#7f6e63', '#546f6b', '#6f6a81', '#8b7467'],
+}
+
+export function normalizeMindMapTheme(theme?: Partial<MindMapTheme> | null): MindMapTheme {
+  return {
+    ...defaultTheme,
+    id: theme?.id ?? defaultTheme.id,
+    name: theme?.name ?? defaultTheme.name,
+  }
 }

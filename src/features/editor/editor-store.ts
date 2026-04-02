@@ -13,21 +13,33 @@ import {
   toggleCollapse,
   updateTopicNote,
   updateViewport,
+  updateWorkspaceChrome,
+  updateWorkspaceSelection,
 } from './tree-operations'
 
 const HISTORY_LIMIT = 50
 
+export type EditingSurface = 'canvas' | 'inspector'
+export type SidebarSide = 'left' | 'right'
+
 interface EditorState {
   document: MindMapDocument | null
-  selectedTopicId: string | null
+  activeTopicId: string | null
+  selectedTopicIds: string[]
   editingTopicId: string | null
+  editingSurface: EditingSurface | null
   history: MindMapDocument[]
   future: MindMapDocument[]
   isDirty: boolean
+  hasPendingWorkspaceSave: boolean
   lastSavedAt: number | null
   setDocument: (doc: MindMapDocument) => void
-  setSelectedTopicId: (topicId: string | null) => void
-  startEditing: (topicId: string) => void
+  setSelection: (topicIds: string[], activeTopicId?: string | null) => void
+  toggleTopicSelection: (topicId: string) => void
+  clearSelection: () => void
+  setSidebarOpen: (side: SidebarSide, open: boolean) => void
+  toggleSidebar: (side: SidebarSide) => void
+  startEditing: (topicId: string, surface?: EditingSurface) => void
   stopEditing: () => void
   renameDocument: (title: string) => void
   addChild: (topicId: string) => void
@@ -41,16 +53,113 @@ interface EditorState {
   setTopicOffset: (topicId: string, offsetX: number, offsetY: number) => void
   resetTopicOffset: (topicId: string) => void
   setViewport: (viewport: MindMapViewport) => void
+  applyExternalDocument: (doc: MindMapDocument, activeTopicId?: string | null) => void
   undo: () => void
   redo: () => void
   markSaved: () => void
 }
 
-function commitDocument(
+interface NormalizedSelection {
+  activeTopicId: string | null
+  selectedTopicIds: string[]
+}
+
+function uniqueTopicIds(topicIds: string[]): string[] {
+  return Array.from(new Set(topicIds.filter(Boolean)))
+}
+
+function normalizeSelection(
+  document: MindMapDocument,
+  selectedTopicIds: string[],
+  activeTopicId: string | null,
+): NormalizedSelection {
+  const filteredIds = uniqueTopicIds(selectedTopicIds).filter((topicId) => document.topics[topicId])
+  let nextActive = activeTopicId && document.topics[activeTopicId] ? activeTopicId : filteredIds.at(-1) ?? null
+
+  if (nextActive && !filteredIds.includes(nextActive)) {
+    filteredIds.push(nextActive)
+  }
+
+  if (!nextActive && filteredIds.length === 1) {
+    nextActive = filteredIds[0]
+  }
+
+  return {
+    activeTopicId: nextActive,
+    selectedTopicIds: filteredIds,
+  }
+}
+
+function syncWorkspaceSelection(
+  document: MindMapDocument,
+  activeTopicId: string | null,
+): MindMapDocument {
+  return updateWorkspaceSelection(document, activeTopicId)
+}
+
+function preserveWorkspaceState(
+  currentDocument: MindMapDocument,
+  nextDocument: MindMapDocument,
+  activeTopicId: string | null,
+): MindMapDocument {
+  const safeActive =
+    activeTopicId && nextDocument.topics[activeTopicId]
+      ? activeTopicId
+      : nextDocument.rootTopicId
+
+  const withWorkspace = syncWorkspaceSelection(nextDocument, safeActive)
+
+  if (
+    withWorkspace.viewport.x === currentDocument.viewport.x &&
+    withWorkspace.viewport.y === currentDocument.viewport.y &&
+    withWorkspace.viewport.zoom === currentDocument.viewport.zoom &&
+    withWorkspace.workspace.chrome.leftSidebarOpen === currentDocument.workspace.chrome.leftSidebarOpen &&
+    withWorkspace.workspace.chrome.rightSidebarOpen === currentDocument.workspace.chrome.rightSidebarOpen
+  ) {
+    return withWorkspace
+  }
+
+  return {
+    ...withWorkspace,
+    viewport: currentDocument.viewport,
+    workspace: {
+      ...withWorkspace.workspace,
+      selectedTopicId: safeActive,
+      chrome: currentDocument.workspace.chrome,
+    },
+  }
+}
+
+function commitContentDocument(
   state: EditorState,
   nextDocument: MindMapDocument,
-  options?: { selectedTopicId?: string | null; editingTopicId?: string | null; history?: boolean },
+  options?: {
+    activeTopicId?: string | null
+    selectedTopicIds?: string[]
+    editingTopicId?: string | null
+    editingSurface?: EditingSurface | null
+    history?: boolean
+  },
 ): Partial<EditorState> {
+  const selection = normalizeSelection(
+    nextDocument,
+    options?.selectedTopicIds ?? state.selectedTopicIds,
+    options?.activeTopicId ?? state.activeTopicId,
+  )
+  const nextEditingTopicId = options?.editingTopicId ?? state.editingTopicId
+  const nextEditingSurface = options?.editingSurface ?? state.editingSurface
+  const documentWithSelection = syncWorkspaceSelection(nextDocument, selection.activeTopicId)
+
+  if (
+    documentWithSelection === state.document &&
+    selection.activeTopicId === state.activeTopicId &&
+    selection.selectedTopicIds.join('|') === state.selectedTopicIds.join('|') &&
+    nextEditingTopicId === state.editingTopicId &&
+    nextEditingSurface === state.editingSurface
+  ) {
+    return {}
+  }
+
   const shouldTrackHistory = options?.history ?? true
   const nextHistory =
     shouldTrackHistory && state.document
@@ -58,38 +167,192 @@ function commitDocument(
       : state.history
 
   return {
-    document: nextDocument,
+    document: documentWithSelection,
     history: nextHistory,
     future: shouldTrackHistory ? [] : state.future,
-    selectedTopicId: options?.selectedTopicId ?? state.selectedTopicId,
-    editingTopicId: options?.editingTopicId ?? null,
+    activeTopicId: selection.activeTopicId,
+    selectedTopicIds: selection.selectedTopicIds,
+    editingTopicId: nextEditingTopicId,
+    editingSurface: nextEditingSurface,
     isDirty: true,
+    hasPendingWorkspaceSave: state.hasPendingWorkspaceSave,
+  }
+}
+
+function commitWorkspaceDocument(
+  state: EditorState,
+  nextDocument: MindMapDocument,
+  options?: {
+    activeTopicId?: string | null
+    selectedTopicIds?: string[]
+  },
+): Partial<EditorState> {
+  const selection = normalizeSelection(
+    nextDocument,
+    options?.selectedTopicIds ?? state.selectedTopicIds,
+    options?.activeTopicId ?? state.activeTopicId,
+  )
+  const documentWithSelection = syncWorkspaceSelection(nextDocument, selection.activeTopicId)
+
+  if (
+    documentWithSelection === state.document &&
+    selection.activeTopicId === state.activeTopicId &&
+    selection.selectedTopicIds.join('|') === state.selectedTopicIds.join('|')
+  ) {
+    return {}
+  }
+
+  return {
+    document: documentWithSelection,
+    activeTopicId: selection.activeTopicId,
+    selectedTopicIds: selection.selectedTopicIds,
+    isDirty: state.isDirty,
+    hasPendingWorkspaceSave: true,
   }
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
   document: null,
-  selectedTopicId: null,
+  activeTopicId: null,
+  selectedTopicIds: [],
   editingTopicId: null,
+  editingSurface: null,
   history: [],
   future: [],
   isDirty: false,
+  hasPendingWorkspaceSave: false,
   lastSavedAt: null,
 
   setDocument: (doc) =>
     set({
       document: doc,
-      selectedTopicId: doc.rootTopicId,
+      activeTopicId: doc.workspace.selectedTopicId,
+      selectedTopicIds: doc.workspace.selectedTopicId ? [doc.workspace.selectedTopicId] : [],
       editingTopicId: null,
+      editingSurface: null,
       history: [],
       future: [],
       isDirty: false,
+      hasPendingWorkspaceSave: false,
       lastSavedAt: doc.updatedAt,
     }),
 
-  setSelectedTopicId: (topicId) => set({ selectedTopicId: topicId }),
-  startEditing: (topicId) => set({ editingTopicId: topicId, selectedTopicId: topicId }),
-  stopEditing: () => set({ editingTopicId: null }),
+  setSelection: (topicIds, activeTopicId) =>
+    set((state) => {
+      if (!state.document) {
+        const uniqueIds = uniqueTopicIds(topicIds)
+        return {
+          activeTopicId: activeTopicId ?? uniqueIds.at(-1) ?? null,
+          selectedTopicIds: uniqueIds,
+        }
+      }
+
+      const nextDocument = updateWorkspaceSelection(state.document, activeTopicId ?? null)
+      return commitWorkspaceDocument(state, nextDocument, {
+        activeTopicId: activeTopicId ?? null,
+        selectedTopicIds: topicIds,
+      })
+    }),
+
+  toggleTopicSelection: (topicId) =>
+    set((state) => {
+      if (!state.document || !state.document.topics[topicId]) {
+        return {}
+      }
+
+      const isSelected = state.selectedTopicIds.includes(topicId)
+      const nextSelectedTopicIds = isSelected
+        ? state.selectedTopicIds.filter((currentId) => currentId !== topicId)
+        : [...state.selectedTopicIds, topicId]
+      const nextActiveTopicId = isSelected
+        ? state.activeTopicId === topicId
+          ? nextSelectedTopicIds.at(-1) ?? null
+          : state.activeTopicId
+        : topicId
+      const nextDocument = updateWorkspaceSelection(state.document, nextActiveTopicId)
+
+      return commitWorkspaceDocument(state, nextDocument, {
+        activeTopicId: nextActiveTopicId,
+        selectedTopicIds: nextSelectedTopicIds,
+      })
+    }),
+
+  clearSelection: () =>
+    set((state) => {
+      if (!state.document) {
+        return {
+          activeTopicId: null,
+          selectedTopicIds: [],
+        }
+      }
+
+      const nextDocument = updateWorkspaceSelection(state.document, null)
+      return commitWorkspaceDocument(state, nextDocument, {
+        activeTopicId: null,
+        selectedTopicIds: [],
+      })
+    }),
+
+  setSidebarOpen: (side, open) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const nextDocument = updateWorkspaceChrome(
+        state.document,
+        side === 'left' ? 'leftSidebarOpen' : 'rightSidebarOpen',
+        open,
+      )
+      if (nextDocument === state.document) {
+        return {}
+      }
+
+      return commitWorkspaceDocument(state, nextDocument)
+    }),
+
+  toggleSidebar: (side) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const chromeKey = side === 'left' ? 'leftSidebarOpen' : 'rightSidebarOpen'
+      const nextDocument = updateWorkspaceChrome(
+        state.document,
+        chromeKey,
+        !state.document.workspace.chrome[chromeKey],
+      )
+
+      return commitWorkspaceDocument(state, nextDocument)
+    }),
+
+  startEditing: (topicId, surface = 'canvas') =>
+    set((state) => {
+      if (!state.document) {
+        return {
+          activeTopicId: topicId,
+          selectedTopicIds: [topicId],
+          editingTopicId: topicId,
+          editingSurface: surface,
+        }
+      }
+
+      const nextDocument = updateWorkspaceSelection(state.document, topicId)
+
+      return {
+        document: nextDocument,
+        activeTopicId: topicId,
+        selectedTopicIds: [topicId],
+        editingTopicId: topicId,
+        editingSurface: surface,
+        isDirty: state.isDirty,
+        hasPendingWorkspaceSave:
+          state.hasPendingWorkspaceSave || nextDocument !== state.document,
+      }
+    }),
+
+  stopEditing: () => set({ editingTopicId: null, editingSurface: null }),
 
   renameDocument: (title) =>
     set((state) => {
@@ -97,7 +360,7 @@ export const useEditorStore = create<EditorState>((set) => ({
         return {}
       }
 
-      return commitDocument(state, renameDocumentTitle(state.document, title), { history: false })
+      return commitContentDocument(state, renameDocumentTitle(state.document, title), { history: false })
     }),
 
   addChild: (topicId) =>
@@ -107,9 +370,11 @@ export const useEditorStore = create<EditorState>((set) => ({
       }
 
       const result = addChild(state.document, topicId)
-      return commitDocument(state, result.document, {
-        selectedTopicId: result.topicId,
+      return commitContentDocument(state, result.document, {
+        activeTopicId: result.topicId,
+        selectedTopicIds: result.topicId ? [result.topicId] : [],
         editingTopicId: result.topicId,
+        editingSurface: 'canvas',
       })
     }),
 
@@ -120,9 +385,11 @@ export const useEditorStore = create<EditorState>((set) => ({
       }
 
       const result = addSibling(state.document, topicId)
-      return commitDocument(state, result.document, {
-        selectedTopicId: result.topicId,
+      return commitContentDocument(state, result.document, {
+        activeTopicId: result.topicId,
+        selectedTopicIds: result.topicId ? [result.topicId] : [],
         editingTopicId: result.topicId,
+        editingSurface: 'canvas',
       })
     }),
 
@@ -132,8 +399,13 @@ export const useEditorStore = create<EditorState>((set) => ({
         return {}
       }
 
-      return commitDocument(state, renameTopic(state.document, topicId, title), {
-        selectedTopicId: topicId,
+      const selectedTopicIds = state.selectedTopicIds.includes(topicId)
+        ? state.selectedTopicIds
+        : [topicId]
+
+      return commitContentDocument(state, renameTopic(state.document, topicId, title), {
+        activeTopicId: topicId,
+        selectedTopicIds,
         history: false,
       })
     }),
@@ -144,8 +416,13 @@ export const useEditorStore = create<EditorState>((set) => ({
         return {}
       }
 
-      return commitDocument(state, updateTopicNote(state.document, topicId, note), {
-        selectedTopicId: topicId,
+      const selectedTopicIds = state.selectedTopicIds.includes(topicId)
+        ? state.selectedTopicIds
+        : [topicId]
+
+      return commitContentDocument(state, updateTopicNote(state.document, topicId, note), {
+        activeTopicId: topicId,
+        selectedTopicIds,
         history: false,
       })
     }),
@@ -157,8 +434,11 @@ export const useEditorStore = create<EditorState>((set) => ({
       }
 
       const fallbackSelection = state.document.topics[topicId]?.parentId ?? state.document.rootTopicId
-      return commitDocument(state, removeTopic(state.document, topicId), {
-        selectedTopicId: fallbackSelection,
+      return commitContentDocument(state, removeTopic(state.document, topicId), {
+        activeTopicId: fallbackSelection,
+        selectedTopicIds: [fallbackSelection],
+        editingTopicId: null,
+        editingSurface: null,
       })
     }),
 
@@ -168,8 +448,8 @@ export const useEditorStore = create<EditorState>((set) => ({
         return {}
       }
 
-      return commitDocument(state, toggleCollapse(state.document, topicId), {
-        selectedTopicId: topicId,
+      return commitContentDocument(state, toggleCollapse(state.document, topicId), {
+        activeTopicId: topicId,
       })
     }),
 
@@ -179,8 +459,8 @@ export const useEditorStore = create<EditorState>((set) => ({
         return {}
       }
 
-      return commitDocument(state, moveTopic(state.document, topicId, targetParentId, targetIndex), {
-        selectedTopicId: topicId,
+      return commitContentDocument(state, moveTopic(state.document, topicId, targetParentId, targetIndex), {
+        activeTopicId: topicId,
       })
     }),
 
@@ -190,8 +470,8 @@ export const useEditorStore = create<EditorState>((set) => ({
         return {}
       }
 
-      return commitDocument(state, setBranchSide(state.document, topicId, side), {
-        selectedTopicId: topicId,
+      return commitContentDocument(state, setBranchSide(state.document, topicId, side), {
+        activeTopicId: topicId,
       })
     }),
 
@@ -201,8 +481,8 @@ export const useEditorStore = create<EditorState>((set) => ({
         return {}
       }
 
-      return commitDocument(state, setTopicOffset(state.document, topicId, offsetX, offsetY), {
-        selectedTopicId: topicId,
+      return commitContentDocument(state, setTopicOffset(state.document, topicId, offsetX, offsetY), {
+        activeTopicId: topicId,
       })
     }),
 
@@ -212,8 +492,8 @@ export const useEditorStore = create<EditorState>((set) => ({
         return {}
       }
 
-      return commitDocument(state, resetTopicOffset(state.document, topicId), {
-        selectedTopicId: topicId,
+      return commitContentDocument(state, resetTopicOffset(state.document, topicId), {
+        activeTopicId: topicId,
       })
     }),
 
@@ -223,7 +503,27 @@ export const useEditorStore = create<EditorState>((set) => ({
         return {}
       }
 
-      return commitDocument(state, updateViewport(state.document, viewport), { history: false })
+      const nextDocument = updateViewport(state.document, viewport)
+      if (nextDocument === state.document) {
+        return {}
+      }
+
+      return commitWorkspaceDocument(state, nextDocument)
+    }),
+
+  applyExternalDocument: (doc, activeTopicId) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const nextActiveTopicId = activeTopicId ?? state.activeTopicId
+      return commitContentDocument(state, doc, {
+        activeTopicId: nextActiveTopicId,
+        selectedTopicIds: nextActiveTopicId ? [nextActiveTopicId] : [],
+        editingTopicId: null,
+        editingSurface: null,
+      })
     }),
 
   undo: () =>
@@ -233,18 +533,26 @@ export const useEditorStore = create<EditorState>((set) => ({
       }
 
       const previous = state.history[state.history.length - 1]
-      const nextSelected =
-        state.selectedTopicId && previous.topics[state.selectedTopicId]
-          ? state.selectedTopicId
+      const nextActive =
+        state.activeTopicId && previous.topics[state.activeTopicId]
+          ? state.activeTopicId
           : previous.rootTopicId
+      const previousWithWorkspace = preserveWorkspaceState(
+        state.document,
+        structuredClone(previous),
+        nextActive,
+      )
 
       return {
-        document: structuredClone(previous),
+        document: previousWithWorkspace,
         history: state.history.slice(0, -1),
         future: [structuredClone(state.document), ...state.future].slice(0, HISTORY_LIMIT),
-        selectedTopicId: nextSelected,
+        activeTopicId: nextActive,
+        selectedTopicIds: nextActive ? [nextActive] : [],
         editingTopicId: null,
+        editingSurface: null,
         isDirty: true,
+        hasPendingWorkspaceSave: state.hasPendingWorkspaceSave,
       }
     }),
 
@@ -255,32 +563,43 @@ export const useEditorStore = create<EditorState>((set) => ({
       }
 
       const [nextDocument, ...rest] = state.future
-      const nextSelected =
-        state.selectedTopicId && nextDocument.topics[state.selectedTopicId]
-          ? state.selectedTopicId
+      const nextActive =
+        state.activeTopicId && nextDocument.topics[state.activeTopicId]
+          ? state.activeTopicId
           : nextDocument.rootTopicId
+      const redoneDocument = preserveWorkspaceState(
+        state.document,
+        structuredClone(nextDocument),
+        nextActive,
+      )
 
       return {
-        document: structuredClone(nextDocument),
+        document: redoneDocument,
         history: [...state.history, structuredClone(state.document)].slice(-HISTORY_LIMIT),
         future: rest,
-        selectedTopicId: nextSelected,
+        activeTopicId: nextActive,
+        selectedTopicIds: nextActive ? [nextActive] : [],
         editingTopicId: null,
+        editingSurface: null,
         isDirty: true,
+        hasPendingWorkspaceSave: state.hasPendingWorkspaceSave,
       }
     }),
 
-  markSaved: () => set({ isDirty: false, lastSavedAt: Date.now() }),
+  markSaved: () => set({ isDirty: false, hasPendingWorkspaceSave: false, lastSavedAt: Date.now() }),
 }))
 
 export function resetEditorStore(): void {
   useEditorStore.setState({
     document: null,
-    selectedTopicId: null,
+    activeTopicId: null,
+    selectedTopicIds: [],
     editingTopicId: null,
+    editingSurface: null,
     history: [],
     future: [],
     isDirty: false,
+    hasPendingWorkspaceSave: false,
     lastSavedAt: null,
   })
 }

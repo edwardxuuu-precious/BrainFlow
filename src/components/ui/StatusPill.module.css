@@ -1,0 +1,31 @@
+.pill {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.neutral {
+  border-color: rgba(172, 179, 184, 0.24);
+  background: rgba(255, 255, 255, 0.64);
+  color: var(--color-muted);
+}
+
+.accent {
+  border-color: rgba(84, 95, 110, 0.22);
+  background: rgba(84, 95, 110, 0.08);
+  color: var(--color-accent-strong);
+}
+
+.soft {
+  border-color: rgba(172, 179, 184, 0.16);
+  background: rgba(242, 244, 246, 0.92);
+  color: var(--color-text-soft);
+}

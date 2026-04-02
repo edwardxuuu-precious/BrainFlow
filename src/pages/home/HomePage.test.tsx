@@ -6,16 +6,30 @@ import type { DocumentService, MindMapDocument } from '../../features/documents/
 import { createMindMapDocument } from '../../features/documents/document-factory'
 import { HomePage } from './HomePage'
 
+const COPY = {
+  create: '\u65b0\u5efa\u8111\u56fe',
+  rename: '\u91cd\u547d\u540d',
+  renameInput: '\u91cd\u547d\u540d\u8111\u56fe',
+  search: '\u641c\u7d22\u6587\u6863',
+  noMatch: '\u6ca1\u6709\u5339\u914d\u7684\u6587\u6863',
+  board: '\u65b0\u7684\u4e3b\u9898\u677f',
+  roadmap: '\u8def\u7ebf\u56fe',
+  research: '\u7814\u7a76\u603b\u89c8',
+} as const
+
 function createFakeService(): DocumentService & { documents: MindMapDocument[] } {
-  const initial = createMindMapDocument('路线图')
+  const initial = createMindMapDocument(COPY.roadmap)
   initial.updatedAt = 100
 
-  const documents = [initial]
+  const research = createMindMapDocument(COPY.research)
+  research.updatedAt = 200
+
+  const documents = [research, initial]
 
   return {
     documents,
     async createDocument(title) {
-      const next = createMindMapDocument(title ?? '未命名脑图')
+      const next = createMindMapDocument(title ?? '\u672a\u547d\u540d\u8111\u56fe')
       documents.unshift(next)
       return next
     },
@@ -44,7 +58,18 @@ function createFakeService(): DocumentService & { documents: MindMapDocument[] }
       }
     },
     async duplicateDocument(id) {
-      return id
+      const document = documents.find((entry) => entry.id === id)
+      if (!document) {
+        return id
+      }
+
+      const duplicated = {
+        ...structuredClone(document),
+        id: `${document.id}-copy`,
+        title: `${document.title} \u526f\u672c`,
+      }
+      documents.unshift(duplicated)
+      return duplicated.id
     },
   }
 }
@@ -62,7 +87,7 @@ describe('HomePage', () => {
       </MemoryRouter>,
     )
 
-    await userEvent.click(await screen.findByRole('button', { name: '新建脑图' }))
+    await userEvent.click(await screen.findByRole('button', { name: COPY.create }))
 
     expect(await screen.findByText('editor opened')).toBeInTheDocument()
   })
@@ -77,13 +102,44 @@ describe('HomePage', () => {
       </MemoryRouter>,
     )
 
-    await userEvent.click(await screen.findByRole('button', { name: '重命名' }))
-    const input = screen.getByLabelText('重命名脑图')
+    await userEvent.click((await screen.findAllByRole('button', { name: COPY.rename }))[0])
+    const input = screen.getByLabelText(COPY.renameInput)
     await userEvent.clear(input)
-    await userEvent.type(input, '新的主题板')
+    await userEvent.type(input, COPY.board)
     fireEvent.blur(input)
 
     await waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1))
-    expect(saveSpy.mock.calls[0]?.[0].title).toBe('新的主题板')
+    expect(saveSpy.mock.calls[0]?.[0].title).toBe(COPY.board)
+  })
+
+  it('filters documents by local search query', async () => {
+    const service = createFakeService()
+
+    render(
+      <MemoryRouter>
+        <HomePage service={service} />
+      </MemoryRouter>,
+    )
+
+    const search = await screen.findByRole('searchbox', { name: COPY.search })
+    await userEvent.type(search, '\u7814\u7a76')
+
+    expect(screen.getByText(COPY.research)).toBeInTheDocument()
+    expect(screen.queryByText(COPY.roadmap)).not.toBeInTheDocument()
+  })
+
+  it('shows the empty-search state when nothing matches', async () => {
+    const service = createFakeService()
+
+    render(
+      <MemoryRouter>
+        <HomePage service={service} />
+      </MemoryRouter>,
+    )
+
+    const search = await screen.findByRole('searchbox', { name: COPY.search })
+    await userEvent.type(search, '\u4e0d\u5b58\u5728')
+
+    expect(screen.getByText(COPY.noMatch)).toBeInTheDocument()
   })
 })

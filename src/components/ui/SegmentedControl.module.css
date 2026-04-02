@@ -1,0 +1,40 @@
+.root {
+  display: grid;
+  gap: 8px;
+}
+
+.track {
+  display: grid;
+  grid-template-columns: repeat(var(--segment-count), minmax(0, 1fr));
+  gap: 8px;
+}
+
+.segment {
+  min-height: 42px;
+  border: 1px solid var(--color-line-soft);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--color-text-soft);
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
+}
+
+.segment:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.segment:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.active {
+  border-color: rgba(84, 95, 110, 0.22);
+  background: linear-gradient(180deg, var(--color-accent), var(--color-accent-strong));
+  color: var(--color-accent-ink);
+}

@@ -42,6 +42,16 @@ export interface MindMapViewport {
   zoom: number
 }
 
+export interface MindMapEditorChromeState {
+  leftSidebarOpen: boolean
+  rightSidebarOpen: boolean
+}
+
+export interface MindMapWorkspaceState {
+  selectedTopicId: string | null
+  chrome: MindMapEditorChromeState
+}
+
 export interface MindMapDocument {
   id: string
   title: string
@@ -50,6 +60,7 @@ export interface MindMapDocument {
   createdAt: number
   updatedAt: number
   viewport: MindMapViewport
+  workspace: MindMapWorkspaceState
   theme: MindMapTheme
 }
 

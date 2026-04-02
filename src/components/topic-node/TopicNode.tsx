@@ -2,6 +2,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { type CSSProperties, useEffect, useRef } from 'react'
 import { useEditorStore } from '../../features/editor/editor-store'
 import type { MindMapFlowNode } from '../../features/editor/layout'
+import { Icon } from '../ui'
 import styles from './TopicNode.module.css'
 
 function sourceHandleId(side: 'left' | 'right'): string {
@@ -13,17 +14,20 @@ function targetHandleId(side: 'left' | 'right'): string {
 }
 
 export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
-  const selectedTopicId = useEditorStore((state) => state.selectedTopicId)
+  const activeTopicId = useEditorStore((state) => state.activeTopicId)
+  const selectedTopicIds = useEditorStore((state) => state.selectedTopicIds)
   const editingTopicId = useEditorStore((state) => state.editingTopicId)
-  const setSelectedTopicId = useEditorStore((state) => state.setSelectedTopicId)
+  const editingSurface = useEditorStore((state) => state.editingSurface)
   const startEditing = useEditorStore((state) => state.startEditing)
   const stopEditing = useEditorStore((state) => state.stopEditing)
   const renameTopic = useEditorStore((state) => state.renameTopic)
   const toggleCollapse = useEditorStore((state) => state.toggleCollapse)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const isEditing = editingTopicId === id
-  const isSelected = selected || selectedTopicId === id
+  const isEditing = editingTopicId === id && editingSurface === 'canvas'
+  const isSelected = selected || selectedTopicIds.includes(id)
+  const isActive = activeTopicId === id
+  const hasNote = data.note.trim().length > 0
 
   useEffect(() => {
     if (!isEditing) {
@@ -44,11 +48,14 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
       className={[
         styles.node,
         isSelected ? styles.selected : '',
+        isActive ? styles.active : '',
+        isEditing ? styles.editing : '',
         data.isRoot ? styles.root : '',
       ].join(' ')}
+      data-selected={isSelected ? 'true' : 'false'}
+      data-active={isActive ? 'true' : 'false'}
       style={{ '--branch-color': data.branchColor } as CSSProperties}
-      onClick={() => setSelectedTopicId(id)}
-      onDoubleClick={() => startEditing(id)}
+      onDoubleClick={() => startEditing(id, 'canvas')}
     >
       <Handle id={targetHandleId('left')} type="target" position={Position.Left} className={styles.handle} />
       <Handle id={targetHandleId('right')} type="target" position={Position.Right} className={styles.handle} />
@@ -80,7 +87,19 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
             }}
           />
         ) : (
-          <div className={styles.title}>{data.title}</div>
+          <div className={styles.titleRow}>
+            <div className={styles.title}>{data.title}</div>
+            {hasNote ? (
+              <span
+                className={styles.noteIndicator}
+                data-note-indicator="true"
+                role="img"
+                aria-label="已添加备注"
+              >
+                <Icon name="note" size={12} strokeWidth={1.9} />
+              </span>
+            ) : null}
+          </div>
         )}
       </div>
 
@@ -94,7 +113,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
             toggleCollapse(id)
           }}
         >
-          {data.isCollapsed ? '+' : '-'}
+          {data.isCollapsed ? '+' : '−'}
         </button>
       ) : null}
     </div>

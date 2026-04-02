@@ -1,5 +1,13 @@
 import { createMindMapDocument } from './document-factory'
-import type { DocumentService, DocumentSummary, MindMapDocument } from './types'
+import { defaultTheme, normalizeMindMapTheme } from './theme'
+import type {
+  DocumentService,
+  DocumentSummary,
+  MindMapDocument,
+  MindMapEditorChromeState,
+  MindMapViewport,
+  MindMapWorkspaceState,
+} from './types'
 
 const DB_NAME = 'brainflow-documents-v1'
 const STORE_NAME = 'documents'
@@ -67,7 +75,7 @@ function toSummary(doc: MindMapDocument): DocumentSummary {
     title: doc.title,
     updatedAt: doc.updatedAt,
     topicCount: topicCount(doc),
-    previewColor: doc.theme.accent,
+    previewColor: normalizeDocument(doc).theme.accent,
   }
 }
 
@@ -83,7 +91,52 @@ function mergeSummary(summary: DocumentSummary): void {
 
 async function listAllDocumentsFromDatabase(): Promise<MindMapDocument[]> {
   const result = await withStore('readonly', (store) => store.getAll())
-  return (result ?? []) as MindMapDocument[]
+  return ((result ?? []) as MindMapDocument[]).map(normalizeDocument)
+}
+
+function normalizeSummary(summary: DocumentSummary): DocumentSummary {
+  return {
+    ...summary,
+    previewColor: defaultTheme.accent,
+  }
+}
+
+function normalizeViewport(viewport: MindMapDocument['viewport'] | undefined): MindMapViewport {
+  return {
+    x: viewport?.x ?? 0,
+    y: viewport?.y ?? 0,
+    zoom: viewport?.zoom ?? 1,
+  }
+}
+
+function normalizeChromeState(
+  chrome: MindMapWorkspaceState['chrome'] | undefined,
+): MindMapEditorChromeState {
+  return {
+    leftSidebarOpen: chrome?.leftSidebarOpen ?? true,
+    rightSidebarOpen: chrome?.rightSidebarOpen ?? true,
+  }
+}
+
+function normalizeWorkspace(doc: MindMapDocument): MindMapWorkspaceState {
+  const selectedTopicId =
+    doc.workspace?.selectedTopicId && doc.topics[doc.workspace.selectedTopicId]
+      ? doc.workspace.selectedTopicId
+      : doc.rootTopicId
+
+  return {
+    selectedTopicId,
+    chrome: normalizeChromeState(doc.workspace?.chrome),
+  }
+}
+
+function normalizeDocument(doc: MindMapDocument): MindMapDocument {
+  return {
+    ...doc,
+    viewport: normalizeViewport(doc.viewport),
+    workspace: normalizeWorkspace(doc),
+    theme: normalizeMindMapTheme(doc.theme),
+  }
 }
 
 export function getRecentDocumentId(): string | null {
@@ -108,7 +161,7 @@ export const documentService: DocumentService = {
   },
 
   async listDocuments() {
-    const index = sortSummaries(loadIndex())
+    const index = sortSummaries(loadIndex()).map(normalizeSummary)
     if (index.length > 0) {
       return index
     }
@@ -125,14 +178,11 @@ export const documentService: DocumentService = {
       return null
     }
 
-    return result as MindMapDocument
+    return normalizeDocument(result as MindMapDocument)
   },
 
   async saveDocument(doc) {
-    const normalizedDoc = {
-      ...doc,
-      updatedAt: Date.now(),
-    }
+    const normalizedDoc = normalizeDocument(doc)
 
     await withStore('readwrite', (store) => store.put(normalizedDoc))
     mergeSummary(toSummary(normalizedDoc))

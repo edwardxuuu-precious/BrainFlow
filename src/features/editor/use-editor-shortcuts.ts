@@ -24,7 +24,7 @@ export function useEditorShortcuts(): void {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const snapshot = getEditorSnapshot()
-      const selectedTopicId = snapshot.selectedTopicId
+      const activeTopicId = snapshot.activeTopicId
       const doc = snapshot.document
 
       if (!doc) {
@@ -46,28 +46,28 @@ export function useEditorShortcuts(): void {
         return
       }
 
-      if (!selectedTopicId) {
+      if (!activeTopicId) {
         return
       }
 
       switch (event.key) {
         case 'Tab':
           event.preventDefault()
-          addChild(selectedTopicId)
+          addChild(activeTopicId)
           break
         case 'Enter':
           event.preventDefault()
-          addSibling(selectedTopicId)
+          addSibling(activeTopicId)
           break
         case 'F2':
           event.preventDefault()
-          startEditing(selectedTopicId)
+          startEditing(activeTopicId, 'canvas')
           break
         case 'Backspace':
         case 'Delete':
-          if (selectedTopicId !== doc.rootTopicId) {
+          if (activeTopicId !== doc.rootTopicId) {
             event.preventDefault()
-            removeTopic(selectedTopicId)
+            removeTopic(activeTopicId)
           }
           break
         default:

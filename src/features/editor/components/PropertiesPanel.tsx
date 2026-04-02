@@ -1,113 +1,228 @@
+import type { ReactNode } from 'react'
+import { useEffect, useRef } from 'react'
+import { Button, IconButton, SegmentedControl, StatusPill, TextArea } from '../../../components/ui'
 import type { BranchSide, TopicNode } from '../../documents/types'
 import styles from './PropertiesPanel.module.css'
 
 interface PropertiesPanelProps {
   topic: TopicNode | null
+  selectionCount: number
   isRoot: boolean
   isFirstLevel: boolean
-  onRename: () => void
+  draftTitle: string
+  isInspectorEditing: boolean
+  onRenameStart: () => void
+  onRenameChange: (value: string) => void
+  onRenameCommit: () => void
+  onRenameCancel: () => void
   onAddChild: () => void
   onAddSibling: () => void
   onDelete: () => void
   onNoteChange: (note: string) => void
   onBranchSideChange: (side: BranchSide) => void
   onResetPosition: () => void
+  onCollapse?: () => void
+  id?: string
+  className?: string
+  mode?: 'docked' | 'drawer'
+  tabs?: ReactNode
 }
 
 const sideOptions: BranchSide[] = ['auto', 'left', 'right']
 
+function classNames(...values: Array<string | false | null | undefined>) {
+  return values.filter(Boolean).join(' ')
+}
+
 export function PropertiesPanel({
   topic,
+  selectionCount,
   isRoot,
   isFirstLevel,
-  onRename,
+  draftTitle,
+  isInspectorEditing,
+  onRenameStart,
+  onRenameChange,
+  onRenameCommit,
+  onRenameCancel,
   onAddChild,
   onAddSibling,
   onDelete,
   onNoteChange,
   onBranchSideChange,
   onResetPosition,
+  onCollapse,
+  id,
+  className,
+  mode = 'docked',
+  tabs,
 }: PropertiesPanelProps) {
-  if (!topic) {
-    return (
-      <section className={styles.panel}>
-        <div className={styles.placeholder}>
-          <span className={styles.sectionLabel}>Inspector</span>
-          <h2 className={styles.heading}>未选中主题</h2>
-          <p className={styles.empty}>点击节点后，可在这里编辑备注、调整一级分支方向，或重置手工位置。</p>
-        </div>
-      </section>
-    )
-  }
+  const titleInputRef = useRef<HTMLInputElement>(null)
+  const skipBlurActionRef = useRef(false)
+
+  useEffect(() => {
+    if (!isInspectorEditing) {
+      return
+    }
+
+    titleInputRef.current?.focus()
+    titleInputRef.current?.select()
+  }, [isInspectorEditing])
+
+  const isMultiSelection = selectionCount > 1
 
   return (
-    <section className={styles.panel}>
+    <section id={id} className={classNames(styles.panel, className)} data-mode={mode}>
       <div className={styles.header}>
-        <div>
-          <span className={styles.sectionLabel}>Inspector</span>
-          <h2 className={styles.heading}>{isRoot ? '中心主题' : isFirstLevel ? '一级分支' : '普通主题'}</h2>
-        </div>
-        <button type="button" className={styles.linkButton} onClick={onRename}>
-          重命名
-        </button>
-      </div>
-
-      <div className={styles.block}>
-        <label className={styles.label} htmlFor="topic-note">
-          备注
-        </label>
-        <textarea
-          id="topic-note"
-          value={topic.note}
-          className={styles.note}
-          rows={7}
-          placeholder="记录上下文、待办，或者补充说明。"
-          onChange={(event) => onNoteChange(event.target.value)}
-        />
-      </div>
-
-      <div className={styles.block}>
-        <span className={styles.label}>一级分支方向</span>
-        <div className={styles.segmented} role="group" aria-label="一级分支方向">
-          {sideOptions.map((side) => (
-            <button
-              key={side}
-              type="button"
-              disabled={!isFirstLevel}
-              className={`${styles.segment} ${topic.branchSide === side ? styles.segmentActive : ''}`}
-              onClick={() => onBranchSideChange(side)}
-            >
-              {side === 'auto' ? '自动' : side === 'left' ? '左侧' : '右侧'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className={styles.block}>
-        <span className={styles.label}>位置</span>
-        <button type="button" className={styles.secondaryButton} onClick={onResetPosition}>
-          重置位置
-        </button>
-      </div>
-
-      <div className={styles.block}>
-        <span className={styles.label}>操作</span>
-        <div className={styles.actions}>
-          <button type="button" className={styles.primaryButton} onClick={onAddChild}>
-            新增子主题
-          </button>
-          {!isRoot ? (
-            <button type="button" className={styles.secondaryButton} onClick={onAddSibling}>
-              新增同级主题
-            </button>
-          ) : null}
-          {!isRoot ? (
-            <button type="button" className={styles.secondaryButton} onClick={onDelete}>
-              删除主题
-            </button>
+        {tabs ? <div className={styles.tabs}>{tabs}</div> : null}
+        <div className={styles.chrome}>
+          <StatusPill tone="soft">Inspector</StatusPill>
+          {onCollapse ? (
+            <IconButton
+              label="隐藏右侧栏"
+              icon="back"
+              tone="secondary"
+              size="sm"
+              className={styles.collapseButton}
+              aria-controls={id}
+              aria-expanded
+              onClick={onCollapse}
+            />
           ) : null}
         </div>
+
+        {!topic ? (
+          <div className={styles.placeholder}>
+            <h2 className={styles.heading}>{isMultiSelection ? `已选择 ${selectionCount} 个节点` : '未选中主题'}</h2>
+            <p className={styles.empty}>
+              {isMultiSelection
+                ? '多选模式下不显示单节点编辑表单。可切换到 AI，直接把当前选区作为上下文。'
+                : '点击画布中的任意节点后，可在这里编辑备注、调整方向和重置位置。'}
+            </p>
+          </div>
+        ) : (
+          <div className={styles.titleRow}>
+            <div className={styles.titleBlock}>
+              {isInspectorEditing ? (
+                <input
+                  ref={titleInputRef}
+                  value={draftTitle}
+                  className={styles.headingInput}
+                  aria-label="编辑主题标题"
+                  onBlur={() => {
+                    if (skipBlurActionRef.current) {
+                      skipBlurActionRef.current = false
+                      return
+                    }
+
+                    onRenameCommit()
+                  }}
+                  onChange={(event) => onRenameChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      skipBlurActionRef.current = true
+                      onRenameCommit()
+                    }
+
+                    if (event.key === 'Escape') {
+                      event.preventDefault()
+                      skipBlurActionRef.current = true
+                      onRenameCancel()
+                    }
+                  }}
+                />
+              ) : (
+                <h2 className={styles.heading}>{topic.title}</h2>
+              )}
+              <p className={styles.topicType}>{isRoot ? '中心主题' : isFirstLevel ? '一级分支' : '普通主题'}</p>
+              {isInspectorEditing ? (
+                <p className={styles.renameHint}>正在编辑右侧标题，按 Enter 保存，Esc 取消。</p>
+              ) : null}
+            </div>
+
+            <div className={styles.titleActions}>
+              <Button
+                tone="secondary"
+                size="sm"
+                iconStart="edit"
+                aria-pressed={isInspectorEditing}
+                className={isInspectorEditing ? styles.renameButtonActive : undefined}
+                onClick={() => {
+                  if (isInspectorEditing) {
+                    titleInputRef.current?.focus()
+                    titleInputRef.current?.select()
+                    return
+                  }
+
+                  onRenameStart()
+                }}
+              >
+                重命名
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {topic && !isMultiSelection ? (
+        <>
+          <div className={styles.block}>
+            <label className={styles.label} htmlFor="topic-note">
+              备注
+            </label>
+            <TextArea
+              id="topic-note"
+              value={topic.note}
+              className={styles.note}
+              rows={7}
+              placeholder="记录上下文、待办，或者补充说明。"
+              onChange={(event) => onNoteChange(event.target.value)}
+            />
+          </div>
+
+          <div className={styles.block}>
+            <span className={styles.label}>一级分支方向</span>
+            <SegmentedControl
+              value={topic.branchSide}
+              ariaLabel="一级分支方向"
+              onChange={onBranchSideChange}
+              options={sideOptions.map((side) => ({
+                value: side,
+                label: side === 'auto' ? '自动' : side === 'left' ? '左侧' : '右侧',
+                disabled: !isFirstLevel,
+              }))}
+            />
+            {!isFirstLevel ? <p className={styles.helperText}>只有一级分支可以切换左右方向。</p> : null}
+          </div>
+
+          <div className={styles.block}>
+            <span className={styles.label}>位置</span>
+            <Button tone="secondary" iconStart="fitView" className={styles.actionButton} onClick={onResetPosition}>
+              重置位置
+            </Button>
+          </div>
+
+          <div className={styles.block}>
+            <span className={styles.label}>操作</span>
+            <div className={styles.actions}>
+              <Button tone="primary" iconStart="add" className={styles.actionButton} onClick={onAddChild}>
+                新增子主题
+              </Button>
+              {!isRoot ? (
+                <Button tone="secondary" iconStart="copy" className={styles.actionButton} onClick={onAddSibling}>
+                  新增同级主题
+                </Button>
+              ) : null}
+              {!isRoot ? (
+                <Button tone="danger" iconStart="delete" className={styles.actionButton} onClick={onDelete}>
+                  删除主题
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </>
+      ) : null}
     </section>
   )
 }

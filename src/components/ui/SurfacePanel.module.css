@@ -1,0 +1,18 @@
+.panel {
+  border: 1px solid var(--color-line-soft);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--shadow-soft);
+}
+
+.frosted {
+  backdrop-filter: blur(22px);
+}
+
+.muted {
+  background: var(--color-surface-muted);
+}
+
+.compact {
+  border-radius: 22px;
+}

@@ -51,14 +51,14 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function measureNode(title: string, isRoot: boolean): Pick<NodeMetrics, 'width' | 'height'> {
-  const baseWidth = isRoot ? 172 : 132
-  const maxWidth = isRoot ? 320 : 260
-  const characterWidth = isRoot ? 14 : 11
+  const baseWidth = isRoot ? 248 : 148
+  const maxWidth = isRoot ? 420 : 320
+  const characterWidth = isRoot ? 18 : 12
   const width = clamp(baseWidth + title.trim().length * characterWidth, baseWidth, maxWidth)
 
   return {
     width,
-    height: isRoot ? 58 : 44,
+    height: isRoot ? 82 : 54,
   }
 }
 
@@ -218,13 +218,13 @@ export function layoutMindMap(doc: MindMapDocument): LayoutResult {
           id: `${topicId}-${childId}`,
           source: topicId,
           target: childId,
-          type: 'smoothstep',
+          type: 'default',
           sourceHandle: branchDirection === 'left' ? 'source-left' : 'source-right',
           targetHandle: branchDirection === 'left' ? 'target-right' : 'target-left',
           style: {
             stroke: getBranchColor(childId),
             strokeWidth: topicId === doc.rootTopicId ? 2 : 1.5,
-            opacity: topicId === doc.rootTopicId ? 0.92 : 0.7,
+            opacity: topicId === doc.rootTopicId ? 0.82 : 0.58,
           },
         })
       })

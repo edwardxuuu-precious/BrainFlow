@@ -56,6 +56,13 @@ export function createMindMapDocument(title = '未命名脑图'): MindMapDocumen
       y: 0,
       zoom: 1,
     },
+    workspace: {
+      selectedTopicId: rootId,
+      chrome: {
+        leftSidebarOpen: true,
+        rightSidebarOpen: true,
+      },
+    },
     theme: defaultTheme,
   }
 }

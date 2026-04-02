@@ -1,99 +1,149 @@
 .panel {
   display: flex;
   height: 100%;
+  min-height: 0;
   flex-direction: column;
-  gap: 22px;
-  padding: 24px 20px;
-  border-left: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(14px);
+  gap: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(242, 244, 246, 0.72));
+  backdrop-filter: blur(22px);
 }
 
-.placeholder {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 6px;
+.panel[data-mode='docked'] {
+  border-left: 1px solid rgba(172, 179, 184, 0.14);
 }
 
 .header {
+  display: grid;
+  gap: 16px;
+  padding: 20px 20px 18px;
+  border-bottom: 1px solid rgba(172, 179, 184, 0.14);
+}
+
+.tabs {
   display: flex;
-  align-items: flex-start;
+}
+
+.chrome {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.sectionLabel,
-.label,
-.empty {
-  color: var(--muted);
+.collapseButton {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  border-radius: 12px;
 }
 
-.sectionLabel,
+.collapseButton :global(svg) {
+  transform: rotate(180deg);
+}
+
+.placeholder {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.titleBlock {
+  flex: 1;
+  min-width: 0;
+}
+
+.titleActions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
 .label {
+  color: var(--color-muted);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
 .heading {
-  margin: 6px 0 0;
-  color: var(--text);
-  font-size: 18px;
-  line-height: 1.2;
+  margin: 0;
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 0.98;
 }
 
-.empty {
+.headingInput {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(172, 179, 184, 0.22);
+  border-radius: 18px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 0.98;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease;
+}
+
+.headingInput:focus {
+  border-color: color-mix(in srgb, var(--color-accent), white 50%);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--color-accent), white 88%),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.topicType,
+.empty,
+.helperText,
+.renameHint {
   margin: 0;
-  font-size: 14px;
+  color: var(--color-text-soft);
+  font-size: 13px;
   line-height: 1.6;
+}
+
+.topicType {
+  margin-top: 10px;
+}
+
+.renameHint {
+  margin-top: 12px;
+  color: var(--color-text);
 }
 
 .block {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding: 18px 20px 0;
 }
 
-.linkButton,
-.segment,
-.primaryButton,
-.secondaryButton {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.92);
-  color: var(--text);
-}
-
-.linkButton {
-  padding: 8px 12px;
-}
-
-.segmented {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.segment {
-  padding: 9px 12px;
-}
-
-.segmentActive {
-  border-color: rgba(37, 99, 235, 0.22);
-  background: rgba(37, 99, 235, 0.08);
+.block + .block {
+  margin-top: 18px;
+  border-top: 1px solid rgba(172, 179, 184, 0.14);
 }
 
 .note {
-  min-height: 156px;
-  resize: vertical;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: #ffffff;
-  color: var(--text);
-  line-height: 1.6;
+  width: 100%;
 }
 
 .actions {
@@ -101,13 +151,15 @@
   gap: 10px;
 }
 
-.primaryButton,
-.secondaryButton {
-  padding: 11px 14px;
-  text-align: left;
+.actionButton {
+  justify-content: flex-start;
 }
 
-.primaryButton {
-  border-color: rgba(37, 99, 235, 0.2);
-  background: rgba(37, 99, 235, 0.08);
+.renameButtonActive {
+  border-color: color-mix(in srgb, var(--color-accent), white 66%);
+  background: color-mix(in srgb, var(--color-accent), white 90%);
+  color: var(--color-text);
+  box-shadow:
+    0 14px 28px -22px color-mix(in srgb, var(--color-accent), transparent 48%),
+    inset 0 1px 0 rgba(255, 255, 255, 0.88);
 }

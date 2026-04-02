@@ -3,42 +3,115 @@
   display: flex;
   min-height: 100%;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px 10px 14px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
+  gap: 10px;
+  padding: 11px 14px 11px 16px;
+  border: 1px solid rgba(172, 179, 184, 0.18);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 20px 34px -28px rgba(45, 51, 56, 0.34);
   cursor: grab;
   user-select: none;
   transition:
     border-color 140ms ease,
     box-shadow 140ms ease,
     background 140ms ease,
-    transform 140ms ease;
+    transform 180ms ease;
 }
 
 .node:hover {
-  border-color: rgba(15, 23, 42, 0.12);
+  border-color: rgba(84, 95, 110, 0.24);
+  transform: translateY(-1px);
+}
+
+.editing,
+.editing:hover {
+  border-color: color-mix(in srgb, var(--branch-color), white 38%);
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--branch-color), white 86%),
+    0 28px 40px -30px rgba(45, 51, 56, 0.42);
+  cursor: text;
+  transform: none;
 }
 
 .node:active {
   cursor: grabbing;
 }
 
-.selected {
-  border-color: color-mix(in srgb, var(--branch-color), white 48%);
+.editing:active {
+  cursor: text;
+}
+
+.selected,
+.selected:hover {
+  border-color: color-mix(in srgb, var(--branch-color), #455466 18%);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--branch-color), white 92%),
+      color-mix(in srgb, var(--branch-color), white 96%)
+    ),
+    #ffffff;
   box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--branch-color), white 88%),
-    0 14px 28px rgba(15, 23, 42, 0.06);
-  background: #ffffff;
+    0 0 0 1px color-mix(in srgb, var(--branch-color), white 54%),
+    0 0 0 6px color-mix(in srgb, var(--branch-color), white 84%),
+    0 30px 42px -28px rgba(45, 51, 56, 0.4);
+  transform: none;
+}
+
+.active,
+.active:hover {
+  border-color: color-mix(in srgb, var(--branch-color), #334155 8%);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--branch-color), white 88%),
+      color-mix(in srgb, var(--branch-color), white 94%)
+    ),
+    #ffffff;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--branch-color), white 42%),
+    0 0 0 8px color-mix(in srgb, var(--branch-color), white 80%),
+    0 34px 46px -28px rgba(45, 51, 56, 0.46);
+}
+
+.root.selected,
+.root.selected:hover {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--branch-color), white 94%),
+      rgba(248, 250, 252, 0.98)
+    ),
+    linear-gradient(135deg, rgba(84, 95, 110, 0.08), transparent 46%);
+}
+
+.editing.selected,
+.editing.selected:hover {
+  border-color: color-mix(in srgb, var(--branch-color), #334155 10%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--branch-color), white 48%),
+    0 0 0 7px color-mix(in srgb, var(--branch-color), white 82%),
+    0 32px 44px -28px rgba(45, 51, 56, 0.44);
+}
+
+.editing.active,
+.editing.active:hover {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--branch-color), white 40%),
+    0 0 0 9px color-mix(in srgb, var(--branch-color), white 78%),
+    0 34px 46px -26px rgba(45, 51, 56, 0.48);
 }
 
 .root {
-  padding: 12px 14px 12px 16px;
-  border-color: rgba(15, 23, 42, 0.1);
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98));
+  padding: 16px 18px 16px 20px;
+  border-color: rgba(84, 95, 110, 0.18);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98)),
+    linear-gradient(135deg, rgba(84, 95, 110, 0.06), transparent 46%);
+  box-shadow:
+    0 24px 42px -30px rgba(45, 51, 56, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
 }
 
 .content {
@@ -46,64 +119,98 @@
   min-width: 0;
   flex: 1;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
 .badge {
   color: color-mix(in srgb, var(--branch-color), #475569 38%);
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
 }
 
 .title {
   overflow: hidden;
-  color: var(--text);
+  color: var(--color-text);
   font-size: 15px;
-  font-weight: 500;
-  line-height: 1.25;
+  font-weight: 600;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .root .title {
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 32px;
   font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.noteIndicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid color-mix(in srgb, var(--branch-color), white 64%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--branch-color), white 90%);
+  color: color-mix(in srgb, var(--branch-color), #5b6470 48%);
 }
 
 .input {
   width: 100%;
-  padding: 0;
-  border: none;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  border: 1px solid transparent;
+  border-radius: 12px;
   outline: none;
-  background: transparent;
-  color: var(--text);
+  background: color-mix(in srgb, var(--branch-color), white 94%);
+  color: var(--color-text);
   font-size: 15px;
   line-height: 1.25;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--branch-color), white 74%);
+}
+
+.input:focus {
+  border-color: color-mix(in srgb, var(--branch-color), white 54%);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--branch-color), white 88%),
+    inset 0 0 0 1px color-mix(in srgb, var(--branch-color), white 54%);
 }
 
 .root .input {
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 32px;
   font-weight: 600;
 }
 
 .collapse {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  border: 1px solid rgba(172, 179, 184, 0.24);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--muted);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--color-text-soft);
+  font-size: 16px;
   line-height: 1;
 }
 
 .collapse:hover {
-  border-color: rgba(15, 23, 42, 0.12);
-  color: var(--text);
+  border-color: rgba(84, 95, 110, 0.24);
+  color: var(--color-text);
 }
 
 .handle {
