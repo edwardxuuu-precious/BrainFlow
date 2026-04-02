@@ -1,0 +1,113 @@
+.panel {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  gap: 22px;
+  padding: 24px 20px;
+  border-left: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px);
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sectionLabel,
+.label,
+.empty {
+  color: var(--muted);
+}
+
+.sectionLabel,
+.label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.heading {
+  margin: 6px 0 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.empty {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.linkButton,
+.segment,
+.primaryButton,
+.secondaryButton {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+}
+
+.linkButton {
+  padding: 8px 12px;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.segment {
+  padding: 9px 12px;
+}
+
+.segmentActive {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.note {
+  min-height: 156px;
+  resize: vertical;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.actions {
+  display: grid;
+  gap: 10px;
+}
+
+.primaryButton,
+.secondaryButton {
+  padding: 11px 14px;
+  text-align: left;
+}
+
+.primaryButton {
+  border-color: rgba(37, 99, 235, 0.2);
+  background: rgba(37, 99, 235, 0.08);
+}

@@ -1,0 +1,214 @@
+.page {
+  min-height: 100vh;
+  padding: 40px;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.96), transparent 24%),
+    linear-gradient(180deg, #fafbfc 0%, #f3f5f8 100%);
+}
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 0 auto 28px;
+  max-width: 1180px;
+}
+
+.brandBlock {
+  display: grid;
+  gap: 10px;
+}
+
+.eyebrow,
+.sectionLabel,
+.sectionHint {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+.eyebrow,
+.sectionLabel {
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.title,
+.sectionTitle,
+.emptyTitle {
+  margin: 0;
+  color: var(--text);
+}
+
+.title {
+  font-size: clamp(28px, 4vw, 42px);
+  font-weight: 700;
+  line-height: 1.04;
+}
+
+.subtitle,
+.emptyText,
+.meta {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.subtitle {
+  max-width: 680px;
+  font-size: 15px;
+}
+
+.headerActions {
+  display: flex;
+  gap: 12px;
+}
+
+.primaryButton,
+.secondaryButton,
+.actionButton,
+.nameButton,
+.renameInput {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+}
+
+.primaryButton,
+.secondaryButton {
+  min-height: 44px;
+  padding: 0 16px;
+  backdrop-filter: blur(14px);
+}
+
+.primaryButton {
+  border-color: rgba(37, 99, 235, 0.16);
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(37, 99, 235, 0.08);
+}
+
+.workspace {
+  display: grid;
+  gap: 18px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.sectionTitle {
+  margin-top: 8px;
+  font-size: 22px;
+}
+
+.sectionHint {
+  margin: 0;
+}
+
+.list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 22px;
+  transition: background 140ms ease;
+}
+
+.row + .row {
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.row:hover {
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.rowMain {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 16px;
+}
+
+.colorDot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+
+.rowCopy {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.nameButton {
+  justify-self: start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.renameInput {
+  min-width: 240px;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.rowActions {
+  display: flex;
+  gap: 10px;
+}
+
+.actionButton {
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.dangerButton {
+  color: #b42318;
+}
+
+.emptyState {
+  display: grid;
+  gap: 8px;
+  padding: 56px 22px;
+  place-items: center;
+  text-align: center;
+}
+
+@media (max-width: 960px) {
+  .page {
+    padding: 24px;
+  }
+
+  .header,
+  .toolbar,
+  .row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .headerActions,
+  .rowActions {
+    flex-wrap: wrap;
+  }
+}
