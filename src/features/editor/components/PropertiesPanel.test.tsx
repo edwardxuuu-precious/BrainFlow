@@ -17,6 +17,9 @@ const COPY = {
   renameField: '编辑主题标题',
   renameHint: '正在编辑右侧标题，按 Enter 保存，Esc 取消。',
   collapse: '隐藏右侧栏',
+  allowAiEdit: '允许 AI 修改此节点',
+  lockSelected: '锁定所选未锁定节点',
+  unlockSelected: '解锁所选已锁定节点',
 } as const
 
 function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>) {
@@ -31,6 +34,8 @@ function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>
         id="inspector-sidebar"
         topic={firstBranch}
         selectionCount={1}
+        selectedLockedCount={0}
+        selectedUnlockedCount={1}
         isRoot={false}
         isFirstLevel
         draftTitle={firstBranch.title}
@@ -46,6 +51,8 @@ function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>
         onBranchSideChange={vi.fn()}
         onResetPosition={vi.fn()}
         onToggleAiLock={vi.fn()}
+        onLockSelected={vi.fn()}
+        onUnlockSelected={vi.fn()}
         onCollapse={vi.fn()}
         {...overrides}
       />,
@@ -146,7 +153,10 @@ describe('PropertiesPanel', () => {
     const lockSpy = vi.fn()
     renderPanel({ onToggleAiLock: lockSpy })
 
-    await userEvent.click(screen.getByRole('button', { name: '允许 AI 修改此节点' }))
+    expect(
+      screen.getByText(/这是 AI 写保护，不影响人工直接编辑。/),
+    ).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: COPY.allowAiEdit }))
 
     expect(lockSpy).toHaveBeenCalledWith(true)
   })
@@ -163,13 +173,27 @@ describe('PropertiesPanel', () => {
     expect(deleteSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('shows a multi-selection summary instead of single-topic controls', () => {
+  it('shows multi-selection lock stats and bulk actions', async () => {
+    const lockSelectedSpy = vi.fn()
+    const unlockSelectedSpy = vi.fn()
+
     renderPanel({
       topic: null,
       selectionCount: 3,
+      selectedLockedCount: 1,
+      selectedUnlockedCount: 2,
+      onLockSelected: lockSelectedSpy,
+      onUnlockSelected: unlockSelectedSpy,
     })
 
     expect(screen.getByRole('heading', { name: '已选择 3 个节点' })).toBeInTheDocument()
+    expect(screen.getByText('其中 1 个已锁定，2 个未锁定')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: COPY.lockSelected }))
+    await userEvent.click(screen.getByRole('button', { name: COPY.unlockSelected }))
+
+    expect(lockSelectedSpy).toHaveBeenCalledTimes(1)
+    expect(unlockSelectedSpy).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('textbox', { name: '备注' })).not.toBeInTheDocument()
   })
 })

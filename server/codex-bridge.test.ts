@@ -49,13 +49,58 @@ const baseRequest: AiChatRequest = {
   baseDocumentUpdatedAt: 1,
 }
 
+function createPromptStore() {
+  return {
+    loadPrompt: vi.fn().mockResolvedValue({
+      summary: 'summary',
+      version: 'version',
+      fullPrompt: 'prompt',
+    }),
+    getSettings: vi.fn(),
+    saveSettings: vi.fn(),
+    resetSettings: vi.fn(),
+  }
+}
+
 describe('createCodexBridge', () => {
+  it('streams natural-language chat first and forwards assistant deltas when available', async () => {
+    const executeMessage = vi.fn().mockImplementation(async (_prompt, options) => {
+      options?.onEvent?.({
+        type: 'item.delta',
+        item: {
+          text_delta: '正在输出的片段',
+        },
+      })
+
+      return '完整自然语言回答'
+    })
+
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockResolvedValue(readyStatus),
+        execute: vi.fn(),
+        executeMessage,
+      },
+      promptStore: createPromptStore(),
+    })
+
+    const onAssistantDelta = vi.fn()
+    const result = await bridge.streamChat(baseRequest, { onAssistantDelta })
+
+    expect(result).toEqual({
+      assistantMessage: '完整自然语言回答',
+      emittedDelta: true,
+    })
+    expect(onAssistantDelta).toHaveBeenCalledWith('正在输出的片段')
+    expect(executeMessage).toHaveBeenCalledTimes(1)
+  })
+
   it('passes a wide output schema that remains compatible with current codex exec validation', async () => {
     const execute = vi.fn().mockResolvedValue(
       JSON.stringify({
-        assistantMessage: 'ok',
         needsMoreContext: false,
         contextRequest: [],
+        warnings: [],
         proposal: {
           summary: 'no-op',
           operations: [],
@@ -67,22 +112,15 @@ describe('createCodexBridge', () => {
       runner: {
         getStatus: vi.fn().mockResolvedValue(readyStatus),
         execute,
+        executeMessage: vi.fn(),
       },
-      promptStore: {
-        loadPrompt: vi.fn().mockResolvedValue({
-          summary: 'summary',
-          version: 'version',
-          fullPrompt: 'prompt',
-        }),
-        getSettings: vi.fn(),
-        saveSettings: vi.fn(),
-        resetSettings: vi.fn(),
-      },
+      promptStore: createPromptStore(),
     })
 
-    await bridge.chat(baseRequest)
+    await bridge.planChanges(baseRequest, '自然语言回答')
 
     const schema = execute.mock.calls[0][1] as {
+      required: string[]
       properties: {
         proposal: {
           type: string[]
@@ -104,6 +142,7 @@ describe('createCodexBridge', () => {
     }
 
     const operationSchema = schema.properties.proposal.properties.operations.items
+    expect(schema.required).toEqual(['needsMoreContext', 'contextRequest', 'warnings', 'proposal'])
     expect(schema.properties.proposal.type).toEqual(['object', 'null'])
     expect(schema.properties.proposal.required).toEqual(['id', 'summary', 'operations'])
     expect(operationSchema.properties.type.type).toEqual(['string', 'null'])
@@ -138,20 +177,12 @@ describe('createCodexBridge', () => {
             },
           }),
         ),
+        executeMessage: vi.fn(),
       },
-      promptStore: {
-        loadPrompt: vi.fn().mockResolvedValue({
-          summary: 'summary',
-          version: 'version',
-          fullPrompt: 'prompt',
-        }),
-        getSettings: vi.fn(),
-        saveSettings: vi.fn(),
-        resetSettings: vi.fn(),
-      },
+      promptStore: createPromptStore(),
     })
 
-    await expect(bridge.chat(baseRequest)).rejects.toMatchObject({
+    await expect(bridge.planChanges(baseRequest, '自然语言回答')).rejects.toMatchObject({
       code: 'schema_invalid',
       message: '本地 AI bridge 的输出 schema 与当前 Codex CLI 不兼容。',
     } satisfies Partial<CodexBridgeError>)

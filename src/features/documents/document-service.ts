@@ -119,6 +119,16 @@ function normalizeChromeState(
   }
 }
 
+function normalizeHierarchyCollapsedTopicIds(
+  doc: MindMapDocument,
+  collapsedTopicIds: string[] | undefined,
+): string[] {
+  return Array.from(new Set(collapsedTopicIds ?? [])).filter((topicId) => {
+    const topic = doc.topics[topicId]
+    return !!topic && topic.childIds.length > 0
+  })
+}
+
 function normalizeWorkspace(doc: MindMapDocument): MindMapWorkspaceState {
   const selectedTopicId =
     doc.workspace?.selectedTopicId && doc.topics[doc.workspace.selectedTopicId]
@@ -128,6 +138,7 @@ function normalizeWorkspace(doc: MindMapDocument): MindMapWorkspaceState {
   return {
     selectedTopicId,
     chrome: normalizeChromeState(doc.workspace?.chrome),
+    hierarchyCollapsedTopicIds: normalizeHierarchyCollapsedTopicIds(doc, doc.workspace?.hierarchyCollapsedTopicIds),
   }
 }
 

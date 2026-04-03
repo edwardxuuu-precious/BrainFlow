@@ -66,6 +66,7 @@ describe('editor-store', () => {
       leftSidebarOpen: false,
       rightSidebarOpen: false,
     })
+    expect(useEditorStore.getState().document?.workspace.hierarchyCollapsedTopicIds).toEqual([])
     expect(useEditorStore.getState().history).toHaveLength(0)
     expect(useEditorStore.getState().isDirty).toBe(false)
     expect(useEditorStore.getState().hasPendingWorkspaceSave).toBe(true)
@@ -88,6 +89,7 @@ describe('editor-store', () => {
     })
     expect(useEditorStore.getState().document?.workspace.selectedTopicId).toBe(branchId)
     expect(useEditorStore.getState().document?.workspace.chrome.leftSidebarOpen).toBe(false)
+    expect(useEditorStore.getState().document?.workspace.hierarchyCollapsedTopicIds).toEqual([])
     expect(useEditorStore.getState().document?.viewport).toEqual({ x: 18, y: -12, zoom: 1.15 })
 
     useEditorStore.getState().redo()
@@ -97,7 +99,75 @@ describe('editor-store', () => {
     })
     expect(useEditorStore.getState().document?.workspace.selectedTopicId).toBe(branchId)
     expect(useEditorStore.getState().document?.workspace.chrome.leftSidebarOpen).toBe(false)
+    expect(useEditorStore.getState().document?.workspace.hierarchyCollapsedTopicIds).toEqual([])
     expect(useEditorStore.getState().document?.viewport).toEqual({ x: 18, y: -12, zoom: 1.15 })
+  })
+
+  it('toggles hierarchy branches as workspace-only state without touching history', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+
+    useEditorStore.getState().setDocument(document)
+    useEditorStore.getState().toggleHierarchyBranch(document.rootTopicId)
+    useEditorStore.getState().toggleHierarchyBranch(branchId)
+
+    expect(useEditorStore.getState().document?.workspace.hierarchyCollapsedTopicIds).toEqual([
+      document.rootTopicId,
+    ])
+    expect(useEditorStore.getState().history).toHaveLength(0)
+    expect(useEditorStore.getState().isDirty).toBe(false)
+    expect(useEditorStore.getState().hasPendingWorkspaceSave).toBe(true)
+  })
+
+  it('preserves raw hierarchy collapse state when selecting a deep topic', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    const childId = `topic_nested_test`
+    document.topics[branchId].childIds.push(childId)
+    document.topics[childId] = {
+      id: childId,
+      parentId: branchId,
+      childIds: [],
+      title: '深层节点',
+      note: '',
+      aiLocked: false,
+      isCollapsed: false,
+      branchSide: 'auto',
+      layout: {
+        offsetX: 0,
+        offsetY: 0,
+      },
+      style: {},
+    }
+    document.workspace.hierarchyCollapsedTopicIds = [document.rootTopicId, branchId]
+
+    useEditorStore.getState().setDocument(document)
+    useEditorStore.getState().setSelection([childId], childId)
+
+    expect(useEditorStore.getState().document?.workspace.hierarchyCollapsedTopicIds).toEqual([
+      document.rootTopicId,
+      branchId,
+    ])
+    expect(useEditorStore.getState().activeTopicId).toBe(childId)
+  })
+
+  it('batch locks topics and records one undo step', () => {
+    const document = createMindMapDocument()
+    const [firstId, secondId] = document.topics[document.rootTopicId].childIds
+
+    useEditorStore.getState().setDocument(document)
+    useEditorStore.getState().setSelection([firstId], firstId)
+    useEditorStore.getState().toggleTopicSelection(secondId)
+    useEditorStore.getState().setTopicsAiLocked([firstId, secondId], true)
+
+    expect(useEditorStore.getState().document?.topics[firstId].aiLocked).toBe(true)
+    expect(useEditorStore.getState().document?.topics[secondId].aiLocked).toBe(true)
+    expect(useEditorStore.getState().history).toHaveLength(1)
+
+    useEditorStore.getState().undo()
+
+    expect(useEditorStore.getState().document?.topics[firstId].aiLocked).toBe(false)
+    expect(useEditorStore.getState().document?.topics[secondId].aiLocked).toBe(false)
   })
 
   it('clears both dirty flags when a save completes', () => {

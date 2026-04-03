@@ -27,7 +27,7 @@ function describeExecutionError(error: AiExecutionError | null, fallback: string
     return {
       title: 'Codex 需要重新验证',
       message: error.message,
-      hint: '请先修复本机 Codex 登录或订阅状态，再点击“重新验证”。',
+      hint: '请先修复本机 Codex 登录或订阅状态，再点击"重新验证"。',
     }
   }
 
@@ -69,9 +69,11 @@ function describeRunStage(stage: AiRunStage, text: string) {
             ? '正在调用 Codex'
             : stage === 'waiting_first_token'
               ? '正在等待输出'
-              : stage === 'streaming'
-                ? '正在输出内容'
-                : '正在应用改动',
+                : stage === 'streaming'
+                  ? '正在输出内容'
+                  : stage === 'planning_changes'
+                    ? '正在生成改动'
+                    : '正在应用改动',
     message: text,
   }
 }
@@ -91,9 +93,9 @@ export function AiMessageList({
     <section className={styles.list} aria-label="AI 对话消息">
       {messages.length === 0 && !streamingText ? (
         <div className={styles.empty}>
-          <p className={styles.emptyTitle}>BrainFlow AI 已就绪</p>
+          <p className={styles.emptyTitle}>开始对话</p>
           <p className={styles.emptyText}>
-            直接描述你想要的结构、计划或重组方式，AI 会结合整张脑图理解，并把有效改动直接落到画布上。
+            描述你想要的结构或计划，AI 会结合脑图理解并生成改动建议。
           </p>
         </div>
       ) : null}
@@ -105,19 +107,31 @@ export function AiMessageList({
         </section>
       ) : null}
 
-      {messages.map((message) => (
-        <article key={message.id} className={styles.message} data-role={message.role}>
-          <div className={styles.role}>{message.role === 'user' ? '你' : 'AI'}</div>
-          <div className={styles.bubble}>{message.content}</div>
-        </article>
-      ))}
+      <div className={styles.messages}>
+        {messages.map((message) => (
+          <article
+            key={message.id}
+            className={`${styles.messageRow} ${message.role === 'user' ? styles.userRow : styles.aiRow}`}
+          >
+            <div className={`${styles.bubble} ${message.role === 'user' ? styles.userBubble : styles.aiBubble}`}>
+              <div className={styles.content}>{message.content}</div>
+            </div>
+          </article>
+        ))}
 
-      {streamingText ? (
-        <article className={styles.message} data-role="assistant">
-          <div className={styles.role}>AI</div>
-          <div className={styles.bubble}>{streamingText}</div>
-        </article>
-      ) : null}
+        {streamingText ? (
+          <article className={`${styles.messageRow} ${styles.aiRow}`}>
+            <div className={`${styles.bubble} ${styles.aiBubble} ${styles.streaming}`}>
+              <div className={styles.content}>{streamingText}</div>
+              <span className={styles.typingIndicator}>
+                <span />
+                <span />
+                <span />
+              </span>
+            </div>
+          </article>
+        ) : null}
+      </div>
 
       {resolvedError ? (
         <section className={styles.errorCard} aria-label="AI 执行错误">

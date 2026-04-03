@@ -17,6 +17,7 @@ export function useEditorShortcuts(): void {
   const addChild = useEditorStore((state) => state.addChild)
   const addSibling = useEditorStore((state) => state.addSibling)
   const removeTopic = useEditorStore((state) => state.removeTopic)
+  const setTopicsAiLocked = useEditorStore((state) => state.setTopicsAiLocked)
   const startEditing = useEditorStore((state) => state.startEditing)
   const undo = useEditorStore((state) => state.undo)
   const redo = useEditorStore((state) => state.redo)
@@ -43,6 +44,21 @@ export function useEditorShortcuts(): void {
       }
 
       if (isTypingElement(event.target) || snapshot.editingTopicId) {
+        return
+      }
+
+      if (modifierPressed && event.shiftKey && event.key.toLowerCase() === 'l') {
+        const selectedTopicIds = snapshot.selectedTopicIds.filter((topicId) => doc.topics[topicId])
+        if (selectedTopicIds.length === 0) {
+          return
+        }
+
+        event.preventDefault()
+        const unlockedTopicIds = selectedTopicIds.filter((topicId) => !doc.topics[topicId].aiLocked)
+        setTopicsAiLocked(
+          unlockedTopicIds.length === 0 ? selectedTopicIds : unlockedTopicIds,
+          unlockedTopicIds.length > 0,
+        )
         return
       }
 
@@ -77,5 +93,5 @@ export function useEditorShortcuts(): void {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [addChild, addSibling, redo, removeTopic, startEditing, undo])
+  }, [addChild, addSibling, redo, removeTopic, setTopicsAiLocked, startEditing, undo])
 }

@@ -12,13 +12,33 @@ export interface CodexRunnerStatus {
   issues: CodexBridgeIssue[]
 }
 
+export interface CodexJsonEvent {
+  type?: string
+  message?: string
+  delta?: string
+  error?: { message?: string }
+  item?: {
+    type?: string
+    text?: string
+    delta?: string
+    text_delta?: string
+    message?: string
+  }
+  [key: string]: unknown
+}
+
 export interface CodexRunner {
   getStatus(): Promise<CodexRunnerStatus>
   execute(prompt: string, schema: object): Promise<string>
+  executeMessage(
+    prompt: string,
+    options?: { onEvent?: (event: CodexJsonEvent) => void },
+  ): Promise<string>
 }
 
 interface CodexRunnerDependencies {
   runCommand?: typeof runCommand
+  runStreamingCommand?: typeof runStreamingCommand
   mkdtemp?: typeof mkdtemp
   writeFile?: typeof writeFile
   rm?: typeof rm
@@ -71,6 +91,68 @@ async function runCommand(
     })
 
     child.on('close', (exitCode) => {
+      resolve({
+        stdout,
+        stderr,
+        exitCode: exitCode ?? 0,
+      })
+    })
+  })
+}
+
+async function runStreamingCommand(
+  command: string,
+  args: string[],
+  options?: { cwd?: string; onStdoutLine?: (line: string) => void },
+): Promise<CommandResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options?.cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: process.env,
+      windowsHide: true,
+    })
+
+    let stdout = ''
+    let stderr = ''
+    let stdoutBuffer = ''
+
+    const flushStdoutLine = (line: string) => {
+      const trimmed = line.trim()
+      if (!trimmed) {
+        return
+      }
+
+      options?.onStdoutLine?.(trimmed)
+    }
+
+    child.stdout.on('data', (chunk) => {
+      const text = chunk.toString()
+      stdout += text
+      stdoutBuffer += text
+      const lines = stdoutBuffer.split(/\r?\n/)
+      stdoutBuffer = lines.pop() ?? ''
+      lines.forEach(flushStdoutLine)
+    })
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
+
+    child.on('error', (error) => {
+      if ('code' in error && error.code === 'ENOENT') {
+        reject(new CommandNotFoundError(command))
+        return
+      }
+
+      reject(error)
+    })
+
+    child.on('close', (exitCode) => {
+      if (stdoutBuffer.trim()) {
+        flushStdoutLine(stdoutBuffer)
+      }
+
       resolve({
         stdout,
         stderr,
@@ -154,8 +236,101 @@ function normalizeExecutionError(message: string): CodexBridgeIssue {
   }
 }
 
+function parseJsonEvent(line: string): CodexJsonEvent | null {
+  try {
+    return JSON.parse(line) as CodexJsonEvent
+  } catch {
+    return null
+  }
+}
+
+function extractEventError(event: CodexJsonEvent): string | null {
+  if (event.type === 'error' && typeof event.message === 'string') {
+    return event.message
+  }
+
+  if (event.type === 'turn.failed' && typeof event.error?.message === 'string') {
+    return event.error.message
+  }
+
+  return null
+}
+
+function extractFinalText(event: CodexJsonEvent): string | null {
+  if (event.type === 'item.completed' && event.item?.type === 'agent_message' && event.item.text) {
+    return event.item.text
+  }
+
+  return null
+}
+
+async function executeCodexJsonCommand(
+  executeStreamingCommand: typeof runStreamingCommand,
+  prompt: string,
+  options: {
+    cwd: string
+    schemaPath?: string
+    onEvent?: (event: CodexJsonEvent) => void
+  },
+): Promise<string> {
+  let finalText = ''
+  let eventError: string | null = null
+
+  const args = [
+    'exec',
+    '--sandbox',
+    'read-only',
+    '--ephemeral',
+    '--json',
+    '--skip-git-repo-check',
+  ]
+
+  if (options.schemaPath) {
+    args.push('--output-schema', options.schemaPath)
+  }
+
+  args.push(prompt)
+
+  const result = await executeStreamingCommand('codex', args, {
+    cwd: options.cwd,
+    onStdoutLine: (line) => {
+      const event = parseJsonEvent(line)
+      if (!event) {
+        return
+      }
+
+      options.onEvent?.(event)
+
+      const maybeFinalText = extractFinalText(event)
+      if (maybeFinalText) {
+        finalText = maybeFinalText
+      }
+
+      const maybeError = extractEventError(event)
+      if (maybeError) {
+        eventError = maybeError
+      }
+    },
+  })
+
+  if (eventError) {
+    throw new Error(eventError)
+  }
+
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || 'Codex CLI exited with a non-zero status.')
+  }
+
+  if (!finalText.trim()) {
+    throw new Error('Codex CLI returned an empty response.')
+  }
+
+  return finalText
+}
+
 export function createCodexRunner(dependencies?: CodexRunnerDependencies): CodexRunner {
   const executeCommand = dependencies?.runCommand ?? runCommand
+  const executeStreamingCommand = dependencies?.runStreamingCommand ?? runStreamingCommand
   const makeTempDirectory = dependencies?.mkdtemp ?? mkdtemp
   const writeTempFile = dependencies?.writeFile ?? writeFile
   const removeDirectory = dependencies?.rm ?? rm
@@ -165,7 +340,10 @@ export function createCodexRunner(dependencies?: CodexRunnerDependencies): Codex
       try {
         await executeCommand('codex', ['--version'])
       } catch (error) {
-        if (error instanceof CommandNotFoundError || ('code' in Object(error) && (error as { code?: string }).code === 'ENOENT')) {
+        if (
+          error instanceof CommandNotFoundError ||
+          ('code' in Object(error) && (error as { code?: string }).code === 'ENOENT')
+        ) {
           return {
             cliInstalled: false,
             loggedIn: false,
@@ -203,67 +381,28 @@ export function createCodexRunner(dependencies?: CodexRunnerDependencies): Codex
 
       try {
         await writeTempFile(schemaPath, JSON.stringify(schema), 'utf8')
-        const result = await executeCommand(
-          'codex',
-          [
-            'exec',
-            '--sandbox',
-            'read-only',
-            '--ephemeral',
-            '--json',
-            '--skip-git-repo-check',
-            '--output-schema',
-            schemaPath,
-            prompt,
-          ],
-          { cwd: workingDirectory },
-        )
+        return await executeCodexJsonCommand(executeStreamingCommand, prompt, {
+          cwd: workingDirectory,
+          schemaPath,
+        })
+      } catch (error) {
+        const issue = normalizeExecutionError(error instanceof Error ? error.message : String(error))
+        throw Object.assign(new Error(issue.message), {
+          issue,
+        })
+      } finally {
+        await removeDirectory(workingDirectory, { recursive: true, force: true })
+      }
+    },
 
-        let finalText = ''
-        let eventError: string | null = null
+    async executeMessage(prompt, options) {
+      const workingDirectory = await makeTempDirectory(join(tmpdir(), 'brainflow-codex-'))
 
-        result.stdout
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .forEach((line) => {
-            try {
-              const event = JSON.parse(line) as {
-                type?: string
-                message?: string
-                error?: { message?: string }
-                item?: { type?: string; text?: string }
-              }
-
-              if (event.type === 'item.completed' && event.item?.type === 'agent_message' && event.item.text) {
-                finalText = event.item.text
-              }
-
-              if (event.type === 'error' && event.message) {
-                eventError = event.message
-              }
-
-              if (event.type === 'turn.failed' && event.error?.message) {
-                eventError = event.error.message
-              }
-            } catch {
-              // ignore non-JSON lines
-            }
-          })
-
-        if (eventError) {
-          throw new Error(eventError)
-        }
-
-        if (result.exitCode !== 0) {
-          throw new Error(result.stderr.trim() || 'Codex CLI exited with a non-zero status.')
-        }
-
-        if (!finalText.trim()) {
-          throw new Error('Codex CLI returned an empty response.')
-        }
-
-        return finalText
+      try {
+        return await executeCodexJsonCommand(executeStreamingCommand, prompt, {
+          cwd: workingDirectory,
+          onEvent: options?.onEvent,
+        })
       } catch (error) {
         const issue = normalizeExecutionError(error instanceof Error ? error.message : String(error))
         throw Object.assign(new Error(issue.message), {

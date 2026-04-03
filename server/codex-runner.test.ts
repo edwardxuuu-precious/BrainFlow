@@ -5,7 +5,9 @@ import { createCodexRunner } from './codex-runner.js'
 
 describe('createCodexRunner', () => {
   it('returns a verification issue when codex is missing', async () => {
-    const runCommand = vi.fn().mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }))
+    const runCommand = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }))
     const runner = createCodexRunner({ runCommand })
 
     await expect(runner.getStatus()).resolves.toMatchObject({
@@ -35,25 +37,38 @@ describe('createCodexRunner', () => {
     const runCommand = vi
       .fn()
       .mockResolvedValue({
-        stdout: JSON.stringify({
-          type: 'item.completed',
-          item: {
-            type: 'agent_message',
-            text: '{"assistantMessage":"ok","needsMoreContext":false,"contextRequest":[],"proposal":null}',
-          },
-        }),
+        stdout: '',
         stderr: '',
         exitCode: 0,
       })
+    const runStreamingCommand = vi.fn().mockImplementation(
+      async (_command, _args, options?: { onStdoutLine?: (line: string) => void }) => {
+        options?.onStdoutLine?.(
+          JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'agent_message',
+              text: '{"assistantMessage":"ok","needsMoreContext":false,"contextRequest":[],"proposal":null}',
+            },
+          }),
+        )
+
+        return {
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+        }
+      },
+    )
     const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
     const writeFile = vi.fn().mockResolvedValue(undefined)
     const rm = vi.fn().mockResolvedValue(undefined)
-    const runner = createCodexRunner({ runCommand, mkdtemp, writeFile, rm })
+    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, writeFile, rm })
 
     const result = await runner.execute('prompt text', { type: 'object' })
 
     expect(result).toContain('"assistantMessage":"ok"')
-    expect(runCommand).toHaveBeenCalledWith(
+    expect(runStreamingCommand).toHaveBeenCalledWith(
       'codex',
       expect.arrayContaining([
         'exec',
@@ -74,24 +89,74 @@ describe('createCodexRunner', () => {
     })
   })
 
-  it('maps invalid response schema failures to schema_invalid', async () => {
-    const runCommand = vi.fn().mockResolvedValue({
-      stdout: [
-        JSON.stringify({ type: 'thread.started', thread_id: 'thread_1' }),
-        JSON.stringify({ type: 'turn.started' }),
-        JSON.stringify({
-          type: 'error',
-          message:
-            '{"type":"error","error":{"type":"invalid_request_error","code":"invalid_json_schema","message":"Invalid schema for response_format \\"codex_output_schema\\": schema must have a \\"type\\" key.","param":"text.format.schema"},"status":400}',
-        }),
-      ].join('\n'),
-      stderr: '',
-      exitCode: 1,
-    })
+  it('forwards jsonl events while collecting the final assistant message', async () => {
+    const runCommand = vi.fn()
+    const runStreamingCommand = vi.fn().mockImplementation(
+      async (_command, _args, options?: { onStdoutLine?: (line: string) => void }) => {
+        options?.onStdoutLine?.(
+          JSON.stringify({
+            type: 'item.delta',
+            item: {
+              text_delta: '片段',
+            },
+          }),
+        )
+        options?.onStdoutLine?.(
+          JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'agent_message',
+              text: '完整回答',
+            },
+          }),
+        )
+
+        return {
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+        }
+      },
+    )
     const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
-    const writeFile = vi.fn().mockResolvedValue(undefined)
     const rm = vi.fn().mockResolvedValue(undefined)
-    const runner = createCodexRunner({ runCommand, mkdtemp, writeFile, rm })
+    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, rm })
+    const onEvent = vi.fn()
+
+    const result = await runner.executeMessage('prompt text', { onEvent })
+
+    expect(result).toBe('完整回答')
+    expect(onEvent).toHaveBeenCalledTimes(2)
+    expect(onEvent).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        type: 'item.delta',
+      }),
+    )
+  })
+
+  it('maps invalid response schema failures to schema_invalid', async () => {
+    const runCommand = vi.fn()
+    const runStreamingCommand = vi.fn().mockImplementation(
+      async (_command, _args, options?: { onStdoutLine?: (line: string) => void }) => {
+        options?.onStdoutLine?.(
+          JSON.stringify({
+            type: 'error',
+            message:
+              '{"type":"error","error":{"type":"invalid_request_error","code":"invalid_json_schema","message":"Invalid schema for response_format \\"codex_output_schema\\": schema must have a \\"type\\" key.","param":"text.format.schema"},"status":400}',
+          }),
+        )
+
+        return {
+          stdout: '',
+          stderr: '',
+          exitCode: 1,
+        }
+      },
+    )
+    const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
+    const rm = vi.fn().mockResolvedValue(undefined)
+    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, rm })
 
     await expect(runner.execute('prompt text', { type: 'object' })).rejects.toMatchObject({
       issue: expect.objectContaining({

@@ -9,6 +9,7 @@ import {
   resolveTopicSide,
   setTopicAiLocked,
   setTopicOffset,
+  setTopicsAiLocked,
   toggleCollapse,
 } from './tree-operations'
 
@@ -80,5 +81,16 @@ describe('tree-operations', () => {
     expect(document.topics[branchId].aiLocked).toBe(false)
     expect(locked.topics[branchId].aiLocked).toBe(true)
     expect(unlocked.topics[branchId].aiLocked).toBe(false)
+  })
+
+  it('locks multiple topics in one immutable update', () => {
+    const document = createMindMapDocument()
+    const [firstBranchId, secondBranchId] = document.topics[document.rootTopicId].childIds
+    const updated = setTopicsAiLocked(document, [firstBranchId, secondBranchId], true)
+
+    expect(document.topics[firstBranchId].aiLocked).toBe(false)
+    expect(document.topics[secondBranchId].aiLocked).toBe(false)
+    expect(updated.topics[firstBranchId].aiLocked).toBe(true)
+    expect(updated.topics[secondBranchId].aiLocked).toBe(true)
   })
 })

@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+﻿import { expect, test, type Page, type Route } from '@playwright/test'
 import type {
   AiChatRequest,
   AiChatResponse,
@@ -16,8 +16,12 @@ interface StoredDocumentSnapshot {
       leftSidebarOpen: boolean
       rightSidebarOpen: boolean
     }
+    hierarchyCollapsedTopicIds: string[]
   }
-  topics: Record<string, { title: string; layout?: { offsetX: number; offsetY: number } }>
+  topics: Record<
+    string,
+    { title: string; parentId?: string | null; layout?: { offsetX: number; offsetY: number } }
+  >
 }
 
 async function deleteDatabase(page: Page, name: string): Promise<void> {
@@ -145,7 +149,7 @@ function aiSidebar(page: Page) {
 
 async function selectTopicNode(page: Page, topicTitle: string): Promise<void> {
   await waitForTopicNodeInViewport(page, topicTitle)
-  await topicNode(page, topicTitle).click()
+  await topicNode(page, topicTitle).click({ force: true })
 }
 
 async function clickCanvasEmptySpace(page: Page): Promise<void> {
@@ -155,6 +159,37 @@ async function clickCanvasEmptySpace(page: Page): Promise<void> {
   }
 
   await page.mouse.click(pane.x + 24, pane.y + 24)
+}
+
+async function panCanvas(
+  page: Page,
+  options?: { button?: 'left' | 'middle'; holdSpace?: boolean; deltaX?: number; deltaY?: number },
+): Promise<void> {
+  const pane = await page.locator('.react-flow__pane').boundingBox()
+  if (!pane) {
+    throw new Error('Unable to resolve canvas pane bounds')
+  }
+
+  const startX = pane.x + pane.width / 2
+  const startY = pane.y + pane.height / 2
+  const endX = startX + (options?.deltaX ?? 120)
+  const endY = startY + (options?.deltaY ?? 80)
+  const button = options?.button ?? 'left'
+
+  if (options?.holdSpace) {
+    await page.keyboard.down('Space')
+  }
+
+  try {
+    await page.mouse.move(startX, startY)
+    await page.mouse.down({ button })
+    await page.mouse.move(endX, endY, { steps: 12 })
+    await page.mouse.up({ button })
+  } finally {
+    if (options?.holdSpace) {
+      await page.keyboard.up('Space')
+    }
+  }
 }
 
 async function dragSelectTopics(
@@ -207,6 +242,22 @@ async function expectSelectedNodeCount(page: Page, count: number): Promise<void>
   await expect(page.locator('.react-flow__node [data-selected="true"]')).toHaveCount(count)
 }
 
+async function readViewportTransform(page: Page): Promise<{ x: number; y: number; scale: number }> {
+  return page.locator('.react-flow__viewport').evaluate((element) => {
+    const transform = getComputedStyle(element).transform
+    if (transform === 'none') {
+      return { x: 0, y: 0, scale: 1 }
+    }
+
+    const matrix = new DOMMatrixReadOnly(transform)
+    return {
+      x: Number(matrix.e.toFixed(3)),
+      y: Number(matrix.f.toFixed(3)),
+      scale: Number(matrix.a.toFixed(3)),
+    }
+  })
+}
+
 async function fulfillJson(route: Route, payload: unknown, status = 200): Promise<void> {
   await route.fulfill({
     status,
@@ -222,7 +273,7 @@ function createReadyStatus(overrides?: Partial<CodexStatus>): CodexStatus {
     authProvider: 'ChatGPT',
     ready: true,
     issues: [],
-    systemPromptSummary: 'AI 会读取整张脑图，并把有效改动直接应用到当前画布。',
+    systemPromptSummary: 'AI reads the full mind map and applies valid changes to the canvas.',
     systemPromptVersion: 'prompt-test-v1',
     systemPrompt:
       'Use the full mind map as context. Never access repo, backend, file system, or shell.',
@@ -230,19 +281,14 @@ function createReadyStatus(overrides?: Partial<CodexStatus>): CodexStatus {
   }
 }
 
-function createCodexSettings(overrides?: Partial<CodexSettings>): CodexSettings {
-  return {
-    businessPrompt: '按用户原话理解需求，并把有效改动直接落到脑图。',
-    updatedAt: 1,
-    version: 'settings-test-v1',
-    ...overrides,
-  }
-}
-
 async function mockCodexStatus(
   page: Page,
   status: CodexStatus,
-  settings = createCodexSettings(),
+  settings: CodexSettings = {
+    businessPrompt: 'Use the full graph as context and apply valid changes to the canvas.',
+    updatedAt: 1,
+    version: 'settings-test-v1',
+  },
 ): Promise<void> {
   await page.route('**/api/codex/status', (route) => fulfillJson(route, status))
   await page.route('**/api/codex/revalidate', (route) => fulfillJson(route, status))
@@ -270,16 +316,30 @@ async function mockCodexChat(
       JSON.stringify({
         type: 'status',
         stage: 'starting_codex',
-        message: '正在调用本机 Codex…',
+        message: 'Starting local Codex…',
       }),
       JSON.stringify({
         type: 'status',
         stage: 'waiting_first_token',
-        message: 'Codex 正在整理回答与脑图提案…',
+        message: 'Codex is drafting a natural-language answer…',
+      }),
+      JSON.stringify({
+        type: 'status',
+        stage: 'streaming',
+        message: 'Codex is streaming the answer…',
       }),
       JSON.stringify({
         type: 'assistant_delta',
         delta: response.assistantMessage.slice(0, 24),
+      }),
+      JSON.stringify({
+        type: 'assistant_delta',
+        delta: response.assistantMessage.slice(24),
+      }),
+      JSON.stringify({
+        type: 'status',
+        stage: 'planning_changes',
+        message: 'Preparing canvas changes…',
       }),
       JSON.stringify({
         type: 'result',
@@ -330,31 +390,34 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('creates a document, returns to the list, and reopens it', async ({ page }) => {
-  await page.getByRole('button', { name: '新建脑图' }).click()
+  await page.getByRole('button', { name: '鏂板缓鑴戝浘' }).click()
   await expect(page).toHaveURL(/\/map\//)
 
-  await page.getByRole('button', { name: '返回文档' }).click()
+  await page.getByRole('button', { name: '杩斿洖鏂囨。' }).click()
   await expect(page).toHaveURL('/')
   await expect(page.locator('article')).toHaveCount(1)
 
-  await page.getByRole('button', { name: '继续最近文档' }).click()
+  await page.getByRole('button', { name: '缁х画鏈€杩戞枃妗? }).click()
   await expect(page).toHaveURL(/\/map\//)
 })
 
 test('persists the active topic and viewport as workspace state without changing updatedAt', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: '新建脑图' }).click()
+  await page.getByRole('button', { name: '鏂板缓鑴戝浘' }).click()
   await expect(page).toHaveURL(/\/map\//)
 
   const documentId = page.url().split('/').pop()
   expect(documentId).toBeTruthy()
+  if (!documentId) {
+    throw new Error('Expected document id to be present in editor URL')
+  }
 
   const initialSnapshot = await readStoredDocument(page, documentId)
   expect(initialSnapshot).not.toBeNull()
 
-  await selectTopicNode(page, '分支二')
-  await page.getByRole('button', { name: '放大' }).click()
+  await selectTopicNode(page, '鍒嗘敮浜?)
+  await page.getByRole('button', { name: '鏀惧ぇ' }).click()
   await page.waitForTimeout(700)
 
   const savedWorkspace = await readStoredDocument(page, documentId)
@@ -366,28 +429,63 @@ test('persists the active topic and viewport as workspace state without changing
   expect(scaleBeforeReload).toBeCloseTo(savedWorkspace?.viewport.zoom ?? 1, 2)
 
   await page.reload()
-  await waitForTopicNodeInViewport(page, '分支二')
-  await expect(topicNode(page, '分支二').locator('[data-active="true"]')).toBeVisible()
+  await waitForTopicNodeInViewport(page, '鍒嗘敮浜?)
+  await expect(topicNode(page, '鍒嗘敮浜?).locator('[data-active="true"]')).toBeVisible()
   await expect.poll(async () => readViewportScale(page)).toBeCloseTo(
     savedWorkspace?.viewport.zoom ?? 1,
     2,
   )
 })
 
+test('supports middle-button panning without breaking Space pan or box selection', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: '鏂板缓鑴戝浘' }).click()
+  await expect(page).toHaveURL(/\/map\//)
+
+  const initialViewport = await readViewportTransform(page)
+
+  await panCanvas(page, { button: 'middle' })
+  await expect
+    .poll(async () => {
+      const viewport = await readViewportTransform(page)
+      return Math.abs(viewport.x - initialViewport.x) + Math.abs(viewport.y - initialViewport.y)
+    })
+    .toBeGreaterThan(1)
+
+  const afterMiddlePan = await readViewportTransform(page)
+
+  await panCanvas(page, { holdSpace: true, deltaX: -90, deltaY: -60 })
+  const afterSpacePan = await readViewportTransform(page)
+  expect(
+    Math.abs(afterSpacePan.x - afterMiddlePan.x) + Math.abs(afterSpacePan.y - afterMiddlePan.y),
+  ).toBeGreaterThan(1)
+
+  await dragSelectTopics(page, ['涓績涓婚', '鍒嗘敮涓€'])
+  await expectSelectedNodeCount(page, 2)
+})
+
 test('collapses desktop sidebars into rails and restores them after reload', async ({ page }) => {
-  await page.getByRole('button', { name: '新建脑图' }).click()
+  await page.getByRole('button', { name: '鏂板缓鑴戝浘' }).click()
   await expect(page).toHaveURL(/\/map\//)
 
   const documentId = page.url().split('/').pop()
   expect(documentId).toBeTruthy()
+  if (!documentId) {
+    throw new Error('Expected document id to be present in editor URL')
+  }
 
-  await page.getByRole('button', { name: '隐藏层级栏' }).click()
-  await expect(page.getByRole('button', { name: '显示层级栏' })).toBeVisible()
-  await expect(page.locator('nav[aria-label="主题层级"]')).toHaveCount(0)
+  await page.getByRole('button', { name: '闅愯棌灞傜骇鏍? }).click()
+  await expect(page.getByRole('button', { name: '鏄剧ず灞傜骇鏍? })).toBeVisible()
+  await expect(page.locator('nav[aria-label="涓婚灞傜骇"]')).toHaveCount(0)
 
-  await page.getByRole('button', { name: '隐藏右侧栏' }).click()
-  await expect(page.getByRole('button', { name: '显示检查器' })).toBeVisible()
-  await expect(page.getByRole('textbox', { name: '备注' })).toHaveCount(0)
+  await page
+    .locator('#editor-right-sidebar')
+    .getByRole('button', { name: '闅愯棌鍙充晶鏍? })
+    .first()
+    .click()
+  await expect(page.getByRole('button', { name: '鏄剧ず妫€鏌ュ櫒' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: '澶囨敞' })).toHaveCount(0)
 
   await page.waitForTimeout(700)
   const collapsedSnapshot = await readStoredDocument(page, documentId)
@@ -397,8 +495,91 @@ test('collapses desktop sidebars into rails and restores them after reload', asy
   })
 
   await page.reload()
-  await expect(page.getByRole('button', { name: '显示层级栏' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '显示检查器' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '鏄剧ず灞傜骇鏍? })).toBeVisible()
+  await expect(page.getByRole('button', { name: '鏄剧ず妫€鏌ュ櫒' })).toBeVisible()
+})
+
+test('persists hierarchy tree collapse separately from canvas nodes and re-expands the active path', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: '鏂板缓鑴戝浘' }).click()
+  await expect(page).toHaveURL(/\/map\//)
+
+  const documentId = page.url().split('/').pop()
+  expect(documentId).toBeTruthy()
+  if (!documentId) {
+    throw new Error('Expected document id to be present in editor URL')
+  }
+
+  const hierarchyNav = page.locator('nav[aria-label="涓婚灞傜骇"]')
+  await hierarchyNav.getByRole('button', { name: /鍒嗘敮浜? }).click()
+  await page
+    .locator('#editor-right-sidebar')
+    .getByRole('button', { name: '鏂板瀛愪富棰? })
+    .click()
+
+  await expect(hierarchyNav.getByText('鏂颁富棰?, { exact: true })).toBeVisible()
+  await hierarchyNav.getByRole('button', { name: '鎶樺彔 鍒嗘敮浜? }).click()
+  await expect(hierarchyNav.getByText('鏂颁富棰?, { exact: true })).toHaveCount(0)
+
+  await page.waitForTimeout(700)
+  const storedDocument = await readStoredDocument(page, documentId)
+  const branchId =
+    Object.entries(storedDocument?.topics ?? {}).find(([, topic]) => topic.title === '鍒嗘敮浜?)?.[0] ?? ''
+  const childId =
+    Object.entries(storedDocument?.topics ?? {}).find(
+      ([, topic]) => topic.title === '鏂颁富棰? && topic.parentId === branchId,
+    )?.[0] ?? ''
+
+  expect(storedDocument?.workspace.hierarchyCollapsedTopicIds).toContain(branchId)
+  expect(childId).not.toBe('')
+
+  await page.evaluate(
+    async ({ resolvedDocumentId, selectedTopicId }) => {
+      await new Promise<void>((resolve, reject) => {
+        const request = indexedDB.open('brainflow-documents-v1')
+
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          const database = request.result
+          const transaction = database.transaction('documents', 'readwrite')
+          const store = transaction.objectStore('documents')
+          const getRequest = store.get(resolvedDocumentId)
+
+          getRequest.onerror = () => {
+            database.close()
+            reject(getRequest.error)
+          }
+
+          getRequest.onsuccess = () => {
+            const document = getRequest.result as StoredDocumentSnapshot | null
+            if (document) {
+              document.workspace.selectedTopicId = selectedTopicId
+              store.put(document)
+            }
+          }
+
+          transaction.oncomplete = () => {
+            database.close()
+            resolve()
+          }
+          transaction.onerror = () => {
+            database.close()
+            reject(transaction.error)
+          }
+        }
+      })
+    },
+    {
+      resolvedDocumentId: documentId,
+      selectedTopicId: childId,
+    },
+  )
+
+  await page.reload()
+  const reloadedHierarchyNav = page.locator('nav[aria-label="涓婚灞傜骇"]')
+  await expect(reloadedHierarchyNav.getByRole('button', { name: '鎶樺彔 鍒嗘敮浜? })).toBeVisible()
+  await expect(reloadedHierarchyNav.getByText('鏂颁富棰?, { exact: true })).toBeVisible()
 })
 
 test('shows remediation and disables sending when local Codex verification is unavailable', async ({
@@ -411,7 +592,7 @@ test('shows remediation and disables sending when local Codex verification is un
     issues: [
       {
         code: 'verification_required',
-        message: '当前 Codex 验证信息不可用，请尽快重新验证。',
+        message: '褰撳墠 Codex 楠岃瘉淇℃伅涓嶅彲鐢紝璇峰敖蹇噸鏂伴獙璇併€?,
       },
     ],
   })
@@ -422,16 +603,16 @@ test('shows remediation and disables sending when local Codex verification is un
     await fulfillJson(route, unavailableStatus)
   })
 
-  await page.getByRole('button', { name: '新建脑图' }).click()
+  await page.getByRole('button', { name: '鏂板缓鑴戝浘' }).click()
   await expect(page).toHaveURL(/\/map\//)
   await page.getByRole('tab', { name: 'AI' }).click()
 
   await expect(
-    aiSidebar(page).getByText('当前 Codex 验证信息不可用，请尽快修复后重新验证。'),
+    aiSidebar(page).getByText('褰撳墠 Codex 楠岃瘉淇℃伅涓嶅彲鐢紝璇峰敖蹇慨澶嶅悗閲嶆柊楠岃瘉銆?),
   ).toBeVisible()
-  await expect(page.getByRole('button', { name: '发送给 AI' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '鍙戦€佺粰 AI' })).toBeDisabled()
 
-  await page.getByRole('button', { name: '重新验证' }).click()
+  await page.getByRole('button', { name: '閲嶆柊楠岃瘉' }).click()
   await expect.poll(() => revalidateRequests).toBeGreaterThan(0)
 })
 
@@ -442,55 +623,55 @@ test('shows schema execution failures separately from Codex availability and sur
   await mockCodexChatError(page, {
     code: 'schema_invalid',
     message:
-      '本地 AI bridge 的输出 schema 与当前 Codex CLI 不兼容。这不是登录问题，重新验证不会解决，请修复应用端格式后再试。',
+      '鏈湴 AI bridge 鐨勮緭鍑?schema 涓庡綋鍓?Codex CLI 涓嶅吋瀹广€傝繖涓嶆槸鐧诲綍闂锛岄噸鏂伴獙璇佷笉浼氳В鍐筹紝璇蜂慨澶嶅簲鐢ㄧ鏍煎紡鍚庡啀璇曘€?,
   })
 
-  await page.getByRole('button', { name: '新建脑图' }).click()
+  await page.getByRole('button', { name: '鏂板缓鑴戝浘' }).click()
   await expect(page).toHaveURL(/\/map\//)
   await page.getByRole('tab', { name: 'AI' }).click()
 
-  await expect(page.getByRole('button', { name: '检查状态' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '妫€鏌ョ姸鎬? })).toBeVisible()
 
-  const composer = page.getByRole('textbox', { name: 'AI 提问输入框' })
-  await composer.fill('请直接基于当前脑图生成一个 GTM 计划')
-  await page.getByRole('button', { name: '发送给 AI' }).click()
+  const composer = page.getByRole('textbox', { name: 'AI 鎻愰棶杈撳叆妗? })
+  await composer.fill('璇风洿鎺ュ熀浜庡綋鍓嶈剳鍥剧敓鎴愪竴涓?GTM 璁″垝')
+  await page.getByRole('button', { name: '鍙戦€佺粰 AI' }).click()
 
-  await expect(aiSidebar(page).getByText('最近一次执行失败')).toBeVisible()
-  await expect(aiSidebar(page).getByText('本地 AI bridge 格式错误')).toBeVisible()
+  await expect(aiSidebar(page).getByText('鏈€杩戜竴娆℃墽琛屽け璐?)).toBeVisible()
+  await expect(aiSidebar(page).getByText('鏈湴 AI bridge 鏍煎紡閿欒')).toBeVisible()
   await expect(
-    aiSidebar(page).getByText('这不是登录问题，重新验证不会解决，需要修复应用端的输出格式。'),
+    aiSidebar(page).getByText('杩欎笉鏄櫥褰曢棶棰橈紝閲嶆柊楠岃瘉涓嶄細瑙ｅ喅锛岄渶瑕佷慨澶嶅簲鐢ㄧ鐨勮緭鍑烘牸寮忋€?),
   ).toBeVisible()
-  await expect(aiSidebar(page).getByText('已检测到本机 Codex CLI 与 ChatGPT 登录状态，可以直接基于当前脑图发起对话。')).toBeVisible()
+  await expect(aiSidebar(page).getByText('宸叉娴嬪埌鏈満 Codex CLI 涓?ChatGPT 鐧诲綍鐘舵€侊紝鍙互鐩存帴鍩轰簬褰撳墠鑴戝浘鍙戣捣瀵硅瘽銆?)).toBeVisible()
 
-  await page.getByRole('button', { name: '检查状态' }).click()
-  await expect(aiSidebar(page).getByText('已重新检查，本机 Codex 当前可用。')).toBeVisible()
+  await page.getByRole('button', { name: '妫€鏌ョ姸鎬? }).click()
+  await expect(aiSidebar(page).getByText('宸查噸鏂版鏌ワ紝鏈満 Codex 褰撳墠鍙敤銆?)).toBeVisible()
 })
 
 test('supports box selection, additive click, and additive box selection', async ({ page }) => {
   await mockCodexStatus(page, createReadyStatus())
 
-  await page.getByRole('button', { name: '新建脑图' }).click()
+  await page.getByRole('button', { name: '鏂板缓鑴戝浘' }).click()
   await expect(page).toHaveURL(/\/map\//)
 
-  await dragSelectTopics(page, ['中心主题', '分支一'])
+  await dragSelectTopics(page, ['涓績涓婚', '鍒嗘敮涓€'])
   await expectSelectedNodeCount(page, 2)
-  await expect(page.getByRole('heading', { name: '已选择 2 个节点' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '宸查€夋嫨 2 涓妭鐐? })).toBeVisible()
 
-  await topicNode(page, '分支二').click({ modifiers: ['Shift'] })
+  await topicNode(page, '鍒嗘敮浜?).click({ modifiers: ['Shift'] })
   await expectSelectedNodeCount(page, 3)
-  await expect(page.getByRole('heading', { name: '已选择 3 个节点' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '宸查€夋嫨 3 涓妭鐐? })).toBeVisible()
 
   await clickCanvasEmptySpace(page)
-  await selectTopicNode(page, '中心主题')
+  await selectTopicNode(page, '涓績涓婚')
   await expectSelectedNodeCount(page, 1)
 
-  await dragSelectTopics(page, ['分支一'], { append: true })
+  await dragSelectTopics(page, ['鍒嗘敮涓€'], { append: true })
   await expectSelectedNodeCount(page, 2)
 
   await page.getByRole('tab', { name: 'AI' }).click()
-  await expect(aiSidebar(page).getByText('已聚焦 2 个节点')).toBeVisible()
-  await expect(aiSidebar(page).getByText('中心主题')).toBeVisible()
-  await expect(aiSidebar(page).getByText('分支一')).toBeVisible()
+  await expect(aiSidebar(page).getByText('宸茶仛鐒?2 涓妭鐐?)).toBeVisible()
+  await expect(aiSidebar(page).getByText('涓績涓婚')).toBeVisible()
+  await expect(aiSidebar(page).getByText('鍒嗘敮涓€')).toBeVisible()
 })
 
 test('uses the full graph as context and applies Codex changes directly to the canvas', async ({
@@ -505,47 +686,50 @@ test('uses the full graph as context and applies Codex changes directly to the c
 
   await mockCodexStatus(page, createReadyStatus())
 
-  await page.getByRole('button', { name: '新建脑图' }).click()
+  await page.getByRole('button', { name: '鏂板缓鑴戝浘' }).click()
   await expect(page).toHaveURL(/\/map\//)
 
   const documentId = page.url().split('/').pop()
   expect(documentId).toBeTruthy()
+  if (!documentId) {
+    throw new Error('Expected document id to be present in editor URL')
+  }
 
-  await selectTopicNode(page, '分支一')
+  await selectTopicNode(page, '鍒嗘敮涓€')
   const storedBeforeSend = await readStoredDocument(page, documentId)
   expect(storedBeforeSend).not.toBeNull()
   const branchTopicId =
-    Object.entries(storedBeforeSend?.topics ?? {}).find(([, topic]) => topic.title === '分支一')?.[0] ?? ''
+    Object.entries(storedBeforeSend?.topics ?? {}).find(([, topic]) => topic.title === '鍒嗘敮涓€')?.[0] ?? ''
 
   await mockCodexChat(
     page,
     {
-      assistantMessage: '我已经按你的表达补出一组 GTM 结构，并直接落到了当前脑图里。',
+      assistantMessage: '鎴戝凡缁忔寜浣犵殑琛ㄨ揪琛ュ嚭涓€缁?GTM 缁撴瀯锛屽苟鐩存帴钀藉埌浜嗗綋鍓嶈剳鍥鹃噷銆?,
       needsMoreContext: false,
       contextRequest: [],
       proposal: {
         id: 'proposal_1',
-        summary: '已新增 2 个 GTM 子主题',
+        summary: '宸叉柊澧?2 涓?GTM 瀛愪富棰?,
         baseDocumentUpdatedAt: storedBeforeSend?.updatedAt ?? 0,
         operations: [
           {
             type: 'create_child',
             parent: `topic:${branchTopicId}`,
-            title: 'GTM 计划',
-            note: '围绕目标用户、渠道与定价展开。',
+            title: 'GTM 璁″垝',
+            note: '鍥寸粫鐩爣鐢ㄦ埛銆佹笭閬撲笌瀹氫环灞曞紑銆?,
             resultRef: 'tmp_gtm_pricing',
           },
           {
             type: 'create_child',
             parent: 'ref:tmp_gtm_pricing',
-            title: '目标用户',
-            note: '明确核心客群、购买动机与触达入口。',
+            title: '鐩爣鐢ㄦ埛',
+            note: '鏄庣‘鏍稿績瀹㈢兢銆佽喘涔板姩鏈轰笌瑙﹁揪鍏ュ彛銆?,
           },
           {
             type: 'create_child',
             parent: 'ref:tmp_gtm_pricing',
-            title: '渠道策略',
-            note: '列出首批验证渠道、投放节奏与内容动作。',
+            title: '娓犻亾绛栫暐',
+            note: '鍒楀嚭棣栨壒楠岃瘉娓犻亾銆佹姇鏀捐妭濂忎笌鍐呭鍔ㄤ綔銆?,
           },
         ],
       },
@@ -556,27 +740,27 @@ test('uses the full graph as context and applies Codex changes directly to the c
   )
 
   await page.getByRole('tab', { name: 'AI' }).click()
-  await expect(aiSidebar(page).getByText('已聚焦 1 个节点')).toBeVisible()
-  await expect(aiSidebar(page).getByText('分支一')).toBeVisible()
+  await expect(aiSidebar(page).getByText('宸茶仛鐒?1 涓妭鐐?)).toBeVisible()
+  await expect(aiSidebar(page).getByText('鍒嗘敮涓€')).toBeVisible()
 
-  const composer = page.getByRole('textbox', { name: 'AI 提问输入框' })
-  await composer.fill('我现在想要做 GTM，请直接帮我拆成可以执行的脑图结构')
-  await page.getByRole('button', { name: '发送给 AI' }).click()
+  const composer = page.getByRole('textbox', { name: 'AI 鎻愰棶杈撳叆妗? })
+  await composer.fill('鎴戠幇鍦ㄦ兂瑕佸仛 GTM锛岃鐩存帴甯垜鎷嗘垚鍙互鎵ц鐨勮剳鍥剧粨鏋?)
+  await page.getByRole('button', { name: '鍙戦€佺粰 AI' }).click()
 
-  await expect(topicNode(page, '目标用户')).toBeVisible()
-  await expect(topicNode(page, '渠道策略')).toBeVisible()
+  await expect(topicNode(page, '鐩爣鐢ㄦ埛')).toBeVisible()
+  await expect(topicNode(page, '娓犻亾绛栫暐')).toBeVisible()
   await expect(
-    aiSidebar(page).getByLabel('最近已应用改动').getByText(/已新增 2 个 GTM 子主题/),
+    aiSidebar(page).getByLabel('鏈€杩戝凡搴旂敤鏀瑰姩').getByText(/宸叉柊澧?2 涓?GTM 瀛愪富棰?),
   ).toBeVisible()
-  await expect(aiSidebar(page).getByRole('button', { name: '撤销本次 AI 改动' })).toBeVisible()
+  await expect(aiSidebar(page).getByRole('button', { name: '鎾ら攢鏈 AI 鏀瑰姩' })).toBeVisible()
 
   expect(capturedChatRequest).not.toBeNull()
-  expect(capturedChatRequest!.context.documentTitle).toBe('未命名脑图')
+  expect(capturedChatRequest!.context.documentTitle).toBe('鏈懡鍚嶈剳鍥?)
   expect(capturedChatRequest!.context.focus.selectedTopicIds).toHaveLength(1)
   expect(capturedChatRequest!.context.topics.length).toBeGreaterThan(1)
 
   await expect(
-    page.locator('nav[aria-label="主题层级"]').getByText('目标用户'),
+    page.locator('nav[aria-label="涓婚灞傜骇"]').getByText('鐩爣鐢ㄦ埛'),
   ).toBeVisible()
 
   await page.waitForTimeout(700)
@@ -591,12 +775,12 @@ test('uses the full graph as context and applies Codex changes directly to the c
   expect(requests.some((url) => url.includes('/api/codex/chat'))).toBe(true)
   expect(requests.some((url) => url.includes('api.openai.com'))).toBe(false)
 
-  await page.getByRole('button', { name: '撤销本次 AI 改动' }).click()
-  await expect(topicNode(page, '目标用户')).toHaveCount(0)
-  await expect(topicNode(page, '渠道策略')).toHaveCount(0)
+  await page.getByRole('button', { name: '鎾ら攢鏈 AI 鏀瑰姩' }).click()
+  await expect(topicNode(page, '鐩爣鐢ㄦ埛')).toHaveCount(0)
+  await expect(topicNode(page, '娓犻亾绛栫暐')).toHaveCount(0)
 
   await page.reload()
   await page.getByRole('tab', { name: 'AI' }).click()
-  await expect(page.getByText('我现在想要做 GTM，请直接帮我拆成可以执行的脑图结构')).toBeVisible()
-  await expect(aiSidebar(page).getByText(/已新增 2 个 GTM 子主题/)).toBeVisible()
+  await expect(page.getByText('鎴戠幇鍦ㄦ兂瑕佸仛 GTM锛岃鐩存帴甯垜鎷嗘垚鍙互鎵ц鐨勮剳鍥剧粨鏋?)).toBeVisible()
+  await expect(aiSidebar(page).getByText(/宸叉柊澧?2 涓?GTM 瀛愪富棰?)).toBeVisible()
 })

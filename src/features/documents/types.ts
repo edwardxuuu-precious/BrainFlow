@@ -51,6 +51,7 @@ export interface MindMapEditorChromeState {
 export interface MindMapWorkspaceState {
   selectedTopicId: string | null
   chrome: MindMapEditorChromeState
+  hierarchyCollapsedTopicIds: string[]
 }
 
 export interface MindMapDocument {

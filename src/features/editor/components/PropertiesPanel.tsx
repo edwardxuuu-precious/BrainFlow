@@ -7,6 +7,8 @@ import styles from './PropertiesPanel.module.css'
 interface PropertiesPanelProps {
   topic: TopicNode | null
   selectionCount: number
+  selectedLockedCount?: number
+  selectedUnlockedCount?: number
   isRoot: boolean
   isFirstLevel: boolean
   draftTitle: string
@@ -22,6 +24,8 @@ interface PropertiesPanelProps {
   onBranchSideChange: (side: BranchSide) => void
   onResetPosition: () => void
   onToggleAiLock: (aiLocked: boolean) => void
+  onLockSelected?: () => void
+  onUnlockSelected?: () => void
   onCollapse?: () => void
   id?: string
   className?: string
@@ -38,6 +42,8 @@ function classNames(...values: Array<string | false | null | undefined>) {
 export function PropertiesPanel({
   topic,
   selectionCount,
+  selectedLockedCount = 0,
+  selectedUnlockedCount = 0,
   isRoot,
   isFirstLevel,
   draftTitle,
@@ -53,6 +59,8 @@ export function PropertiesPanel({
   onBranchSideChange,
   onResetPosition,
   onToggleAiLock,
+  onLockSelected,
+  onUnlockSelected,
   onCollapse,
   id,
   className,
@@ -100,9 +108,36 @@ export function PropertiesPanel({
             </h2>
             <p className={styles.empty}>
               {isMultiSelection
-                ? '多选模式下不显示单节点表单。你可以切换到 AI，直接把当前选区作为聚焦上下文。'
+                ? '多选模式下不显示单节点表单。你可以直接批量锁定当前选区，或切换到 AI 把当前选区作为聚焦上下文。'
                 : '点击画布中的任意节点后，可以在这里编辑备注、方向、锁定状态和位置。'}
             </p>
+            {isMultiSelection ? (
+              <div className={styles.multiSelectSummary}>
+                <p className={styles.multiSelectStats}>
+                  其中 {selectedLockedCount} 个已锁定，{selectedUnlockedCount} 个未锁定
+                </p>
+                <div className={styles.multiSelectActions}>
+                  <Button
+                    tone="secondary"
+                    iconStart="lock"
+                    className={styles.actionButton}
+                    disabled={selectedUnlockedCount === 0}
+                    onClick={onLockSelected}
+                  >
+                    锁定所选未锁定节点
+                  </Button>
+                  <Button
+                    tone="ghost"
+                    iconStart="unlock"
+                    className={styles.actionButton}
+                    disabled={selectedLockedCount === 0}
+                    onClick={onUnlockSelected}
+                  >
+                    解锁所选已锁定节点
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className={styles.titleRow}>
@@ -172,7 +207,7 @@ export function PropertiesPanel({
       </div>
 
       {topic && !isMultiSelection ? (
-        <>
+        <div className={styles.content}>
           <div className={styles.block}>
             <label className={styles.label} htmlFor="topic-note">
               备注
@@ -215,7 +250,7 @@ export function PropertiesPanel({
               {topic.aiLocked ? '已锁定，点击解锁' : '允许 AI 修改此节点'}
             </Button>
             <p className={styles.helperText}>
-              锁定后，AI 仍可读取该节点，并在其下生成子节点或基于它生成同级节点，但不会修改、移动或删除它。
+              这是 AI 写保护，不影响人工直接编辑。锁定后，AI 仍可读取该节点，并在其下生成子节点或基于它生成同级节点，但不会修改、移动或删除它。
             </p>
           </div>
 
@@ -249,7 +284,7 @@ export function PropertiesPanel({
               ) : null}
             </div>
           </div>
-        </>
+        </div>
       ) : null}
     </section>
   )

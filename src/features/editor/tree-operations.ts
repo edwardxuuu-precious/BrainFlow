@@ -102,6 +102,18 @@ export function resolveTopicSide(doc: MindMapDocument, topicId: string): Resolve
   return resolveRootBranchSides(doc)[rootChildId] ?? 'right'
 }
 
+export function getTopicAncestorIds(doc: MindMapDocument, topicId: string): string[] {
+  const ancestors: string[] = []
+  let cursor = doc.topics[topicId]
+
+  while (cursor?.parentId) {
+    ancestors.push(cursor.parentId)
+    cursor = doc.topics[cursor.parentId]
+  }
+
+  return ancestors
+}
+
 function isDescendant(doc: MindMapDocument, candidateId: string, ancestorId: string): boolean {
   let cursor = doc.topics[candidateId]
 
@@ -192,6 +204,28 @@ export function setTopicAiLocked(
 
   const nextDoc = cloneDocument(doc)
   nextDoc.topics[topicId].aiLocked = aiLocked
+  return touchDocument(nextDoc)
+}
+
+export function setTopicsAiLocked(
+  doc: MindMapDocument,
+  topicIds: string[],
+  aiLocked: boolean,
+): MindMapDocument {
+  const normalizedTopicIds = Array.from(new Set(topicIds)).filter((topicId) => {
+    const topic = doc.topics[topicId]
+    return topic && topic.aiLocked !== aiLocked
+  })
+
+  if (normalizedTopicIds.length === 0) {
+    return doc
+  }
+
+  const nextDoc = cloneDocument(doc)
+  for (const topicId of normalizedTopicIds) {
+    nextDoc.topics[topicId].aiLocked = aiLocked
+  }
+
   return touchDocument(nextDoc)
 }
 
@@ -327,6 +361,65 @@ export function updateWorkspaceChrome(
   const nextDoc = cloneDocument(doc)
   nextDoc.workspace.chrome[side] = open
   return nextDoc
+}
+
+export function updateWorkspaceHierarchyCollapsed(
+  doc: MindMapDocument,
+  hierarchyCollapsedTopicIds: string[],
+): MindMapDocument {
+  const normalizedTopicIds = Array.from(new Set(hierarchyCollapsedTopicIds)).filter((topicId) => {
+    const topic = doc.topics[topicId]
+    return !!topic && topic.childIds.length > 0
+  })
+
+  if (
+    normalizedTopicIds.length === doc.workspace.hierarchyCollapsedTopicIds.length &&
+    normalizedTopicIds.every(
+      (topicId, index) => topicId === doc.workspace.hierarchyCollapsedTopicIds[index],
+    )
+  ) {
+    return doc
+  }
+
+  const nextDoc = cloneDocument(doc)
+  nextDoc.workspace.hierarchyCollapsedTopicIds = normalizedTopicIds
+  return nextDoc
+}
+
+export function toggleHierarchyBranch(doc: MindMapDocument, topicId: string): MindMapDocument {
+  const topic = doc.topics[topicId]
+  if (!topic || topic.childIds.length === 0) {
+    return doc
+  }
+
+  const isCollapsed = doc.workspace.hierarchyCollapsedTopicIds.includes(topicId)
+  const nextCollapsedTopicIds = isCollapsed
+    ? doc.workspace.hierarchyCollapsedTopicIds.filter((currentTopicId) => currentTopicId !== topicId)
+    : [...doc.workspace.hierarchyCollapsedTopicIds, topicId]
+
+  return updateWorkspaceHierarchyCollapsed(doc, nextCollapsedTopicIds)
+}
+
+export function expandHierarchyPath(doc: MindMapDocument, topicId: string | null): MindMapDocument {
+  if (!topicId || !doc.topics[topicId]) {
+    return doc
+  }
+
+  const visibleTopicIds = new Set(getTopicAncestorIds(doc, topicId))
+  if (
+    doc.workspace.hierarchyCollapsedTopicIds.every(
+      (collapsedTopicId) => !visibleTopicIds.has(collapsedTopicId),
+    )
+  ) {
+    return doc
+  }
+
+  return updateWorkspaceHierarchyCollapsed(
+    doc,
+    doc.workspace.hierarchyCollapsedTopicIds.filter(
+      (collapsedTopicId) => !visibleTopicIds.has(collapsedTopicId),
+    ),
+  )
 }
 
 export function setTopicOffset(

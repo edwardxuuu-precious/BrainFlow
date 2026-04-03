@@ -7,7 +7,9 @@ interface HierarchySidebarProps {
   document: MindMapDocument
   activeTopicId: string | null
   selectedTopicIds: string[]
+  collapsedTopicIds: string[]
   onSelect: (topicId: string, additive?: boolean) => void
+  onToggleBranch: (topicId: string) => void
   onPrimaryAction: () => void
   onCollapse?: () => void
   id?: string
@@ -20,6 +22,7 @@ const shortcuts = [
   { label: '添加同级节点', key: 'Enter' },
   { label: '编辑文本', key: 'F2' },
   { label: '删除节点', key: 'Del' },
+  { label: '锁定/解锁选中节点', key: 'Ctrl/Cmd + Shift + L' },
 ] as const
 
 function classNames(...values: Array<string | false | null | undefined>) {
@@ -34,7 +37,9 @@ export function HierarchySidebar({
   document,
   activeTopicId,
   selectedTopicIds,
+  collapsedTopicIds,
   onSelect,
+  onToggleBranch,
   onPrimaryAction,
   onCollapse,
   id,
@@ -42,10 +47,13 @@ export function HierarchySidebar({
   mode = 'docked',
 }: HierarchySidebarProps) {
   const selectedSet = new Set(selectedTopicIds)
+  const collapsedSet = new Set(collapsedTopicIds)
 
   const renderTopic = (topicId: string, depth: number): ReactElement => {
     const topic = document.topics[topicId]
-    const visibleChildren = topic.isCollapsed ? [] : topic.childIds
+    const hasChildren = topic.childIds.length > 0
+    const isCollapsed = collapsedSet.has(topicId)
+    const visibleChildren = isCollapsed ? [] : topic.childIds
     const hasNote = topic.note.trim().length > 0
     const isLocked = topic.aiLocked
     const isActive = activeTopicId === topicId
@@ -53,36 +61,55 @@ export function HierarchySidebar({
 
     return (
       <li key={topicId} className={styles.treeItem}>
-        <button
-          type="button"
-          className={styles.treeButton}
-          data-selected={isSelected}
-          data-active={isActive}
-          data-depth={depth}
-          aria-description={hasNote ? '已添加备注' : undefined}
-          style={{ paddingLeft: `${14 + depth * 16}px` }}
-          onClick={(event) => onSelect(topicId, hasMultiSelectModifier(event))}
-        >
-          <span className={styles.treeTitleLine}>
-            <Icon name={depth === 0 ? 'tree' : 'document'} size={14} />
-            <span className={styles.treeTitle}>{topic.title}</span>
-            {isLocked ? (
-              <span className={styles.lockIndicator} data-lock-indicator="true" aria-hidden="true">
-                <Icon name="lock" size={11} strokeWidth={1.9} />
-              </span>
-            ) : null}
-            {hasNote ? (
-              <span className={styles.noteIndicator} data-note-indicator="true" aria-hidden="true">
-                <Icon name="note" size={11} strokeWidth={1.9} />
-              </span>
-            ) : null}
-          </span>
-          {topic.childIds.length > 0 ? (
-            <span className={styles.treeCount}>
-              {topic.childIds.length} 个子节点{topic.isCollapsed ? ' · 已折叠' : ''}
+        <div className={styles.treeRow} style={{ paddingLeft: `${depth * 16}px` }}>
+          {hasChildren ? (
+            <button
+              type="button"
+              className={styles.treeToggle}
+              data-collapsed={isCollapsed}
+              aria-label={isCollapsed ? `展开 ${topic.title}` : `折叠 ${topic.title}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                onToggleBranch(topicId)
+              }}
+            >
+              <Icon name="back" size={12} strokeWidth={2.1} />
+            </button>
+          ) : (
+            <span className={styles.treeTogglePlaceholder} aria-hidden="true" />
+          )}
+
+          <button
+            type="button"
+            className={styles.treeButton}
+            data-selected={isSelected}
+            data-active={isActive}
+            data-depth={depth}
+            aria-description={hasNote ? '已添加备注' : undefined}
+            onClick={(event) => onSelect(topicId, hasMultiSelectModifier(event))}
+          >
+            <span className={styles.treeTitleLine}>
+              <Icon name={depth === 0 ? 'tree' : 'document'} size={14} />
+              <span className={styles.treeTitle}>{topic.title}</span>
+              {isLocked ? (
+                <span className={styles.lockIndicator} data-lock-indicator="true" aria-hidden="true">
+                  <Icon name="lock" size={11} strokeWidth={1.9} />
+                </span>
+              ) : null}
+              {hasNote ? (
+                <span className={styles.noteIndicator} data-note-indicator="true" aria-hidden="true">
+                  <Icon name="note" size={11} strokeWidth={1.9} />
+                </span>
+              ) : null}
             </span>
-          ) : null}
-        </button>
+            {hasChildren ? (
+              <span className={styles.treeCount}>
+                {topic.childIds.length} 个子节点{isCollapsed ? ' · 已折叠' : ''}
+              </span>
+            ) : null}
+          </button>
+        </div>
+
         {visibleChildren.length > 0 ? (
           <ul className={`${styles.treeList} ${styles.treeChildren}`}>
             {visibleChildren.map((childId) => renderTopic(childId, depth + 1))}
@@ -133,12 +160,7 @@ export function HierarchySidebar({
             </div>
           ))}
         </div>
-        <Button
-          tone="primary"
-          iconStart="add"
-          className={styles.primaryAction}
-          onClick={onPrimaryAction}
-        >
+        <Button tone="primary" iconStart="add" className={styles.primaryAction} onClick={onPrimaryAction}>
           新增子主题
         </Button>
       </div>

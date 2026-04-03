@@ -77,7 +77,8 @@ describe('codex app', () => {
       getSettings: vi.fn().mockResolvedValue(settings),
       saveSettings: vi.fn().mockResolvedValue(settings),
       resetSettings: vi.fn().mockResolvedValue(settings),
-      chat: vi.fn(),
+      streamChat: vi.fn(),
+      planChanges: vi.fn(),
     }
     const app = createApp({ bridge })
 
@@ -99,7 +100,8 @@ describe('codex app', () => {
         version: 'settings-v2',
       }),
       resetSettings: vi.fn().mockResolvedValue(settings),
-      chat: vi.fn(),
+      streamChat: vi.fn(),
+      planChanges: vi.fn(),
     }
     const app = createApp({ bridge })
 
@@ -124,7 +126,7 @@ describe('codex app', () => {
     expect(bridge.resetSettings).toHaveBeenCalledTimes(1)
   })
 
-  it('streams chat results for direct canvas application', async () => {
+  it('streams natural-language content first, then emits the final result', async () => {
     const result: AiChatResponse = {
       assistantMessage: '这里是一条 Codex 回答。',
       needsMoreContext: false,
@@ -142,7 +144,10 @@ describe('codex app', () => {
       getSettings: vi.fn().mockResolvedValue(settings),
       saveSettings: vi.fn().mockResolvedValue(settings),
       resetSettings: vi.fn().mockResolvedValue(settings),
-      chat: vi.fn<() => Promise<AiChatResponse>>().mockResolvedValue(result),
+      streamChat: vi
+        .fn()
+        .mockResolvedValue({ assistantMessage: result.assistantMessage, emittedDelta: false }),
+      planChanges: vi.fn<() => Promise<AiChatResponse>>().mockResolvedValue(result),
     }
     const app = createApp({ bridge })
 
@@ -157,28 +162,29 @@ describe('codex app', () => {
     expect(chatResponse.status).toBe(200)
     expect(chatResponse.headers.get('content-type')).toContain('application/x-ndjson')
     const payload = await chatResponse.text()
-    const firstLine = payload.split('\n').find(Boolean)
-    expect(firstLine).toBe(
-      '{"type":"status","stage":"starting_codex","message":"正在调用本机 Codex…"}',
-    )
+    expect(payload).toContain('"stage":"starting_codex"')
+    expect(payload).toContain('"stage":"streaming"')
+    expect(payload).toContain('"type":"assistant_delta"')
+    expect(payload).toContain('"stage":"planning_changes"')
     expect(payload).toContain('"type":"result"')
-    expect(bridge.chat).toHaveBeenCalledWith(baseRequest)
+    expect(bridge.streamChat).toHaveBeenCalledWith(baseRequest, expect.any(Object))
+    expect(bridge.planChanges).toHaveBeenCalledWith(baseRequest, result.assistantMessage)
   })
 
-  it('streams schema_invalid errors without pretending that login is broken', async () => {
+  it('keeps the first-stage answer available when planning changes fails', async () => {
     const bridge = {
       getStatus: vi.fn().mockResolvedValue(status),
       revalidate: vi.fn().mockResolvedValue(status),
       getSettings: vi.fn().mockResolvedValue(settings),
       saveSettings: vi.fn().mockResolvedValue(settings),
       resetSettings: vi.fn().mockResolvedValue(settings),
-      chat: vi
+      streamChat: vi
+        .fn()
+        .mockResolvedValue({ assistantMessage: '这里是一条已成功生成的回答。', emittedDelta: false }),
+      planChanges: vi
         .fn()
         .mockRejectedValue(
-          new CodexBridgeError(
-            'schema_invalid',
-            '本地 AI bridge 的输出 schema 与当前 Codex CLI 不兼容。这不是登录问题，重新验证不会解决，请修复应用端格式后再试。',
-          ),
+          new CodexBridgeError('request_failed', '第二阶段结构化落图失败，请稍后重试。'),
         ),
     }
     const app = createApp({ bridge })
@@ -191,10 +197,10 @@ describe('codex app', () => {
       body: JSON.stringify(baseRequest),
     })
 
-    expect(chatResponse.status).toBe(200)
     const payload = await chatResponse.text()
+    expect(payload).toContain('这里是一条已成功生成的回答。')
+    expect(payload).toContain('"stage":"planning_changes"')
     expect(payload).toContain('"type":"error"')
-    expect(payload).toContain('"code":"schema_invalid"')
-    expect(payload).toContain('这不是登录问题')
+    expect(payload).toContain('第二阶段结构化落图失败')
   })
 })

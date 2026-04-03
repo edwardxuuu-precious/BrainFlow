@@ -23,7 +23,7 @@ import { SidebarRail } from '../../features/editor/components/SidebarRail'
 import { getEditorSnapshot, useEditorStore } from '../../features/editor/editor-store'
 import { exportCanvasAsPng, exportDocumentAsJson } from '../../features/editor/exporters'
 import { layoutMindMap, type MindMapFlowNode } from '../../features/editor/layout'
-import { getTopicLayout } from '../../features/editor/tree-operations'
+import { getTopicAncestorIds, getTopicLayout } from '../../features/editor/tree-operations'
 import { useEditorShortcuts } from '../../features/editor/use-editor-shortcuts'
 import styles from './MapEditorPage.module.css'
 
@@ -186,6 +186,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const setSelection = useEditorStore((state) => state.setSelection)
   const toggleTopicSelection = useEditorStore((state) => state.toggleTopicSelection)
   const clearSelection = useEditorStore((state) => state.clearSelection)
+  const toggleHierarchyBranch = useEditorStore((state) => state.toggleHierarchyBranch)
   const startEditing = useEditorStore((state) => state.startEditing)
   const stopEditing = useEditorStore((state) => state.stopEditing)
   const renameDocument = useEditorStore((state) => state.renameDocument)
@@ -198,6 +199,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const setTopicOffset = useEditorStore((state) => state.setTopicOffset)
   const resetTopicOffset = useEditorStore((state) => state.resetTopicOffset)
   const setTopicAiLocked = useEditorStore((state) => state.setTopicAiLocked)
+  const setTopicsAiLocked = useEditorStore((state) => state.setTopicsAiLocked)
   const setViewport = useEditorStore((state) => state.setViewport)
   const setSidebarOpen = useEditorStore((state) => state.setSidebarOpen)
   const undo = useEditorStore((state) => state.undo)
@@ -247,7 +249,20 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const isRoot = !!document && activeTopicId === document.rootTopicId
   const isFirstLevel = !!selectedTopic && selectedTopic.parentId === document?.rootTopicId
   const selectionCount = selectedTopicIds.length
+  const selectedLockedCount = selectedTopicIds.reduce((count, topicId) => {
+    return count + (document?.topics[topicId]?.aiLocked ? 1 : 0)
+  }, 0)
+  const selectedUnlockedCount = selectionCount - selectedLockedCount
   const chrome = document?.workspace.chrome
+  const visibleHierarchyCollapsedTopicIds = useMemo(() => {
+    const hierarchyCollapsedTopicIds = document?.workspace.hierarchyCollapsedTopicIds ?? []
+    if (!document || !activeTopicId || !document.topics[activeTopicId]) {
+      return hierarchyCollapsedTopicIds
+    }
+
+    const visiblePath = new Set(getTopicAncestorIds(document, activeTopicId))
+    return hierarchyCollapsedTopicIds.filter((topicId) => !visiblePath.has(topicId))
+  }, [activeTopicId, document])
   const leftSidebarOpen = chrome?.leftSidebarOpen ?? true
   const rightSidebarOpen = chrome?.rightSidebarOpen ?? true
   const isDesktop = viewportMode === 'desktop'
@@ -269,8 +284,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
       })),
     [activeTopicId, document, selectedTopicIds],
   )
-  const rightSidebarTabs = (
-    <EditorSidebarTabs activeTab={rightPanelTab} onChange={setRightPanelTab} />
+  const rightSidebarTabs = (onCollapse?: () => void) => (
+    <EditorSidebarTabs activeTab={rightPanelTab} onChange={setRightPanelTab} onCollapse={onCollapse} />
   )
   const canUndoLastApplied =
     !!aiLastAppliedChange &&
@@ -613,7 +628,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         id={RIGHT_SIDEBAR_ID}
         className={className}
         mode={mode}
-        tabs={rightSidebarTabs}
+        tabs={rightSidebarTabs(onCollapse)}
         selectedTopics={aiSelectedTopics}
         sessionList={aiSessionList}
         activeSessionId={aiActiveSessionId}
@@ -663,9 +678,11 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         id={RIGHT_SIDEBAR_ID}
         className={className}
         mode={mode}
-        tabs={rightSidebarTabs}
+        tabs={rightSidebarTabs(onCollapse)}
         topic={selectionCount > 1 ? null : selectedTopic}
         selectionCount={selectionCount}
+        selectedLockedCount={selectedLockedCount}
+        selectedUnlockedCount={selectedUnlockedCount}
         isRoot={isRoot}
         isFirstLevel={isFirstLevel}
         draftTitle={draftTitle}
@@ -686,6 +703,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         onNoteChange={(note) => activeTopicId && updateNote(activeTopicId, note)}
         onBranchSideChange={(side) => activeTopicId && setBranchSide(activeTopicId, side)}
         onToggleAiLock={(aiLocked) => activeTopicId && setTopicAiLocked(activeTopicId, aiLocked)}
+        onLockSelected={() => setTopicsAiLocked(selectedTopicIds.filter((topicId) => !document.topics[topicId]?.aiLocked), true)}
+        onUnlockSelected={() => setTopicsAiLocked(selectedTopicIds.filter((topicId) => document.topics[topicId]?.aiLocked), false)}
         onResetPosition={() => activeTopicId && resetTopicOffset(activeTopicId)}
       />
     )
@@ -746,8 +765,10 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
               document={document}
               activeTopicId={activeTopicId}
               selectedTopicIds={selectedTopicIds}
+              collapsedTopicIds={visibleHierarchyCollapsedTopicIds}
               className={styles.leftSidebar}
               onSelect={handleHierarchySelect}
+              onToggleBranch={toggleHierarchyBranch}
               onPrimaryAction={() => addChild(activeTopicId ?? document.rootTopicId)}
               onCollapse={closeLeftSidebar}
             />
@@ -788,9 +809,11 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
                   document={document}
                   activeTopicId={activeTopicId}
                   selectedTopicIds={selectedTopicIds}
+                  collapsedTopicIds={visibleHierarchyCollapsedTopicIds}
                   className={styles.drawerPanel}
                   mode="drawer"
                   onSelect={handleHierarchySelect}
+                  onToggleBranch={toggleHierarchyBranch}
                   onPrimaryAction={() => addChild(activeTopicId ?? document.rootTopicId)}
                   onCollapse={closeLeftSidebar}
                 />
@@ -811,13 +834,22 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             </Button>
           </div>
 
-          <div ref={canvasRef} className={styles.canvasFrame}>
+          <div
+            ref={canvasRef}
+            className={styles.canvasFrame}
+            onMouseDownCapture={(event) => {
+              if (event.button === 1) {
+                event.preventDefault()
+              }
+            }}
+          >
             <ReactFlow
               nodes={nodes}
               edges={layout.renderEdges}
               nodeTypes={nodeTypes}
               nodesConnectable={false}
-              panOnDrag={isSpacePressed}
+              panActivationKeyCode="Space"
+              panOnDrag={isSpacePressed ? true : [1]}
               selectionOnDrag
               selectionMode={SelectionMode.Partial}
               multiSelectionKeyCode={['Meta', 'Control', 'Shift']}

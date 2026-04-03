@@ -3,6 +3,7 @@ import type { CSSProperties, SVGProps } from 'react'
 export type IconName =
   | 'add'
   | 'archive'
+  | 'attachment'
   | 'back'
   | 'chat'
   | 'check'
@@ -11,12 +12,14 @@ export type IconName =
   | 'delete'
   | 'document'
   | 'edit'
+  | 'error'
   | 'export'
   | 'fitView'
   | 'history'
   | 'keyboard'
   | 'local'
   | 'lock'
+  | 'loading'
   | 'minus'
   | 'note'
   | 'redo'
@@ -29,6 +32,7 @@ export type IconName =
   | 'tree'
   | 'undo'
   | 'unlock'
+  | 'warning'
 
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'children'> {
   name: IconName
@@ -39,6 +43,7 @@ interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'children'> {
 const iconPaths: Record<IconName, string[]> = {
   add: ['M12 5v14', 'M5 12h14'],
   archive: ['M4 7h16l-1 12H5L4 7Z', 'M9 11h6', 'M9 4h6l1 3H8l1-3Z'],
+  attachment: ['M9 7a5 5 0 0 1 10 0v10a3 3 0 0 1-6 0V9a1 1 0 0 1 2 0v8a1 1 0 0 0 2 0V7a3 3 0 0 0-6 0v10a5 5 0 0 0 10 0V9'],
   back: ['M15 18l-6-6 6-6', 'M9 12h10'],
   chat: ['M5 6h14v9H9l-4 4V6Z'],
   check: ['M5 13l4 4L19 7'],
@@ -47,12 +52,14 @@ const iconPaths: Record<IconName, string[]> = {
   delete: ['M5 7h14', 'M9 7V5h6v2', 'M10 11v6', 'M14 11v6', 'M7 7l1 12h8l1-12'],
   document: ['M8 3h6l5 5v13H8z', 'M14 3v5h5'],
   edit: ['M4 20h4l10-10-4-4L4 16v4', 'M12 6l4 4', 'M14 4l4 4'],
+  error: ['M12 8v5', 'M12 16h.01', 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z', 'M15 9l-6 6', 'M9 9l6 6'],
   export: ['M12 4v11', 'M8 8l4-4 4 4', 'M5 20h14'],
   fitView: ['M4 9V4h5', 'M20 9V4h-5', 'M4 15v5h5', 'M20 15v5h-5'],
   history: ['M5 7v5h5', 'M6 12a7 7 0 1 0 2-5', 'M12 9v4l3 2'],
   keyboard: ['M4 7h16v10H4z', 'M7 10h1', 'M10 10h1', 'M13 10h1', 'M16 10h1', 'M7 13h8'],
   local: ['M7 9a5 5 0 0 1 10 0', 'M5 13a8 8 0 0 1 14 0', 'M12 17h.01'],
   lock: ['M7 11h10v9H7z', 'M9 11V8a3 3 0 1 1 6 0v3'],
+  loading: ['M12 4a8 8 0 1 1-5.66 2.34', 'M12 2v3', 'M4 12H1'],
   minus: ['M5 12h14'],
   note: ['M7 4h10v16l-5-3-5 3z'],
   redo: ['M19 7v5h-5', 'M18 12a7 7 0 1 1-2-5', 'M12 9v4l-3 2'],
@@ -65,6 +72,7 @@ const iconPaths: Record<IconName, string[]> = {
   tree: ['M7 6h4v4H7z', 'M13 14h4v4h-4z', 'M7 14h4v4H7z', 'M11 8h3v3', 'M14 11v3', 'M14 11H9v3'],
   undo: ['M5 7v5h5', 'M6 12a7 7 0 1 1 2-5', 'M12 9v4l3 2'],
   unlock: ['M7 11h10v9H7z', 'M9 11V8a3 3 0 1 1 5.5 1.5'],
+  warning: ['M12 9v4', 'M12 17h.01', 'M10.3 3.9 2 18a2 2 0 0 0 1.8 2.1h11.8a2 2 0 0 0 1.8-2.1l-2-14.1a2 2 0 0 0-1.8-1.9H12.1a2 2 0 0 0-1.8 1.9z'],
 }
 
 export function Icon({ name, size = 18, strokeWidth = 1.8, style, ...props }: IconProps) {

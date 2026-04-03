@@ -81,6 +81,7 @@ describe('documentService', () => {
       leftSidebarOpen: true,
       rightSidebarOpen: true,
     })
+    expect(loadedWithoutWorkspace?.workspace.hierarchyCollapsedTopicIds).toEqual([])
 
     await documentService.saveDocument({
       ...legacy,
@@ -90,12 +91,14 @@ describe('documentService', () => {
           leftSidebarOpen: false,
           rightSidebarOpen: true,
         },
+        hierarchyCollapsedTopicIds: [legacy.rootTopicId],
       },
     })
 
     const loadedInvalidSelection = await documentService.getDocument(legacy.id)
     expect(loadedInvalidSelection?.workspace.selectedTopicId).toBe(rootId)
     expect(loadedInvalidSelection?.workspace.chrome.leftSidebarOpen).toBe(false)
+    expect(loadedInvalidSelection?.workspace.hierarchyCollapsedTopicIds).toEqual([legacy.rootTopicId])
   })
 
   it('preserves updatedAt when only workspace state changes', async () => {
@@ -111,6 +114,7 @@ describe('documentService', () => {
           leftSidebarOpen: false,
           rightSidebarOpen: true,
         },
+        hierarchyCollapsedTopicIds: [selectedTopicId],
       },
     })
 
@@ -124,6 +128,7 @@ describe('documentService', () => {
         leftSidebarOpen: false,
         rightSidebarOpen: true,
       },
+      hierarchyCollapsedTopicIds: [],
     })
   })
 
@@ -140,6 +145,7 @@ describe('documentService', () => {
           leftSidebarOpen: true,
           rightSidebarOpen: false,
         },
+        hierarchyCollapsedTopicIds: [selectedTopicId],
       },
     })
 
@@ -153,7 +159,42 @@ describe('documentService', () => {
         leftSidebarOpen: true,
         rightSidebarOpen: false,
       },
+      hierarchyCollapsedTopicIds: [],
     })
+  })
+
+  it('filters invalid collapsed ids while preserving valid hierarchy collapse state', async () => {
+    const document = await documentService.createDocument('树折叠状态')
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    const childId = 'topic_persisted_tree_child'
+    document.topics[branchId].childIds.push(childId)
+    document.topics[childId] = {
+      id: childId,
+      parentId: branchId,
+      childIds: [],
+      title: '子节点',
+      note: '',
+      aiLocked: false,
+      isCollapsed: false,
+      branchSide: 'auto',
+      layout: {
+        offsetX: 0,
+        offsetY: 0,
+      },
+      style: {},
+    }
+
+    await documentService.saveDocument({
+      ...document,
+      workspace: {
+        ...document.workspace,
+        hierarchyCollapsedTopicIds: [branchId, 'missing-topic'],
+      },
+    })
+
+    const loaded = await documentService.getDocument(document.id)
+
+    expect(loaded?.workspace.hierarchyCollapsedTopicIds).toEqual([branchId])
   })
 
   it('deletes documents and updates the recent pointer', async () => {

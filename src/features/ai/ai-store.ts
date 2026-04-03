@@ -689,6 +689,51 @@ export const useAiStore = create<AiState>((set, get) => ({
     await saveAiConversation(nextConversation)
 
     try {
+      let hasCommittedAssistantMessage = false
+
+      const buildSessionSummaryList = (messages: AiMessage[]) =>
+        replaceSessionSummary(get().sessionList, {
+          documentId: document.id,
+          documentTitle: document.title,
+          sessionId,
+          title: nextSessionTitle,
+          messages,
+          updatedAt: Date.now(),
+          archivedAt: null,
+        })
+
+      const commitAssistantMessage = (fallbackContent?: string) => {
+        if (hasCommittedAssistantMessage) {
+          return
+        }
+
+        const state = get()
+        const contentToPersist = (state.streamingText || fallbackContent || '').trim()
+        if (!contentToPersist) {
+          return
+        }
+
+        hasCommittedAssistantMessage = true
+        const assistantMessage = createMessage('assistant', contentToPersist)
+        const messages = [...state.messages, assistantMessage]
+        const sessionList = buildSessionSummaryList(messages)
+        const nextState = {
+          ...state,
+          messages,
+          sessionList,
+          activeSessionTitle: nextSessionTitle,
+          streamingText: '',
+        }
+
+        set({
+          messages,
+          sessionList,
+          activeSessionTitle: nextSessionTitle,
+          streamingText: '',
+        })
+        void persistState(nextState)
+      }
+
       await streamCodexChat(
         {
           documentId: document.id,
@@ -699,6 +744,10 @@ export const useAiStore = create<AiState>((set, get) => ({
         },
         (event) => {
           if (event.type === 'status') {
+            if (event.stage === 'planning_changes') {
+              commitAssistantMessage()
+            }
+
             set({
               runStage: event.stage,
               streamingStatusText: event.message,
@@ -716,14 +765,27 @@ export const useAiStore = create<AiState>((set, get) => ({
           }
 
           if (event.type === 'error') {
+            if (
+              event.stage === 'planning_changes' ||
+              event.stage === 'applying_changes'
+            ) {
+              commitAssistantMessage()
+            }
+
             set({
               isSending: false,
               runStage: 'error',
               streamingStatusText: '',
               streamingText: '',
               error: null,
-              lastExecutionError: createExecutionError(event.code, event.message, 'error'),
+              lastExecutionError: createExecutionError(
+                event.code,
+                event.message,
+                event.stage ?? 'error',
+              ),
             })
+
+            void persistState(get())
 
             if (
               event.code === 'verification_required' ||
@@ -735,10 +797,9 @@ export const useAiStore = create<AiState>((set, get) => ({
             return
           }
 
-          const assistantMessage = createMessage('assistant', event.data.assistantMessage)
+          commitAssistantMessage(event.data.assistantMessage)
           const baseState = get()
           const nextState: Partial<AiState> = {
-            messages: [...baseState.messages, assistantMessage],
             isSending: false,
             runStage: 'completed',
             streamingStatusText: '',
@@ -787,7 +848,7 @@ export const useAiStore = create<AiState>((set, get) => ({
               )
               const afterApplySnapshot = getEditorSnapshot()
 
-              nextState.messages = [...(nextState.messages ?? []), appliedNotice]
+              nextState.messages = [...baseState.messages, appliedNotice]
               nextState.lastAppliedChange = {
                 proposalId: event.data.proposal.id,
                 summary: result.appliedSummary,

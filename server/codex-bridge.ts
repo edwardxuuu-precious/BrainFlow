@@ -1,14 +1,18 @@
 import type {
-  AiCanvasTarget,
   AiCanvasOperation,
   AiCanvasProposal,
+  AiCanvasTarget,
   AiChatRequest,
   AiChatResponse,
   CodexBridgeIssue,
   CodexSettings,
   CodexStatus,
 } from '../shared/ai-contract.js'
-import { createCodexRunner, type CodexRunner } from './codex-runner.js'
+import {
+  createCodexRunner,
+  type CodexJsonEvent,
+  type CodexRunner,
+} from './codex-runner.js'
 import {
   createSystemPromptStore,
   type LoadedSystemPrompt,
@@ -37,12 +41,20 @@ interface RawProposalPayload {
   operations?: RawProposalOperation[] | null
 }
 
-interface RawAiResponsePayload {
-  assistantMessage?: string | null
+interface RawPlanPayload {
   needsMoreContext?: boolean | null
   contextRequest?: string[] | null
   warnings?: string[] | null
   proposal?: RawProposalPayload | null
+}
+
+export interface CodexChatStreamResult {
+  assistantMessage: string
+  emittedDelta: boolean
+}
+
+export interface CodexChatStreamOptions {
+  onAssistantDelta?: (delta: string) => void
 }
 
 export class CodexBridgeError extends Error {
@@ -99,9 +111,8 @@ const OPERATION_SCHEMA = {
 const RESPONSE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['assistantMessage', 'needsMoreContext', 'contextRequest', 'warnings', 'proposal'],
+  required: ['needsMoreContext', 'contextRequest', 'warnings', 'proposal'],
   properties: {
-    assistantMessage: { type: ['string', 'null'] },
     needsMoreContext: { type: ['boolean', 'null'] },
     contextRequest: {
       type: ['array', 'null'],
@@ -264,12 +275,11 @@ function normalizeOperation(operation: RawProposalOperation): AiCanvasOperation 
   }
 }
 
-function normalizeResponsePayload(
+function normalizePlanPayload(
   request: AiChatRequest,
-  rawPayload: RawAiResponsePayload,
+  assistantMessage: string,
+  rawPayload: RawPlanPayload,
 ): AiChatResponse {
-  const assistantMessage =
-    normalizeText(rawPayload.assistantMessage) ?? '我需要更多上下文才能安全地回答这个问题。'
   const contextRequest = (rawPayload.contextRequest ?? [])
     .map((item) => normalizeText(item))
     .filter(Boolean) as string[] | undefined
@@ -288,7 +298,7 @@ function normalizeResponsePayload(
   }
 
   return {
-    assistantMessage,
+    assistantMessage: normalizeText(assistantMessage) ?? '我已经基于当前脑图整理出一份回答。',
     needsMoreContext: rawPayload.needsMoreContext === true,
     contextRequest,
     proposal,
@@ -296,12 +306,12 @@ function normalizeResponsePayload(
   }
 }
 
-function parseResponsePayload(rawText: string | null | undefined): RawAiResponsePayload {
+function parsePlanPayload(rawText: string | null | undefined): RawPlanPayload {
   if (!rawText) {
     throw new CodexBridgeError('request_failed', 'Codex 返回了空响应。')
   }
 
-  const parsed = JSON.parse(rawText) as RawAiResponsePayload
+  const parsed = JSON.parse(rawText) as RawPlanPayload
   if (typeof parsed !== 'object' || parsed === null) {
     throw new CodexBridgeError('request_failed', 'Codex 返回了无效的结构化结果。')
   }
@@ -329,26 +339,24 @@ function normalizeBridgeError(error: unknown): CodexBridgeError {
   )
 }
 
-function buildPrompt(request: AiChatRequest, prompt: LoadedSystemPrompt): string {
-  const history = request.messages.map((message) => ({
+function buildHistory(request: AiChatRequest) {
+  return request.messages.map((message) => ({
     role: message.role,
     content: message.content,
     createdAt: message.createdAt,
   }))
+}
 
+function buildChatPrompt(request: AiChatRequest, prompt: LoadedSystemPrompt): string {
   return [
     prompt.fullPrompt,
     '',
-    'Return requirements:',
-    '- Return valid JSON only.',
+    'Stage 1 goal:',
+    '- Reply in natural language only.',
+    '- Do not output JSON, code blocks, XML, YAML, or pseudo-schema.',
     '- Use the full graph context to understand the request; treat focus selection only as a hint.',
-    '- Existing node references should prefer topic:<realTopicId>.',
-    '- If you create a node and want to reference it later in the same proposal, assign resultRef on the create operation and then refer to it as ref:<resultRef>.',
-    '- Locked nodes have aiLocked=true. You may read them. You may create_child under a locked node or create_sibling around a locked node, but you must not update_topic, move_topic, or delete_topic on a locked node.',
-    '- If a locked node seems wrong, mention that suggestion in assistantMessage instead of modifying it.',
-    '- Prefer preserving the user’s original framing; do not force a methodology the user did not ask for.',
-    '- Only use move_topic or delete_topic when the user explicitly asks to regroup, replace, delete, or reorganize existing content.',
-    '- If the request is too ambiguous to apply safely, set needsMoreContext=true and ask one minimal clarification question in contextRequest.',
+    '- Preserve the user’s original framing instead of forcing a methodology they did not ask for.',
+    '- Mention locked-node conflicts as suggestions instead of silently ignoring them.',
     '',
     'Current request context:',
     JSON.stringify(
@@ -357,12 +365,72 @@ function buildPrompt(request: AiChatRequest, prompt: LoadedSystemPrompt): string
         sessionId: request.sessionId,
         baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
         context: request.context,
-        messages: history,
+        messages: buildHistory(request),
       },
       null,
       2,
     ),
   ].join('\n')
+}
+
+function buildPlanningPrompt(
+  request: AiChatRequest,
+  assistantMessage: string,
+  prompt: LoadedSystemPrompt,
+): string {
+  return [
+    prompt.fullPrompt,
+    '',
+    'Stage 2 goal:',
+    '- Return valid JSON only.',
+    '- Convert the natural-language answer into safe mind-map operations.',
+    '- Existing node references should prefer topic:<realTopicId>.',
+    '- If you create a node and want to reference it later in the same proposal, assign resultRef on the create operation and then refer to it as ref:<resultRef>.',
+    '- Locked nodes have aiLocked=true. You may read them. You may create_child under a locked node or create_sibling around a locked node, but you must not update_topic, move_topic, or delete_topic on a locked node.',
+    '- If a locked node seems wrong, mention that suggestion in warnings instead of modifying it.',
+    '- Only use move_topic or delete_topic when the user explicitly asks to regroup, replace, delete, or reorganize existing content.',
+    '- If the request is too ambiguous to apply safely, set needsMoreContext=true and ask one minimal clarification question in contextRequest.',
+    '',
+    'Natural-language answer already shown to the user:',
+    assistantMessage,
+    '',
+    'Current request context:',
+    JSON.stringify(
+      {
+        documentId: request.documentId,
+        sessionId: request.sessionId,
+        baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
+        context: request.context,
+        messages: buildHistory(request),
+      },
+      null,
+      2,
+    ),
+  ].join('\n')
+}
+
+function extractAssistantDelta(event: CodexJsonEvent): string | null {
+  if (typeof event.delta === 'string' && event.delta) {
+    return event.delta
+  }
+
+  if (typeof event.item?.text_delta === 'string' && event.item.text_delta) {
+    return event.item.text_delta
+  }
+
+  if (typeof event.item?.delta === 'string' && event.item.delta) {
+    return event.item.delta
+  }
+
+  if (
+    event.type?.includes('delta') &&
+    typeof event.item?.message === 'string' &&
+    event.item.message
+  ) {
+    return event.item.message
+  }
+
+  return null
 }
 
 export interface CodexBridge {
@@ -371,7 +439,11 @@ export interface CodexBridge {
   getSettings(): Promise<CodexSettings>
   saveSettings(businessPrompt: string): Promise<CodexSettings>
   resetSettings(): Promise<CodexSettings>
-  chat(request: AiChatRequest): Promise<AiChatResponse>
+  streamChat(
+    request: AiChatRequest,
+    options?: CodexChatStreamOptions,
+  ): Promise<CodexChatStreamResult>
+  planChanges(request: AiChatRequest, assistantMessage: string): Promise<AiChatResponse>
 }
 
 interface CreateCodexBridgeOptions {
@@ -403,7 +475,8 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
     getSettings: () => promptStore.getSettings(),
     saveSettings: (businessPrompt) => promptStore.saveSettings(businessPrompt),
     resetSettings: () => promptStore.resetSettings(),
-    async chat(request) {
+
+    async streamChat(request, options) {
       const status = await buildStatus()
       if (!status.ready) {
         throw new CodexBridgeError(
@@ -414,15 +487,51 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
       }
 
       const loadedPrompt = await promptStore.loadPrompt()
-      let rawText = ''
+      let emittedDelta = false
 
       try {
-        rawText = await runner.execute(buildPrompt(request, loadedPrompt), RESPONSE_SCHEMA)
+        const assistantMessage = await runner.executeMessage(buildChatPrompt(request, loadedPrompt), {
+          onEvent: (event) => {
+            const delta = extractAssistantDelta(event)
+            if (!delta) {
+              return
+            }
+
+            emittedDelta = true
+            options?.onAssistantDelta?.(delta)
+          },
+        })
+
+        return {
+          assistantMessage,
+          emittedDelta,
+        }
       } catch (error) {
         throw normalizeBridgeError(error)
       }
+    },
 
-      return normalizeResponsePayload(request, parseResponsePayload(rawText))
+    async planChanges(request, assistantMessage) {
+      const status = await buildStatus()
+      if (!status.ready) {
+        throw new CodexBridgeError(
+          'verification_required',
+          '当前 Codex 验证信息不可用，请尽快重新验证。',
+          status.issues,
+        )
+      }
+
+      const loadedPrompt = await promptStore.loadPrompt()
+
+      try {
+        const rawText = await runner.execute(
+          buildPlanningPrompt(request, assistantMessage, loadedPrompt),
+          RESPONSE_SCHEMA,
+        )
+        return normalizePlanPayload(request, assistantMessage, parsePlanPayload(rawText))
+      } catch (error) {
+        throw normalizeBridgeError(error)
+      }
     },
   }
 }

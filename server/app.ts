@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import type { AiChatRequest, AiStreamEvent, CodexApiError } from '../shared/ai-contract.js'
+import type { AiChatRequest, AiRunStage, AiStreamEvent, CodexApiError } from '../shared/ai-contract.js'
 import {
   createCodexBridge,
   CodexBridgeError,
@@ -62,6 +62,12 @@ function chunkText(text: string): string[] {
   return chunks
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
 function toApiError(error: unknown): CodexApiError {
   if (error instanceof CodexBridgeError) {
     return {
@@ -75,6 +81,21 @@ function toApiError(error: unknown): CodexApiError {
     code: 'request_failed',
     message: error instanceof Error ? error.message : 'Codex 请求失败。',
   }
+}
+
+function emitErrorEvent(
+  emit: (event: AiStreamEvent) => void,
+  error: unknown,
+  stage?: Exclude<AiRunStage, 'idle' | 'completed'>,
+): void {
+  const apiError = toApiError(error)
+  emit({
+    type: 'error',
+    stage,
+    code: apiError.code,
+    message: apiError.message,
+    issues: apiError.issues,
+  })
 }
 
 function createNdjsonResponse(
@@ -155,21 +176,65 @@ export function createApp(options?: CreateAppOptions) {
       emit({
         type: 'status',
         stage: 'waiting_first_token',
-        message: 'Codex 正在整理回答与脑图提案…',
+        message: 'Codex 正在生成自然语言回答…',
       })
+      let assistantMessage = ''
+      let emittedStreamingStatus = false
 
-      const result = await bridge.chat(request)
-      chunkText(result.assistantMessage).forEach((chunk) => {
-        emit({
-          type: 'assistant_delta',
-          delta: chunk,
+      try {
+        const streamResult = await bridge.streamChat(request, {
+          onAssistantDelta: (delta) => {
+            if (!emittedStreamingStatus) {
+              emittedStreamingStatus = true
+              emit({
+                type: 'status',
+                stage: 'streaming',
+                message: 'Codex 正在输出回答…',
+              })
+            }
+            emit({
+              type: 'assistant_delta',
+              delta,
+            })
+          },
         })
-      })
+        assistantMessage = streamResult.assistantMessage
+
+        if (!streamResult.emittedDelta) {
+          emit({
+            type: 'status',
+            stage: 'streaming',
+            message: 'Codex 已生成回答，正在写入消息…',
+          })
+
+          for (const chunk of chunkText(assistantMessage)) {
+            emit({
+              type: 'assistant_delta',
+              delta: chunk,
+            })
+            await delay(12)
+          }
+        }
+      } catch (error) {
+        emitErrorEvent(emit, error, 'starting_codex')
+        return
+      }
 
       emit({
-        type: 'result',
-        data: result,
+        type: 'status',
+        stage: 'planning_changes',
+        message: '正在生成可直接落图的脑图改动…',
       })
+
+      try {
+        const result = await bridge.planChanges(request, assistantMessage)
+        emit({
+          type: 'result',
+          data: result,
+        })
+      } catch (error) {
+        emitErrorEvent(emit, error, 'planning_changes')
+      }
     })
   })
 

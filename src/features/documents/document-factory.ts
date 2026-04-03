@@ -63,6 +63,7 @@ export function createMindMapDocument(title = '未命名脑图'): MindMapDocumen
         leftSidebarOpen: true,
         rightSidebarOpen: true,
       },
+      hierarchyCollapsedTopicIds: [],
     },
     theme: defaultTheme,
   }

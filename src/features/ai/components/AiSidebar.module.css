@@ -14,199 +14,331 @@
 
 .header {
   display: grid;
-  gap: 14px;
+  gap: 16px;
   padding: 20px 20px 18px;
   border-bottom: 1px solid rgba(172, 179, 184, 0.14);
 }
 
 .tabs {
   display: flex;
+  width: 100%;
 }
 
-.chrome,
-.chromeActions {
+/* Toolbar - Row 1: Dropdown + New Chat */
+.toolbarRow1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dropdownWrapper {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.dropdownTrigger {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-}
-
-.chrome {
-  align-items: flex-start;
-}
-
-.chromeActions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.sessionPicker {
-  display: grid;
-  gap: 4px;
-  min-width: 160px;
-}
-
-.sessionLabel {
-  color: var(--color-muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.sessionSelect {
-  min-width: 160px;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid rgba(172, 179, 184, 0.16);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.82);
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.04);
   color: var(--color-text);
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 180ms ease;
 }
 
-.collapseButton {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  min-height: 32px;
-  border-radius: 12px;
+.dropdownTrigger:hover {
+  background: rgba(0, 0, 0, 0.08);
 }
 
-.collapseButton :global(svg) {
+.dropdownValue {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdownIcon {
+  flex-shrink: 0;
+  transition: transform 200ms ease;
+}
+
+.dropdownIconOpen {
   transform: rotate(180deg);
 }
 
-.intro {
+.dropdownMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
   display: grid;
-  gap: 10px;
+  gap: 2px;
+  padding: 6px;
+  border: none;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
-.heading,
-.subtitle,
-.statusText,
-.statusError,
-.statusSuccess,
-.statusWarning,
-.promptExcerpt,
-.appliedSummary,
-.executionIssueTitle,
-.executionIssueText,
-.executionIssueHint {
-  margin: 0;
-}
-
-.heading {
+.dropdownItem {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--color-text);
-  font-family: var(--font-display);
-  font-size: 30px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.subtitle,
-.statusText,
-.statusError,
-.statusSuccess,
-.statusWarning,
-.promptExcerpt,
-.issueDetails,
-.issueList,
-.appliedSummary,
-.executionIssueText,
-.executionIssueHint {
-  color: var(--color-text-soft);
   font-size: 13px;
-  line-height: 1.6;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms ease;
 }
 
-.statusSuccess {
-  color: color-mix(in srgb, var(--color-accent), black 16%);
+.dropdownItem:hover {
+  background: rgba(0, 0, 0, 0.04);
 }
 
-.statusWarning {
-  color: color-mix(in srgb, var(--color-danger), black 10%);
+.dropdownItemActive {
+  background: rgba(0, 122, 255, 0.1);
+  color: #007aff;
 }
 
-.body {
+/* Actions + Status Row */
+.actionsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.statusButton {
+  font-size: 12px;
+}
+
+.statusButtonReady {
+  background: rgba(52, 199, 89, 0.1);
+  color: #34c759;
+}
+
+.statusButtonError {
+  background: rgba(255, 59, 48, 0.1);
+  color: #ff3b30;
+}
+
+.actionButtons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Expandable Status Details */
+.statusDetails {
   display: grid;
-  min-height: 0;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
-  gap: 18px;
-  padding: 18px 20px 20px;
-}
-
-.statusCard,
-.promptCard,
-.appliedCard {
-  display: grid;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: 12px;
+  padding: 16px;
   border: 1px solid rgba(172, 179, 184, 0.14);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.68);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.62);
 }
 
-.statusHeader,
-.promptSummary,
-.appliedHeader,
-.appliedActions {
+.statusDetailsHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.statusVersion,
-.promptMeta {
+
+
+
+
+.body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.infoSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(172, 179, 184, 0.1);
+}
+
+/* Chat Area with Resizable Composer */
+.chatArea {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.messagesWrapper {
+  flex: 1;
+  min-height: 100px;
+  overflow: hidden;
+}
+
+.composerWrapper {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Status Card */
+.statusCard {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(172, 179, 184, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.statusHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.statusBadgeReady {
+  background: rgba(52, 199, 89, 0.15);
+  color: #34c759;
+}
+
+.statusBadgeNeedAuth {
+  background: rgba(255, 149, 0, 0.15);
+  color: #ff9500;
+}
+
+.statusVersion {
   color: var(--color-muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.statusError {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.statusSuccess {
+  margin: 0;
+  color: #34c759;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.statusWarning {
+  margin: 0;
+  color: #ff9500;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.statusText {
+  margin: 0;
+  color: var(--color-text-soft);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .statusIssues {
   display: grid;
-  gap: 8px;
+  gap: 10px;
+}
+
+.issueList {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--color-text-soft);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.issueDetails {
+  margin: 8px 0 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(159, 64, 61, 0.08);
+  color: var(--color-danger);
+  font-size: 13px;
+  line-height: 1.6;
+  list-style: none;
 }
 
 .executionIssue {
   display: grid;
-  gap: 4px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(172, 179, 184, 0.14);
+  gap: 6px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(159, 64, 61, 0.08);
 }
 
 .executionIssueTitle {
-  color: var(--color-text);
+  margin: 0;
+  color: var(--color-danger);
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .executionIssueText {
-  color: var(--color-danger);
+  margin: 0;
+  color: var(--color-text);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .executionIssueHint {
-  color: var(--color-text-soft);
-}
-
-.issueList,
-.issueDetails {
   margin: 0;
-  padding-left: 18px;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
-.promptCard[open] {
-  background: rgba(255, 255, 255, 0.82);
+/* Prompt Card */
+.promptCard {
+  border: 1px solid rgba(172, 179, 184, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.62);
 }
 
 .promptSummary {
-  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
   color: var(--color-text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
+  cursor: pointer;
   list-style: none;
 }
 
@@ -214,19 +346,65 @@
   display: none;
 }
 
-.promptContent {
+.promptMeta {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.promptExcerpt {
   margin: 0;
+  padding: 0 16px 12px;
+  color: var(--color-text-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.promptContent {
+  margin: 0 16px 16px;
   padding: 12px;
-  overflow: auto;
-  border-radius: 14px;
-  background: rgba(244, 246, 248, 0.84);
-  color: var(--color-text);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--color-text-soft);
+  font-size: 12px;
   line-height: 1.6;
   white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+/* Applied Card */
+.appliedCard {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(172, 179, 184, 0.14);
+  border-radius: 14px;
+  background: rgba(0, 122, 255, 0.06);
+}
+
+.appliedHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.appliedBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 122, 255, 0.15);
+  color: #007aff;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .appliedSummary {
   color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.appliedActions {
+  display: flex;
 }

@@ -51,10 +51,12 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
         isSelected ? styles.selected : '',
         isActive ? styles.active : '',
         isEditing ? styles.editing : '',
+        isLocked ? styles.locked : '',
         data.isRoot ? styles.root : '',
       ].join(' ')}
       data-selected={isSelected ? 'true' : 'false'}
       data-active={isActive ? 'true' : 'false'}
+      data-locked={isLocked ? 'true' : 'false'}
       style={{ '--branch-color': data.branchColor } as CSSProperties}
       onDoubleClick={() => startEditing(id, 'canvas')}
     >
@@ -64,6 +66,17 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
       <Handle id={sourceHandleId('right')} type="source" position={Position.Right} className={styles.handle} />
 
       <div className={styles.content}>
+        {isLocked ? (
+          <span
+            className={styles.lockBadge}
+            data-lock-badge="true"
+            role="img"
+            aria-label="AI 锁定节点"
+          >
+            <Icon name="lock" size={12} strokeWidth={1.9} />
+            <span className={styles.lockBadgeText}>已锁定</span>
+          </span>
+        ) : null}
         {data.isRoot ? <span className={styles.badge}>BRAINFLOW</span> : null}
         {isEditing ? (
           <input
@@ -90,16 +103,6 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
         ) : (
           <div className={styles.titleRow}>
             <div className={styles.title}>{data.title}</div>
-            {isLocked ? (
-              <span
-                className={styles.lockIndicator}
-                data-lock-indicator="true"
-                role="img"
-                aria-label="AI 锁定"
-              >
-                <Icon name="lock" size={12} strokeWidth={1.9} />
-              </span>
-            ) : null}
             {hasNote ? (
               <span
                 className={styles.noteIndicator}

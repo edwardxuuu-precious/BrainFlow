@@ -207,4 +207,135 @@ describe('ai-store', () => {
       message: '已重新检查，本机 Codex 当前可用。',
     })
   })
+
+  it('commits the assistant reply before planning changes begin', async () => {
+    const document = createMindMapDocument()
+    useEditorStore.getState().setDocument(document)
+    useAiStore.setState({
+      documentId: document.id,
+      documentTitle: document.title,
+      activeSessionId: 'session_default',
+      activeSessionTitle: '新对话',
+      sessionList: [
+        {
+          documentId: document.id,
+          documentTitle: document.title,
+          sessionId: 'session_default',
+          title: '新对话',
+          updatedAt: 0,
+          archivedAt: null,
+        },
+      ],
+      messages: [],
+      status: readyStatus,
+      statusError: null,
+      statusFeedback: null,
+      error: null,
+      lastExecutionError: null,
+    })
+
+    vi.mocked(streamCodexChat).mockImplementation(async (_request, onEvent) => {
+      onEvent({
+        type: 'assistant_delta',
+        delta: '第一阶段回答',
+      })
+      onEvent({
+        type: 'status',
+        stage: 'planning_changes',
+        message: '正在生成可直接落图的脑图改动…',
+      })
+      onEvent({
+        type: 'result',
+        data: {
+          assistantMessage: '第一阶段回答',
+          needsMoreContext: false,
+          contextRequest: [],
+          proposal: null,
+          warnings: [],
+        },
+      })
+    })
+
+    await useAiStore.getState().sendMessage(
+      document,
+      {
+        activeTopicId: document.rootTopicId,
+        selectedTopicIds: [document.rootTopicId],
+      },
+      '帮我做一个 GTM 计划',
+    )
+
+    expect(useAiStore.getState().messages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+    ])
+    expect(useAiStore.getState().messages.at(-1)?.content).toBe('第一阶段回答')
+    expect(useAiStore.getState().runStage).toBe('completed')
+  })
+
+  it('keeps the first-stage assistant reply when planning changes fail later', async () => {
+    const document = createMindMapDocument()
+    useEditorStore.getState().setDocument(document)
+    useAiStore.setState({
+      documentId: document.id,
+      documentTitle: document.title,
+      activeSessionId: 'session_default',
+      activeSessionTitle: '新对话',
+      sessionList: [
+        {
+          documentId: document.id,
+          documentTitle: document.title,
+          sessionId: 'session_default',
+          title: '新对话',
+          updatedAt: 0,
+          archivedAt: null,
+        },
+      ],
+      messages: [],
+      status: readyStatus,
+      statusError: null,
+      statusFeedback: null,
+      error: null,
+      lastExecutionError: null,
+    })
+
+    vi.mocked(streamCodexChat).mockImplementation(async (_request, onEvent) => {
+      onEvent({
+        type: 'assistant_delta',
+        delta: '第一阶段回答',
+      })
+      onEvent({
+        type: 'status',
+        stage: 'planning_changes',
+        message: '正在生成可直接落图的脑图改动…',
+      })
+      onEvent({
+        type: 'error',
+        stage: 'planning_changes',
+        code: 'request_failed',
+        message: '第二阶段结构化落图失败。',
+      })
+    })
+
+    await useAiStore.getState().sendMessage(
+      document,
+      {
+        activeTopicId: document.rootTopicId,
+        selectedTopicIds: [document.rootTopicId],
+      },
+      '帮我做一个 GTM 计划',
+    )
+
+    expect(useAiStore.getState().messages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+    ])
+    expect(useAiStore.getState().messages.at(-1)?.content).toBe('第一阶段回答')
+    expect(useAiStore.getState().lastExecutionError).toEqual(
+      expect.objectContaining({
+        code: 'request_failed',
+        stage: 'planning_changes',
+      }),
+    )
+  })
 })

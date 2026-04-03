@@ -57,6 +57,19 @@ describe('TopicNode', () => {
     )
   })
 
+  it('shows a visible lock badge when the topic is AI locked', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    document.topics[branchId].aiLocked = true
+
+    useEditorStore.getState().setDocument(document)
+    renderTopicNode(createTopicNodeProps(branchId, document))
+
+    expect(screen.getByLabelText('AI 锁定节点')).toBeInTheDocument()
+    expect(screen.getByText('已锁定')).toBeInTheDocument()
+    expect(screen.getByText('分支一').closest('[data-locked]')).toHaveAttribute('data-locked', 'true')
+  })
+
   it('renders the canvas title input only for canvas editing', () => {
     const document = createMindMapDocument()
     const branchId = document.topics[document.rootTopicId].childIds[0]
@@ -85,5 +98,19 @@ describe('TopicNode', () => {
     const topicRoot = screen.getByText('分支二').closest('[data-selected]')
     expect(topicRoot).toHaveAttribute('data-selected', 'true')
     expect(topicRoot).toHaveAttribute('data-active', 'true')
+  })
+
+  it('keeps the lock badge visible while the node is selected', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    document.topics[branchId].aiLocked = true
+
+    useEditorStore.getState().setDocument(document)
+    useEditorStore.getState().setSelection([branchId], branchId)
+
+    renderTopicNode(createTopicNodeProps(branchId, document))
+
+    expect(screen.getByLabelText('AI 锁定节点')).toBeInTheDocument()
+    expect(screen.getByText('分支一').closest('[data-selected]')).toHaveAttribute('data-selected', 'true')
   })
 })

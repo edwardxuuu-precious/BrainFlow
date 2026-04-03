@@ -162,6 +162,7 @@ export type AiRunStage =
   | 'starting_codex'
   | 'waiting_first_token'
   | 'streaming'
+  | 'planning_changes'
   | 'applying_changes'
   | 'completed'
   | 'error'
@@ -193,6 +194,7 @@ export type AiStreamEvent =
     }
   | {
       type: 'error'
+      stage?: Exclude<AiRunStage, 'idle' | 'completed'>
       code?: CodexApiError['code']
       message: string
       issues?: CodexBridgeIssue[]

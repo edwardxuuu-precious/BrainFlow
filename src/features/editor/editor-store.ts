@@ -3,6 +3,7 @@ import type { BranchSide, MindMapDocument, MindMapViewport } from '../documents/
 import {
   addChild,
   addSibling,
+  expandHierarchyPath,
   moveTopic,
   removeTopic,
   renameDocumentTitle,
@@ -10,11 +11,14 @@ import {
   resetTopicOffset,
   setBranchSide,
   setTopicAiLocked,
+  setTopicsAiLocked,
   setTopicOffset,
+  toggleHierarchyBranch,
   toggleCollapse,
   updateTopicNote,
   updateViewport,
   updateWorkspaceChrome,
+  updateWorkspaceHierarchyCollapsed,
   updateWorkspaceSelection,
 } from './tree-operations'
 
@@ -38,12 +42,15 @@ interface EditorState {
   setSelection: (topicIds: string[], activeTopicId?: string | null) => void
   toggleTopicSelection: (topicId: string) => void
   clearSelection: () => void
+  toggleHierarchyBranch: (topicId: string) => void
+  expandHierarchyPath: (topicId: string) => void
   setSidebarOpen: (side: SidebarSide, open: boolean) => void
   toggleSidebar: (side: SidebarSide) => void
   startEditing: (topicId: string, surface?: EditingSurface) => void
   stopEditing: () => void
   renameDocument: (title: string) => void
   setTopicAiLocked: (topicId: string, aiLocked: boolean) => void
+  setTopicsAiLocked: (topicIds: string[], aiLocked: boolean) => void
   addChild: (topicId: string) => void
   addSibling: (topicId: string) => void
   renameTopic: (topicId: string, title: string) => void
@@ -92,11 +99,35 @@ function normalizeSelection(
   }
 }
 
+function isTopicWithinBranch(
+  document: MindMapDocument,
+  topicId: string | null,
+  branchId: string,
+): boolean {
+  if (!topicId || topicId === branchId) {
+    return false
+  }
+
+  let cursor = document.topics[topicId]
+
+  while (cursor?.parentId) {
+    if (cursor.parentId === branchId) {
+      return true
+    }
+
+    cursor = document.topics[cursor.parentId]
+  }
+
+  return false
+}
+
 function syncWorkspaceSelection(
   document: MindMapDocument,
   activeTopicId: string | null,
+  expandActivePath = false,
 ): MindMapDocument {
-  return updateWorkspaceSelection(document, activeTopicId)
+  const documentWithSelection = updateWorkspaceSelection(document, activeTopicId)
+  return expandActivePath ? expandHierarchyPath(documentWithSelection, activeTopicId) : documentWithSelection
 }
 
 function preserveWorkspaceState(
@@ -109,23 +140,17 @@ function preserveWorkspaceState(
       ? activeTopicId
       : nextDocument.rootTopicId
 
-  const withWorkspace = syncWorkspaceSelection(nextDocument, safeActive)
-
-  if (
-    withWorkspace.viewport.x === currentDocument.viewport.x &&
-    withWorkspace.viewport.y === currentDocument.viewport.y &&
-    withWorkspace.viewport.zoom === currentDocument.viewport.zoom &&
-    withWorkspace.workspace.chrome.leftSidebarOpen === currentDocument.workspace.chrome.leftSidebarOpen &&
-    withWorkspace.workspace.chrome.rightSidebarOpen === currentDocument.workspace.chrome.rightSidebarOpen
-  ) {
-    return withWorkspace
-  }
+  const withSelection = updateWorkspaceSelection(nextDocument, safeActive)
+  const withCollapsedTree = updateWorkspaceHierarchyCollapsed(
+    withSelection,
+    currentDocument.workspace.hierarchyCollapsedTopicIds,
+  )
 
   return {
-    ...withWorkspace,
+    ...withCollapsedTree,
     viewport: currentDocument.viewport,
     workspace: {
-      ...withWorkspace.workspace,
+      ...withCollapsedTree.workspace,
       selectedTopicId: safeActive,
       chrome: currentDocument.workspace.chrome,
     },
@@ -141,6 +166,7 @@ function commitContentDocument(
     editingTopicId?: string | null
     editingSurface?: EditingSurface | null
     history?: boolean
+    expandActivePath?: boolean
   },
 ): Partial<EditorState> {
   const selection = normalizeSelection(
@@ -150,7 +176,11 @@ function commitContentDocument(
   )
   const nextEditingTopicId = options?.editingTopicId ?? state.editingTopicId
   const nextEditingSurface = options?.editingSurface ?? state.editingSurface
-  const documentWithSelection = syncWorkspaceSelection(nextDocument, selection.activeTopicId)
+  const documentWithSelection = syncWorkspaceSelection(
+    nextDocument,
+    selection.activeTopicId,
+    options?.expandActivePath ?? false,
+  )
 
   if (
     documentWithSelection === state.document &&
@@ -187,6 +217,7 @@ function commitWorkspaceDocument(
   options?: {
     activeTopicId?: string | null
     selectedTopicIds?: string[]
+    expandActivePath?: boolean
   },
 ): Partial<EditorState> {
   const selection = normalizeSelection(
@@ -194,7 +225,11 @@ function commitWorkspaceDocument(
     options?.selectedTopicIds ?? state.selectedTopicIds,
     options?.activeTopicId ?? state.activeTopicId,
   )
-  const documentWithSelection = syncWorkspaceSelection(nextDocument, selection.activeTopicId)
+  const documentWithSelection = syncWorkspaceSelection(
+    nextDocument,
+    selection.activeTopicId,
+    options?.expandActivePath ?? false,
+  )
 
   if (
     documentWithSelection === state.document &&
@@ -253,6 +288,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       return commitWorkspaceDocument(state, nextDocument, {
         activeTopicId: activeTopicId ?? null,
         selectedTopicIds: topicIds,
+        expandActivePath: false,
       })
     }),
 
@@ -276,6 +312,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       return commitWorkspaceDocument(state, nextDocument, {
         activeTopicId: nextActiveTopicId,
         selectedTopicIds: nextSelectedTopicIds,
+        expandActivePath: false,
       })
     }),
 
@@ -295,6 +332,46 @@ export const useEditorStore = create<EditorState>((set) => ({
       })
     }),
 
+  toggleHierarchyBranch: (topicId) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const willCollapse = !state.document.workspace.hierarchyCollapsedTopicIds.includes(topicId)
+      const nextDocument = toggleHierarchyBranch(state.document, topicId)
+      if (nextDocument === state.document) {
+        return {}
+      }
+
+      const nextActiveTopicId =
+        willCollapse && isTopicWithinBranch(state.document, state.activeTopicId, topicId)
+          ? topicId
+          : state.activeTopicId
+      const nextSelectedTopicIds =
+        nextActiveTopicId === topicId ? [topicId] : state.selectedTopicIds
+
+      return commitWorkspaceDocument(state, nextDocument, {
+        activeTopicId: nextActiveTopicId,
+        selectedTopicIds: nextSelectedTopicIds,
+        expandActivePath: false,
+      })
+    }),
+
+  expandHierarchyPath: (topicId) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const nextDocument = expandHierarchyPath(state.document, topicId)
+      if (nextDocument === state.document) {
+        return {}
+      }
+
+      return commitWorkspaceDocument(state, nextDocument)
+    }),
+
   setSidebarOpen: (side, open) =>
     set((state) => {
       if (!state.document) {
@@ -310,7 +387,9 @@ export const useEditorStore = create<EditorState>((set) => ({
         return {}
       }
 
-      return commitWorkspaceDocument(state, nextDocument)
+      return commitWorkspaceDocument(state, nextDocument, {
+        expandActivePath: false,
+      })
     }),
 
   toggleSidebar: (side) =>
@@ -326,7 +405,9 @@ export const useEditorStore = create<EditorState>((set) => ({
         !state.document.workspace.chrome[chromeKey],
       )
 
-      return commitWorkspaceDocument(state, nextDocument)
+      return commitWorkspaceDocument(state, nextDocument, {
+        expandActivePath: false,
+      })
     }),
 
   startEditing: (topicId, surface = 'canvas') =>
@@ -379,6 +460,34 @@ export const useEditorStore = create<EditorState>((set) => ({
         activeTopicId: topicId,
         selectedTopicIds,
         history: false,
+        expandActivePath: false,
+      })
+    }),
+
+  setTopicsAiLocked: (topicIds, aiLocked) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const selectedTopicIds = uniqueTopicIds(topicIds).filter((topicId) => state.document?.topics[topicId])
+      if (selectedTopicIds.length === 0) {
+        return {}
+      }
+
+      const nextDocument = setTopicsAiLocked(state.document, selectedTopicIds, aiLocked)
+      if (nextDocument === state.document) {
+        return {}
+      }
+
+      const nextActiveTopicId = selectedTopicIds.includes(state.activeTopicId ?? '')
+        ? state.activeTopicId
+        : selectedTopicIds.at(-1) ?? null
+
+      return commitContentDocument(state, nextDocument, {
+        activeTopicId: nextActiveTopicId,
+        selectedTopicIds,
+        expandActivePath: false,
       })
     }),
 
@@ -394,6 +503,7 @@ export const useEditorStore = create<EditorState>((set) => ({
         selectedTopicIds: result.topicId ? [result.topicId] : [],
         editingTopicId: result.topicId,
         editingSurface: 'canvas',
+        expandActivePath: false,
       })
     }),
 
@@ -409,6 +519,7 @@ export const useEditorStore = create<EditorState>((set) => ({
         selectedTopicIds: result.topicId ? [result.topicId] : [],
         editingTopicId: result.topicId,
         editingSurface: 'canvas',
+        expandActivePath: false,
       })
     }),
 
@@ -426,6 +537,7 @@ export const useEditorStore = create<EditorState>((set) => ({
         activeTopicId: topicId,
         selectedTopicIds,
         history: false,
+        expandActivePath: false,
       })
     }),
 
@@ -443,6 +555,7 @@ export const useEditorStore = create<EditorState>((set) => ({
         activeTopicId: topicId,
         selectedTopicIds,
         history: false,
+        expandActivePath: false,
       })
     }),
 
@@ -458,6 +571,7 @@ export const useEditorStore = create<EditorState>((set) => ({
         selectedTopicIds: [fallbackSelection],
         editingTopicId: null,
         editingSurface: null,
+        expandActivePath: false,
       })
     }),
 
@@ -469,6 +583,7 @@ export const useEditorStore = create<EditorState>((set) => ({
 
       return commitContentDocument(state, toggleCollapse(state.document, topicId), {
         activeTopicId: topicId,
+        expandActivePath: false,
       })
     }),
 
@@ -480,6 +595,7 @@ export const useEditorStore = create<EditorState>((set) => ({
 
       return commitContentDocument(state, moveTopic(state.document, topicId, targetParentId, targetIndex), {
         activeTopicId: topicId,
+        expandActivePath: false,
       })
     }),
 
@@ -491,6 +607,7 @@ export const useEditorStore = create<EditorState>((set) => ({
 
       return commitContentDocument(state, setBranchSide(state.document, topicId, side), {
         activeTopicId: topicId,
+        expandActivePath: false,
       })
     }),
 
@@ -502,6 +619,7 @@ export const useEditorStore = create<EditorState>((set) => ({
 
       return commitContentDocument(state, setTopicOffset(state.document, topicId, offsetX, offsetY), {
         activeTopicId: topicId,
+        expandActivePath: false,
       })
     }),
 
@@ -513,6 +631,7 @@ export const useEditorStore = create<EditorState>((set) => ({
 
       return commitContentDocument(state, resetTopicOffset(state.document, topicId), {
         activeTopicId: topicId,
+        expandActivePath: false,
       })
     }),
 
@@ -527,7 +646,9 @@ export const useEditorStore = create<EditorState>((set) => ({
         return {}
       }
 
-      return commitWorkspaceDocument(state, nextDocument)
+      return commitWorkspaceDocument(state, nextDocument, {
+        expandActivePath: false,
+      })
     }),
 
   applyExternalDocument: (doc, activeTopicId) =>
@@ -542,6 +663,7 @@ export const useEditorStore = create<EditorState>((set) => ({
         selectedTopicIds: nextActiveTopicId ? [nextActiveTopicId] : [],
         editingTopicId: null,
         editingSurface: null,
+        expandActivePath: false,
       })
     }),
 
