@@ -18,14 +18,14 @@
 
 .emptyTitle {
   margin: 0;
-  color: var(--color-muted);
+  color: var(--on-surface-muted);
   font-size: 15px;
   font-weight: 600;
 }
 
 .emptyText {
   margin: 0;
-  color: var(--color-text-soft);
+  color: var(--on-surface-variant);
   font-size: 13px;
   line-height: 1.5;
   max-width: 240px;
@@ -65,14 +65,14 @@
 }
 
 .userBubble {
-  background: #007aff;
+  background: linear-gradient(145deg, var(--primary) 0%, var(--primary-container) 100%);
   color: white;
   border-bottom-right-radius: 4px;
 }
 
 .aiBubble {
-  background: rgba(0, 0, 0, 0.06);
-  color: var(--color-text);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
   border-bottom-left-radius: 4px;
 }
 
@@ -123,47 +123,45 @@
 .statusCard {
   margin: 12px 16px;
   padding: 12px 16px;
-  border-radius: 12px;
-  background: rgba(0, 122, 255, 0.08);
-  border: 1px solid rgba(0, 122, 255, 0.15);
+  border-radius: var(--radius-xs);
+  background: rgba(0, 88, 188, 0.08);
 }
 
 .statusTitle {
   margin: 0 0 4px;
-  color: #007aff;
+  color: var(--primary);
   font-size: 12px;
   font-weight: 600;
 }
 
 .statusText {
   margin: 0;
-  color: var(--color-text-soft);
+  color: var(--on-surface-variant);
   font-size: 13px;
 }
 
 .errorCard {
   margin: 12px 16px;
   padding: 12px 16px;
-  border-radius: 12px;
-  background: rgba(255, 59, 48, 0.08);
-  border: 1px solid rgba(255, 59, 48, 0.15);
+  border-radius: var(--radius-xs);
+  background: rgba(198, 30, 58, 0.08);
 }
 
 .errorTitle {
   margin: 0 0 4px;
-  color: #ff3b30;
+  color: #c41e3a;
   font-size: 12px;
   font-weight: 600;
 }
 
 .error {
   margin: 0 0 4px;
-  color: var(--color-text);
+  color: var(--on-surface);
   font-size: 13px;
 }
 
 .errorHint {
   margin: 0;
-  color: var(--color-muted);
+  color: var(--on-surface-muted);
   font-size: 12px;
 }

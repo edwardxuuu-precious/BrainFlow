@@ -1,9 +1,9 @@
 .composer {
   display: flex;
   flex-direction: column;
-  padding: 12px 16px 16px;
-  border-top: 1px solid rgba(172, 179, 184, 0.14);
-  background: rgba(255, 255, 255, 0.6);
+  padding: 12px 16px 18px;
+  border-top: 0.5px solid rgba(193, 198, 215, 0.2);
+  background: var(--surface-container-low);
 }
 
 /* Attachments */
@@ -19,7 +19,7 @@
   align-items: center;
   gap: 6px;
   padding: 4px 8px 4px 10px;
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--surface-container-high);
   border-radius: 6px;
   font-size: 12px;
 }
@@ -29,7 +29,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--color-text);
+  color: var(--on-surface);
 }
 
 .removeAttachment {
@@ -41,7 +41,7 @@
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--color-muted);
+  color: var(--on-surface-muted);
   font-size: 14px;
   cursor: pointer;
   border-radius: 3px;
@@ -49,8 +49,8 @@
 }
 
 .removeAttachment:hover {
-  background: rgba(0, 0, 0, 0.08);
-  color: var(--color-text);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
 }
 
 /* Input Area */
@@ -64,10 +64,10 @@
   min-height: 72px;
   max-height: 200px;
   padding: 12px 14px;
-  border: 1px solid rgba(172, 179, 184, 0.18);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--color-text);
+  border: 0.5px solid rgba(193, 198, 215, 0.3);
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
   font-size: 15px;
   line-height: 1.5;
   resize: none;
@@ -76,17 +76,17 @@
 }
 
 .field:hover:not(:disabled) {
-  border-color: rgba(172, 179, 184, 0.28);
+  border-color: rgba(193, 198, 215, 0.5);
 }
 
 .field:focus:not(:disabled) {
-  border-color: rgba(0, 122, 255, 0.5);
-  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+  border-color: rgba(0, 88, 188, 0.5);
+  box-shadow: 0 0 0 3px rgba(0, 88, 188, 0.1);
 }
 
 .field:disabled {
-  background: rgba(0, 0, 0, 0.02);
-  color: var(--color-muted);
+  background: var(--surface-container-low);
+  color: var(--on-surface-muted);
 }
 
 /* Toolbar */
@@ -118,7 +118,7 @@
 }
 
 .hint {
-  color: var(--color-muted);
+  color: var(--on-surface-muted);
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;

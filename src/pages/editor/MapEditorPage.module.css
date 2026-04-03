@@ -5,17 +5,15 @@
   max-height: 100dvh;
   overflow: hidden;
   grid-template-rows: auto minmax(0, 1fr);
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.96), transparent 18%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(239, 242, 245, 0.96));
-  color: var(--document-text, var(--color-text));
+  background: var(--surface);
+  color: var(--document-text, var(--on-surface));
 }
 
 .loading {
   display: grid;
   height: 100dvh;
   place-items: center;
-  color: var(--color-muted);
+  color: var(--on-surface-muted);
 }
 
 .topbar {
@@ -25,9 +23,9 @@
   gap: 20px;
   min-height: 76px;
   padding: 18px 24px;
-  border-bottom: 1px solid rgba(172, 179, 184, 0.14);
-  background: rgba(249, 249, 251, 0.72);
-  backdrop-filter: blur(24px);
+  border-bottom: 0.5px solid rgba(193, 198, 215, 0.2);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
 }
 
 .topbarLeft,
@@ -65,15 +63,21 @@
 .titleInput {
   min-width: 280px;
   padding: 13px 16px;
-  border: 1px solid rgba(172, 179, 184, 0.18);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.82);
-  color: var(--document-text, var(--color-text));
+  border: 0.5px solid rgba(193, 198, 215, 0.3);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-lowest);
+  color: var(--document-text, var(--on-surface));
   font-family: var(--font-display);
   font-size: 24px;
   font-weight: 600;
   letter-spacing: -0.03em;
   outline: none;
+  transition: box-shadow 180ms ease;
+}
+
+.titleInput:focus {
+  box-shadow: 0 0 0 3px rgba(0, 88, 188, 0.15);
+  border-color: rgba(0, 88, 188, 0.3);
 }
 
 .workspace {
@@ -103,6 +107,7 @@
 .leftSidebar {
   width: 300px;
   box-sizing: border-box;
+  background: var(--surface-container-low);
 }
 
 .rightSidebar {
@@ -120,6 +125,7 @@
   height: 100%;
   max-height: 100%;
   box-sizing: border-box;
+  background: var(--surface-container-low);
 }
 
 .leftRail,
@@ -152,7 +158,7 @@
 .canvasHint {
   gap: 12px;
   flex-wrap: wrap;
-  color: var(--document-muted, var(--color-text-soft));
+  color: var(--document-muted, var(--on-surface-variant));
   font-size: 13px;
 }
 
@@ -160,10 +166,9 @@
   position: relative;
   overflow: hidden;
   min-height: 0;
-  border: 1px solid rgba(172, 179, 184, 0.16);
-  border-radius: 32px;
-  background: rgba(255, 255, 255, 0.68);
-  box-shadow: 0 36px 70px -42px rgba(45, 51, 56, 0.36);
+  border-radius: var(--radius-xl);
+  background: var(--surface-container-lowest);
+  box-shadow: var(--shadow-ghost);
 }
 
 .canvasFrame :global(.react-flow) {
@@ -195,10 +200,10 @@
   display: grid;
   gap: 8px;
   padding: 10px;
-  border: 1px solid rgba(172, 179, 184, 0.18);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(18px);
+  border-radius: var(--radius-md);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--shadow-ghost);
 }
 
 .drawerBackdrop {
@@ -206,7 +211,7 @@
   inset: 0;
   z-index: 4;
   border: 0;
-  background: rgba(70, 77, 84, 0.14);
+  background: rgba(26, 28, 29, 0.14);
 }
 
 .drawerShell {
@@ -231,6 +236,7 @@
 .drawerPanel {
   height: 100%;
   overflow: hidden;
+  background: var(--surface-container-low);
   box-shadow: 0 36px 90px -52px rgba(34, 39, 44, 0.58);
 }
 
@@ -238,7 +244,8 @@
   min-height: 0;
   max-height: min(46vh, 420px);
   overflow: hidden;
-  border-top: 1px solid rgba(172, 179, 184, 0.14);
+  background: var(--surface-container-low);
+  border-top: 0.5px solid rgba(193, 198, 215, 0.2);
 }
 
 @media (max-width: 1199px) {

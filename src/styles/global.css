@@ -7,37 +7,64 @@
     sans-serif;
   --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
 
-  --color-bg: #f9f9fb;
-  --color-bg-deep: #eff2f5;
-  --color-surface: rgba(255, 255, 255, 0.78);
-  --color-surface-muted: rgba(242, 244, 246, 0.88);
-  --color-surface-strong: #ffffff;
-  --color-panel: rgba(249, 249, 251, 0.74);
-  --color-panel-strong: rgba(255, 255, 255, 0.9);
-  --color-line-soft: rgba(172, 179, 184, 0.22);
-  --color-line: rgba(172, 179, 184, 0.38);
-  --color-text: #2d3338;
-  --color-text-soft: #596065;
-  --color-muted: #757c81;
-  --color-accent: #545f6e;
-  --color-accent-strong: #485362;
-  --color-accent-ink: #f5f7ff;
-  --color-danger: #9f403d;
-  --color-grid: rgba(172, 179, 184, 0.12);
+  /* === Surface Hierarchy (DESIGN.md) === */
+  --surface: #f9f9fb;
+  --surface-container-low: #f3f3f5;
+  --surface-container-lowest: #ffffff;
+  --surface-container-high: #e8e8ea;
+  --surface-container-highest: #ebebed;
+  
+  /* === Primary Colors === */
+  --primary: #0058bc;
+  --primary-container: #0070eb;
+  --on-primary: #ffffff;
+  
+  /* === Text Colors === */
+  --on-surface: #1a1c1d;
+  --on-surface-variant: #5a5c5e;
+  --on-surface-muted: #757c81;
+  
+  /* === Outline & Borders === */
+  --outline-variant: #c1c6d7;
+  
+  /* === Glassmorphism === */
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-blur: 20px;
+  
+  /* === Shadows === */
+  --shadow-ghost: 0px 10px 30px rgba(26, 28, 29, 0.06);
   --shadow-soft: 0 28px 64px -38px rgba(45, 51, 56, 0.32);
-  --shadow-whisper: 0 32px 60px -46px rgba(45, 51, 56, 0.28);
+  
+  /* === Legacy aliases (for backward compatibility) === */
+  --color-bg: var(--surface);
+  --color-bg-deep: var(--surface-container-low);
+  --color-surface: var(--glass-bg);
+  --color-surface-muted: var(--surface-container-low);
+  --color-surface-strong: var(--surface-container-lowest);
+  --color-panel: var(--glass-bg);
+  --color-panel-strong: rgba(255, 255, 255, 0.9);
+  --color-line-soft: rgba(193, 198, 215, 0.2);
+  --color-line: rgba(193, 198, 215, 0.3);
+  --color-text: var(--on-surface);
+  --color-text-soft: var(--on-surface-variant);
+  --color-muted: var(--on-surface-muted);
+  --color-accent: var(--primary);
+  --color-accent-strong: var(--primary-container);
+  --color-accent-ink: var(--on-primary);
+  --color-danger: #9f403d;
+  --color-grid: rgba(193, 198, 215, 0.15);
+  
+  /* === Radius === */
   --radius-2xl: 32px;
   --radius-xl: 26px;
   --radius-lg: 20px;
   --radius-md: 16px;
   --radius-sm: 12px;
+  --radius-xs: 8px;
 
   font-family: var(--font-body);
-  color: var(--color-text);
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.96), transparent 20%),
-    radial-gradient(circle at top right, rgba(221, 227, 233, 0.62), transparent 28%),
-    linear-gradient(180deg, #fbfbfc 0%, #f2f4f7 100%);
+  color: var(--on-surface);
+  background: var(--surface);
   color-scheme: light;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -83,7 +110,7 @@ a {
 }
 
 ::selection {
-  background: rgba(84, 95, 110, 0.18);
+  background: rgba(0, 88, 188, 0.15);
 }
 
 .srOnly {
@@ -99,12 +126,12 @@ a {
 }
 
 .react-flow {
-  --xy-edge-stroke-default: rgba(84, 95, 110, 0.18);
+  --xy-edge-stroke-default: rgba(193, 198, 215, 0.4);
   --xy-node-background-color-default: transparent;
   --xy-node-color-default: inherit;
   background:
     radial-gradient(circle at 1px 1px, var(--document-grid, var(--color-grid)) 1px, transparent 0),
-    var(--document-canvas, rgba(249, 249, 251, 0.72));
+    var(--document-canvas, var(--surface-container-low));
   background-size: 24px 24px;
 }
 

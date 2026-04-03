@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { Button } from '../../../components/ui'
 import styles from './AiContextTray.module.css'
 
@@ -29,6 +29,7 @@ export function AiContextTray({
   const [isExpanded, setIsExpanded] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
+  const [isPickingFromCanvas, setIsPickingFromCanvas] = useState(false)
 
   // 过滤已选择的节点
   const filteredTopics = useMemo(() => {
@@ -58,6 +59,16 @@ export function AiContextTray({
   const handleRemoveTopic = (topicId: string) => {
     onRemoveTopic(topicId)
   }
+
+  const handleStartCanvasPick = useCallback(() => {
+    setIsPickingFromCanvas(true)
+    onCanvasPick?.()
+  }, [onCanvasPick])
+
+  const handleDone = useCallback(() => {
+    setIsPickingFromCanvas(false)
+    setIsExpanded(false)
+  }, [])
 
   return (
     <section className={styles.section} data-expanded={isExpanded}>
@@ -202,11 +213,11 @@ export function AiContextTray({
                 </Button>
                 {onCanvasPick && (
                   <Button
-                    tone="ghost"
+                    tone={isPickingFromCanvas ? 'primary' : 'ghost'}
                     size="sm"
-                    onClick={onCanvasPick}
+                    onClick={handleStartCanvasPick}
                   >
-                    从画布选择
+                    {isPickingFromCanvas ? '从画布点击节点...' : '从画布选择'}
                   </Button>
                 )}
               </div>
@@ -215,13 +226,13 @@ export function AiContextTray({
 
           {/* Done Button */}
           <div className={styles.footer}>
-            <Button
-              tone="primary"
-              size="sm"
-              onClick={() => setIsExpanded(false)}
+            <button
+              type="button"
+              className={styles.doneButton}
+              onClick={handleDone}
             >
               完成
-            </Button>
+            </button>
           </div>
         </div>
       )}

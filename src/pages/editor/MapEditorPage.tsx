@@ -759,7 +759,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         <div className={styles.topbarLeft}>
           <div className={styles.brandBlock}>
             <span className={styles.wordmark}>BrainFlow</span>
-            <StatusPill tone="soft">Document / Title</StatusPill>
           </div>
           <Button type="button" tone="secondary" iconStart="back" onClick={() => navigate('/')}>
             返回文档

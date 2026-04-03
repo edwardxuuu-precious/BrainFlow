@@ -1,0 +1,149 @@
+- main [ref=e101]:
+  - generic [ref=e102]:
+    - generic [ref=e103]:
+      - generic [ref=e104]:
+        - generic [ref=e105]: BrainFlow
+        - generic [ref=e106]: Document / Title
+      - button "返回文档" [ref=e107] [cursor=pointer]:
+        - img [ref=e108]
+        - generic [ref=e110]: 返回文档
+      - generic [ref=e111]:
+        - textbox "脑图标题" [ref=e112]: 未命名脑图
+        - generic [ref=e113]: 08:43
+    - generic [ref=e114]:
+      - button "撤销" [disabled] [ref=e115]:
+        - img [ref=e116]
+      - button "重做" [disabled] [ref=e120]:
+        - img [ref=e121]
+      - button "导出 JSON" [ref=e125] [cursor=pointer]:
+        - img [ref=e126]
+        - generic [ref=e128]: 导出 JSON
+      - button "导出 PNG" [ref=e129] [cursor=pointer]:
+        - img [ref=e130]
+        - generic [ref=e132]: 导出 PNG
+  - generic [ref=e133]:
+    - complementary [ref=e134]:
+      - generic [ref=e135]:
+        - generic [ref=e136]:
+          - generic [ref=e137]: Hierarchy
+          - button "隐藏层级栏" [expanded] [ref=e138] [cursor=pointer]:
+            - img [ref=e139]
+        - generic [ref=e141]:
+          - heading "未命名脑图" [level=2] [ref=e142]
+          - paragraph [ref=e143]: 轻量导航负责定位主题，不承载额外编辑逻辑。
+      - navigation "主题层级" [ref=e144]:
+        - list [ref=e145]:
+          - listitem [ref=e146]:
+            - button "中心主题 2 个子节点" [ref=e147] [cursor=pointer]:
+              - generic [ref=e148]:
+                - img [ref=e149]
+                - generic [ref=e155]: 中心主题
+              - generic [ref=e156]: 2 个子节点
+            - list [ref=e157]:
+              - listitem [ref=e158]:
+                - button "分支一" [ref=e159] [cursor=pointer]:
+                  - generic [ref=e160]:
+                    - img [ref=e161]
+                    - generic [ref=e164]: 分支一
+              - listitem [ref=e165]:
+                - button "分支二" [ref=e166] [cursor=pointer]:
+                  - generic [ref=e167]:
+                    - img [ref=e168]
+                    - generic [ref=e171]: 分支二
+      - generic [ref=e172]:
+        - generic [ref=e174]: Shortcuts
+        - generic [ref=e175]:
+          - generic [ref=e176]:
+            - generic [ref=e177]: 添加子节点
+            - generic [ref=e178]: Tab
+          - generic [ref=e179]:
+            - generic [ref=e180]: 添加同级节点
+            - generic [ref=e181]: Enter
+          - generic [ref=e182]:
+            - generic [ref=e183]: 编辑文本
+            - generic [ref=e184]: F2
+          - generic [ref=e185]:
+            - generic [ref=e186]: 删除节点
+            - generic [ref=e187]: Del
+        - button "新增子主题" [ref=e188] [cursor=pointer]:
+          - img [ref=e189]
+          - generic [ref=e190]: 新增子主题
+    - generic [ref=e191]:
+      - generic [ref=e192]:
+        - generic [ref=e193]:
+          - generic [ref=e194]: Canvas
+          - generic [ref=e195]: 左键框选可直接建立多选
+          - generic [ref=e196]: 按住 Space 拖动画布
+        - button "适应视图" [ref=e197] [cursor=pointer]:
+          - img [ref=e198]
+          - generic [ref=e203]: 适应视图
+      - generic [ref=e204]:
+        - application [ref=e205]:
+          - generic [ref=e207]:
+            - generic:
+              - generic:
+                - img:
+                  - group "Edge from topic_mni6jrbd_75zju0w0 to topic_mni6jrbd_mg18e57v" [ref=e208] [cursor=pointer]
+                - img:
+                  - group "Edge from topic_mni6jrbd_75zju0w0 to topic_mni6jrbd_bn0lrbu3" [ref=e211] [cursor=pointer]
+              - generic:
+                - group [ref=e214]:
+                  - generic [ref=e215]:
+                    - generic [ref=e220]:
+                      - generic [ref=e221]: BRAINFLOW
+                      - generic [ref=e223]: 中心主题
+                    - button "折叠子主题" [ref=e224] [cursor=pointer]: −
+                - group [ref=e225]:
+                  - generic [ref=e233]: 分支一
+                - group [ref=e234]:
+                  - generic [ref=e242]: 分支二
+        - generic [ref=e244]:
+          - button "放大" [ref=e245] [cursor=pointer]:
+            - img [ref=e246]
+          - button "缩小" [ref=e247] [cursor=pointer]:
+            - img [ref=e248]
+          - button "适应视图" [ref=e249] [cursor=pointer]:
+            - img [ref=e250]
+    - generic [ref=e255]:
+      - generic [ref=e256]:
+        - tablist "右侧边栏标签" [ref=e258]:
+          - tab "Inspector" [selected] [ref=e259] [cursor=pointer]
+          - tab "AI" [ref=e260] [cursor=pointer]
+        - generic [ref=e261]:
+          - generic [ref=e262]: Inspector
+          - button "隐藏右侧栏" [expanded] [ref=e263] [cursor=pointer]:
+            - img [ref=e264]
+        - generic [ref=e266]:
+          - generic [ref=e267]:
+            - heading "中心主题" [level=2] [ref=e268]
+            - paragraph [ref=e269]: 中心主题
+          - button "重命名" [ref=e271] [cursor=pointer]:
+            - img [ref=e272]
+            - generic [ref=e276]: 重命名
+      - generic [ref=e277]:
+        - generic [ref=e278]: 备注
+        - textbox "备注" [ref=e280]:
+          - /placeholder: 记录上下文、待办，或者补充说明。
+      - generic [ref=e281]:
+        - generic [ref=e282]: 一级分支方向
+        - group "一级分支方向" [ref=e284]:
+          - button "自动" [disabled] [ref=e285]
+          - button "左侧" [disabled] [ref=e286]
+          - button "右侧" [disabled] [ref=e287]
+        - paragraph [ref=e288]: 只有一级分支可以切换左右方向。
+      - generic [ref=e289]:
+        - generic [ref=e290]: AI 锁定
+        - button "允许 AI 修改此节点" [ref=e291] [cursor=pointer]:
+          - img [ref=e292]
+          - generic [ref=e295]: 允许 AI 修改此节点
+        - paragraph [ref=e296]: 锁定后，AI 仍可读取该节点，并在其下生成子节点或基于它生成同级节点，但不会修改、移动或删除它。
+      - generic [ref=e297]:
+        - generic [ref=e298]: 位置
+        - button "重置位置" [ref=e299] [cursor=pointer]:
+          - img [ref=e300]
+          - generic [ref=e305]: 重置位置
+      - generic [ref=e306]:
+        - generic [ref=e307]: 操作
+        - button "新增子主题" [ref=e309] [cursor=pointer]:
+          - img [ref=e310]
+          - generic [ref=e311]: 新增子主题

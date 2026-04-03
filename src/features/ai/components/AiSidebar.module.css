@@ -6,19 +6,19 @@
   flex-direction: column;
   gap: 0;
   box-sizing: border-box;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(242, 244, 246, 0.72));
-  backdrop-filter: blur(22px);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
 }
 
 .panel[data-mode='docked'] {
-  border-left: 1px solid rgba(172, 179, 184, 0.14);
+  background: var(--surface-container-low);
 }
 
 .header {
   display: grid;
   gap: 16px;
   padding: 20px 20px 18px;
-  border-bottom: 1px solid rgba(172, 179, 184, 0.14);
+  border-bottom: 0.5px solid rgba(193, 198, 215, 0.2);
 }
 
 .tabs {
@@ -47,9 +47,9 @@
   width: 100%;
   padding: 8px 12px;
   border: none;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.04);
-  color: var(--color-text);
+  border-radius: var(--radius-xs);
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
@@ -57,7 +57,7 @@
 }
 
 .dropdownTrigger:hover {
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--surface-container-high);
 }
 
 .dropdownValue {
@@ -69,6 +69,7 @@
 .dropdownIcon {
   flex-shrink: 0;
   transition: transform 200ms ease;
+  color: var(--on-surface-variant);
 }
 
 .dropdownIconOpen {
@@ -85,11 +86,9 @@
   gap: 2px;
   padding: 6px;
   border: none;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  backdrop-filter: blur(20px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-lowest);
+  box-shadow: var(--shadow-ghost);
 }
 
 .dropdownItem {
@@ -97,7 +96,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--color-text);
+  color: var(--on-surface);
   font-size: 13px;
   font-weight: 500;
   text-align: left;
@@ -106,12 +105,12 @@
 }
 
 .dropdownItem:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--surface-container-high);
 }
 
 .dropdownItemActive {
-  background: rgba(0, 122, 255, 0.1);
-  color: #007aff;
+  background: rgba(0, 88, 188, 0.1);
+  color: var(--primary);
 }
 
 /* Actions + Status Row */
@@ -128,8 +127,8 @@
 }
 
 .statusButtonReady {
-  background: rgba(52, 199, 89, 0.1);
-  color: #34c759;
+  background: rgba(52, 199, 89, 0.12);
+  color: #28a745;
 }
 
 .statusButtonDisconnected {
@@ -138,8 +137,8 @@
 }
 
 .statusButtonError {
-  background: rgba(159, 64, 61, 0.12);
-  color: var(--color-danger);
+  background: rgba(198, 30, 58, 0.1);
+  color: #c41e3a;
 }
 
 .actionButtons {
@@ -153,9 +152,9 @@
   display: grid;
   gap: 12px;
   padding: 16px;
-  border: 1px solid rgba(172, 179, 184, 0.14);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.62);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-lowest);
+  box-shadow: var(--shadow-ghost);
 }
 
 .statusDetailsHeader {
@@ -164,10 +163,6 @@
   justify-content: space-between;
   gap: 12px;
 }
-
-
-
-
 
 .body {
   display: flex;
@@ -183,7 +178,7 @@
   flex-direction: column;
   gap: 12px;
   padding: 16px 20px 0;
-  border-bottom: 1px solid rgba(172, 179, 184, 0.1);
+  border-bottom: 0.5px solid rgba(193, 198, 215, 0.2);
 }
 
 /* Chat Area */
@@ -217,9 +212,9 @@
   display: grid;
   gap: 12px;
   padding: 16px;
-  border: 1px solid rgba(172, 179, 184, 0.14);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.62);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-lowest);
+  box-shadow: var(--shadow-ghost);
 }
 
 .statusHeader {
@@ -239,36 +234,36 @@
 }
 
 .statusBadgeReady {
-  background: rgba(52, 199, 89, 0.15);
-  color: #34c759;
+  background: rgba(52, 199, 89, 0.12);
+  color: #28a745;
 }
 
 .statusBadgeNeedAuth {
-  background: rgba(255, 149, 0, 0.15);
+  background: rgba(255, 149, 0, 0.12);
   color: #ff9500;
 }
 
 .statusBadgeDisconnected {
-  background: rgba(255, 149, 0, 0.15);
+  background: rgba(255, 149, 0, 0.12);
   color: #ff9500;
 }
 
 .statusVersion {
-  color: var(--color-muted);
+  color: var(--on-surface-muted);
   font-size: 12px;
   font-weight: 500;
 }
 
 .statusError {
   margin: 0;
-  color: var(--color-danger);
+  color: #c41e3a;
   font-size: 13px;
   line-height: 1.5;
 }
 
 .statusSuccess {
   margin: 0;
-  color: #34c759;
+  color: #28a745;
   font-size: 13px;
   line-height: 1.5;
 }
@@ -282,7 +277,7 @@
 
 .statusText {
   margin: 0;
-  color: var(--color-text-soft);
+  color: var(--on-surface-variant);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -295,7 +290,7 @@
 .issueList {
   margin: 0;
   padding-left: 18px;
-  color: var(--color-text-soft);
+  color: var(--on-surface-variant);
   font-size: 13px;
   line-height: 1.8;
 }
@@ -304,8 +299,8 @@
   margin: 8px 0 0;
   padding: 12px;
   border-radius: 8px;
-  background: rgba(159, 64, 61, 0.08);
-  color: var(--color-danger);
+  background: rgba(198, 30, 58, 0.08);
+  color: #c41e3a;
   font-size: 13px;
   line-height: 1.6;
   list-style: none;
@@ -316,42 +311,42 @@
   gap: 6px;
   padding: 12px;
   border-radius: 8px;
-  background: rgba(159, 64, 61, 0.08);
+  background: rgba(198, 30, 58, 0.08);
 }
 
 .executionIssueTitle {
   margin: 0;
-  color: var(--color-danger);
+  color: #c41e3a;
   font-size: 12px;
   font-weight: 600;
 }
 
 .executionIssueText {
   margin: 0;
-  color: var(--color-text);
+  color: var(--on-surface);
   font-size: 13px;
   line-height: 1.5;
 }
 
 .executionIssueHint {
   margin: 0;
-  color: var(--color-muted);
+  color: var(--on-surface-muted);
   font-size: 12px;
   line-height: 1.5;
 }
 
 .statusLogHint {
   margin: 0;
-  color: var(--color-muted);
+  color: var(--on-surface-muted);
   font-size: 12px;
   line-height: 1.5;
 }
 
 /* Prompt Card */
 .promptCard {
-  border: 1px solid rgba(172, 179, 184, 0.14);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.62);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-lowest);
+  box-shadow: var(--shadow-ghost);
 }
 
 .promptSummary {
@@ -360,7 +355,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 12px 16px;
-  color: var(--color-text);
+  color: var(--on-surface);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -372,7 +367,7 @@
 }
 
 .promptMeta {
-  color: var(--color-muted);
+  color: var(--on-surface-muted);
   font-size: 12px;
   font-weight: 500;
 }
@@ -380,7 +375,7 @@
 .promptExcerpt {
   margin: 0;
   padding: 0 16px 12px;
-  color: var(--color-text-soft);
+  color: var(--on-surface-variant);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -389,8 +384,8 @@
   margin: 0 16px 16px;
   padding: 12px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.04);
-  color: var(--color-text-soft);
+  background: var(--surface-container-low);
+  color: var(--on-surface-variant);
   font-size: 12px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -402,9 +397,8 @@
   display: grid;
   gap: 12px;
   padding: 16px;
-  border: 1px solid rgba(172, 179, 184, 0.14);
-  border-radius: 14px;
-  background: rgba(0, 122, 255, 0.06);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 88, 188, 0.06);
 }
 
 .appliedHeader {
@@ -418,14 +412,14 @@
   align-items: center;
   padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(0, 122, 255, 0.15);
-  color: #007aff;
+  background: rgba(0, 88, 188, 0.12);
+  color: var(--primary);
   font-size: 12px;
   font-weight: 600;
 }
 
 .appliedSummary {
-  color: var(--color-text);
+  color: var(--on-surface);
   font-size: 13px;
   font-weight: 500;
 }
