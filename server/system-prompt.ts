@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -7,11 +8,7 @@ import { fileURLToPath } from 'node:url'
 import type { CodexSettings } from '../shared/ai-contract.js'
 
 const DEFAULT_SUMMARY_MAX_CHARS = 220
-const DEFAULT_SYSTEM_PROMPT_FILE = join(
-  dirname(fileURLToPath(import.meta.url)),
-  'prompts',
-  'brainflow-system.md',
-)
+const DEFAULT_SYSTEM_PROMPT_FILENAME = 'brainflow-system.md'
 
 const SAFETY_SYSTEM_PROMPT = `
 You are BrainFlow's embedded Codex assistant.
@@ -43,6 +40,11 @@ export interface SystemPromptStore {
   resetSettings(): Promise<CodexSettings>
 }
 
+interface CreateSystemPromptStoreOptions {
+  moduleFilePath?: string
+  settingsFile?: string
+}
+
 function hashPrompt(prompt: string): string {
   return createHash('sha256').update(prompt).digest('hex').slice(0, 12)
 }
@@ -61,16 +63,34 @@ function summarizePrompt(prompt: string): string {
     return condensed
   }
 
-  return `${condensed.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`
+  const sliceLength = Math.max(0, maxChars - 3)
+  return `${condensed.slice(0, sliceLength).trimEnd()}...`
 }
 
-function resolveDefaultPromptFile(): string {
+function resolveDefaultPromptCandidates(moduleFilePath: string): string[] {
+  const moduleDir = dirname(moduleFilePath)
+
+  return [
+    join(moduleDir, 'prompts', DEFAULT_SYSTEM_PROMPT_FILENAME),
+    join(moduleDir, '..', 'prompts', DEFAULT_SYSTEM_PROMPT_FILENAME),
+    join(moduleDir, '..', '..', 'prompts', DEFAULT_SYSTEM_PROMPT_FILENAME),
+    resolve(process.cwd(), 'server', 'prompts', DEFAULT_SYSTEM_PROMPT_FILENAME),
+  ]
+}
+
+export function resolveDefaultPromptFile(moduleFilePath = fileURLToPath(import.meta.url)): string {
   const configured = process.env.BRAINFLOW_SYSTEM_PROMPT_FILE
-  if (!configured) {
-    return DEFAULT_SYSTEM_PROMPT_FILE
+  if (configured) {
+    return isAbsolute(configured) ? configured : resolve(process.cwd(), configured)
   }
 
-  return isAbsolute(configured) ? configured : resolve(process.cwd(), configured)
+  for (const candidate of resolveDefaultPromptCandidates(moduleFilePath)) {
+    if (existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  return resolveDefaultPromptCandidates(moduleFilePath)[0]
 }
 
 function resolveSettingsFile(): string {
@@ -119,10 +139,7 @@ async function readStoredPrompt(
   }
 }
 
-function toSettings(
-  businessPrompt: string,
-  updatedAt: number,
-): CodexSettings {
+function toSettings(businessPrompt: string, updatedAt: number): CodexSettings {
   return {
     businessPrompt,
     updatedAt,
@@ -130,9 +147,11 @@ function toSettings(
   }
 }
 
-export function createSystemPromptStore(): SystemPromptStore {
-  const defaultPromptFile = resolveDefaultPromptFile()
-  const settingsFile = resolveSettingsFile()
+export function createSystemPromptStore(
+  options: CreateSystemPromptStoreOptions = {},
+): SystemPromptStore {
+  const defaultPromptFile = resolveDefaultPromptFile(options.moduleFilePath)
+  const settingsFile = options.settingsFile ?? resolveSettingsFile()
 
   return {
     async getSettings() {

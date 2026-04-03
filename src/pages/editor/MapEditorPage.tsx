@@ -5,7 +5,7 @@ import {
   type ReactFlowInstance,
   useNodesState,
 } from '@xyflow/react'
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopicNode } from '../../components/topic-node/TopicNode'
 import { Button, IconButton, StatusPill, ToolbarGroup } from '../../components/ui'
@@ -18,6 +18,7 @@ import {
 import type { DocumentService, MindMapDocument } from '../../features/documents/types'
 import { EditorSidebarTabs } from '../../features/editor/components/EditorSidebarTabs'
 import { HierarchySidebar } from '../../features/editor/components/HierarchySidebar'
+
 import { PropertiesPanel } from '../../features/editor/components/PropertiesPanel'
 import { SidebarRail } from '../../features/editor/components/SidebarRail'
 import { getEditorSnapshot, useEditorStore } from '../../features/editor/editor-store'
@@ -166,6 +167,10 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const [renameDraft, setRenameDraft] = useState<RenameDraft>({ topicId: null, value: '' })
   const [aiDraft, setAiDraft] = useState('')
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('inspector')
+
+  const [useFullDocument, setUseFullDocument] = useState(true)
+  const [aiContextTopicIds, setAiContextTopicIds] = useState<string[]>([])
+  const [isPickingCanvasNode, setIsPickingCanvasNode] = useState(false)
   const [viewportMode, setViewportMode] = useState<ViewportMode>(() =>
     typeof window === 'undefined' ? 'desktop' : getViewportMode(window.innerWidth),
   )
@@ -277,16 +282,39 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     renameDraft.topicId === selectedTopic?.id ? renameDraft.value : (selectedTopic?.title ?? '')
   const aiSelectedTopics = useMemo(
     () =>
-      selectedTopicIds.map((topicId) => ({
+      aiContextTopicIds.map((topicId) => ({
         topicId,
         title: document?.topics[topicId]?.title ?? '已删除节点',
         isActive: topicId === activeTopicId,
       })),
-    [activeTopicId, document, selectedTopicIds],
+    [activeTopicId, document, aiContextTopicIds],
   )
+  const aiAllTopics = useMemo(
+    () =>
+      document
+        ? Object.values(document.topics).map((topic) => ({
+            topicId: topic.id,
+            title: topic.title,
+          }))
+        : [],
+    [document],
+  )
+  const handleAddContextTopic = useCallback((topicId: string) => {
+    setAiContextTopicIds((prev) => [...new Set([...prev, topicId])])
+  }, [])
+  const handleRemoveContextTopic = useCallback((topicId: string) => {
+    setAiContextTopicIds((prev) => prev.filter((id) => id !== topicId))
+  }, [])
+  const handleToggleFullDocument = useCallback(() => {
+    setUseFullDocument((prev) => !prev)
+  }, [])
+  const handleStartCanvasPick = useCallback(() => {
+    setIsPickingCanvasNode(true)
+  }, [])
   const rightSidebarTabs = (onCollapse?: () => void) => (
     <EditorSidebarTabs activeTab={rightPanelTab} onChange={setRightPanelTab} onCollapse={onCollapse} />
   )
+
   const canUndoLastApplied =
     !!aiLastAppliedChange &&
     history.length === aiLastAppliedChange.historyLength &&
@@ -610,6 +638,16 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   }
 
   const handleNodeClick: NodeMouseHandler<MindMapFlowNode> = (event, node) => {
+    // If in canvas picking mode for AI context, add the node to context
+    if (isPickingCanvasNode) {
+      handleAddContextTopic(node.id)
+      // Don't exit picking mode if holding Ctrl/Shift, allow multi-select
+      if (!hasMultiSelectModifier(event)) {
+        setIsPickingCanvasNode(false)
+      }
+      return
+    }
+
     if (hasMultiSelectModifier(event)) {
       toggleTopicSelection(node.id)
       return
@@ -630,6 +668,12 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         mode={mode}
         tabs={rightSidebarTabs(onCollapse)}
         selectedTopics={aiSelectedTopics}
+        allTopics={aiAllTopics}
+        useFullDocument={useFullDocument}
+        onToggleFullDocument={handleToggleFullDocument}
+        onAddContextTopic={handleAddContextTopic}
+        onRemoveContextTopic={handleRemoveContextTopic}
+        onCanvasPick={handleStartCanvasPick}
         sessionList={aiSessionList}
         activeSessionId={aiActiveSessionId}
         archivedSessions={aiArchivedSessions}
@@ -971,7 +1015,9 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
 
         {isDesktop ? (
           rightSidebarOpen ? (
-            renderRightSidebar('docked', styles.rightSidebar, closeRightSidebar)
+            <div className={styles.rightSidebarWrapper}>
+              {renderRightSidebar('docked', styles.rightSidebar, closeRightSidebar)}
+            </div>
           ) : (
             <SidebarRail
               side="right"

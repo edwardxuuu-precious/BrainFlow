@@ -12,7 +12,7 @@
     "build:server": "tsc -p server/tsconfig.json",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start:server": "node server/dist/index.js",
+    "start:server": "node server/dist/server/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test"

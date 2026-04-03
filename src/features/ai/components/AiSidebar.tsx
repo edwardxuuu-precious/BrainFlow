@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useCallback, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type {
   AiExecutionError,
   AiMessage,
@@ -14,7 +14,7 @@ import { AiComposer } from './AiComposer'
 import { AiContextTray } from './AiContextTray'
 import { AiMessageList } from './AiMessageList'
 import { AiSettingsDialog } from './AiSettingsDialog'
-import { ResizableSplitter } from './ResizableSplitter'
+
 import styles from './AiSidebar.module.css'
 
 interface SelectedTopicChip {
@@ -23,8 +23,19 @@ interface SelectedTopicChip {
   isActive: boolean
 }
 
+interface Topic {
+  topicId: string
+  title: string
+}
+
 interface AiSidebarProps {
   selectedTopics: SelectedTopicChip[]
+  allTopics?: Topic[]
+  useFullDocument?: boolean
+  onToggleFullDocument?: () => void
+  onAddContextTopic?: (topicId: string) => void
+  onRemoveContextTopic?: (topicId: string) => void
+  onCanvasPick?: () => void
   sessionList: AiSessionSummary[]
   activeSessionId: string | null
   archivedSessions: AiSessionSummary[]
@@ -75,6 +86,12 @@ function classNames(...values: Array<string | false | null | undefined>) {
 
 export function AiSidebar({
   selectedTopics,
+  allTopics,
+  useFullDocument = true,
+  onToggleFullDocument,
+  onAddContextTopic,
+  onRemoveContextTopic,
+  onCanvasPick,
   sessionList,
   activeSessionId,
   archivedSessions,
@@ -121,21 +138,42 @@ export function AiSidebar({
   const [hasEditedSettingsDraft, setHasEditedSettingsDraft] = useState(false)
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const [isStatusExpanded, setIsStatusExpanded] = useState(false)
-  const [composerHeight, setComposerHeight] = useState(220)
-  
-  const handleResize = useCallback((newHeight: number) => {
-    const clamped = Math.max(140, Math.min(400, newHeight))
-    setComposerHeight(clamped)
-  }, [])
+
 
   const isReady = status?.ready ?? false
+  const isServiceDisconnected = status === null
+  const needsVerification = status !== null && !isReady
+  const shouldAutoExpandStatus =
+    isCheckingStatus ||
+    statusError !== null ||
+    lastExecutionError !== null ||
+    needsVerification
+  const statusDetailsId = `${id ?? 'ai-sidebar'}-status-details`
   const composerDisabled = !isReady
-  const composerDisabledHint = '当前 Codex 不可用，请先修复验证并重新检查。'
-  
+  const composerDisabledHint = isServiceDisconnected
+    ? '本机 Codex 服务未连接，请先运行 pnpm dev 或 pnpm dev:server。'
+    : '当前 Codex 需要重新验证，请运行 codex login --device-auth 后再试。'
+  const composerDisabledPlaceholder = isServiceDisconnected
+    ? '当前无法发送，请先启动本机 Codex 服务。'
+    : '当前无法发送，请先完成 Codex 重新验证。'
+  const statusButtonActionLabel = isCheckingStatus
+    ? '检查中'
+    : isReady
+      ? '检查状态'
+      : isServiceDisconnected
+        ? '重新检查服务'
+        : '重新验证'
+
   const activeSession = useMemo(
     () => sessionList.find((session) => session.sessionId === activeSessionId) ?? null,
     [activeSessionId, sessionList],
   )
+
+  useEffect(() => {
+    if (shouldAutoExpandStatus) {
+      setIsStatusExpanded(true)
+    }
+  }, [shouldAutoExpandStatus])
 
   // Determine status button state
   const getStatusButtonState = () => {
@@ -145,8 +183,8 @@ export function AiSidebar({
     if (isReady) {
       return { label: '已连接', tone: 'secondary' as const, icon: 'check' as const }
     }
-    if (status === null) {
-      return { label: '未连接', tone: 'secondary' as const, icon: 'error' as const }
+    if (isServiceDisconnected) {
+      return { label: '未连接服务', tone: 'secondary' as const, icon: 'error' as const }
     }
     return { label: '需要验证', tone: 'secondary' as const, icon: 'warning' as const }
   }
@@ -173,11 +211,13 @@ export function AiSidebar({
   }
 
   const handleStatusClick = () => {
-    if (!isReady && !isCheckingStatus) {
-      onRevalidate()
-    } else {
-      setIsStatusExpanded(!isStatusExpanded)
+    if (isCheckingStatus) {
+      setIsStatusExpanded((current) => !current)
+      return
     }
+
+    setIsStatusExpanded(true)
+    onRevalidate()
   }
 
   return (
@@ -247,11 +287,15 @@ export function AiSidebar({
               size="sm"
               iconStart={statusButtonState.icon}
               onClick={handleStatusClick}
-              disabled={isCheckingStatus}
+              aria-label={statusButtonActionLabel}
+              aria-controls={statusDetailsId}
+              aria-expanded={isStatusExpanded}
+              title={statusButtonActionLabel}
               className={classNames(
                 styles.statusButton,
                 isReady && styles.statusButtonReady,
-                !isReady && status !== null && styles.statusButtonError
+                isServiceDisconnected && styles.statusButtonDisconnected,
+                needsVerification && styles.statusButtonError,
               )}
             >
               {statusButtonState.label}
@@ -280,42 +324,47 @@ export function AiSidebar({
 
           {/* Expandable Status Details */}
           {isStatusExpanded ? (
-            <div className={styles.statusDetails}>
+            <div id={statusDetailsId} className={styles.statusDetails}>
               <div className={styles.statusDetailsHeader}>
                 <span className={classNames(
                   styles.statusBadge,
-                  isReady ? styles.statusBadgeReady : styles.statusBadgeNeedAuth
+                  isReady
+                    ? styles.statusBadgeReady
+                    : isServiceDisconnected
+                      ? styles.statusBadgeDisconnected
+                      : styles.statusBadgeNeedAuth
                 )}>
-                  {isReady ? '可用' : status === null ? '未连接' : '需要验证'}
+                  {isReady ? '可用' : isServiceDisconnected ? '未连接服务' : '需要验证'}
                 </span>
                 <span className={styles.statusVersion}>Prompt {status?.systemPromptVersion ?? '未加载'}</span>
               </div>
-              
+
               {statusError ? <p className={styles.statusError}>{statusError}</p> : null}
               {statusFeedback ? (
                 <p className={statusFeedback.tone === 'success' ? styles.statusSuccess : styles.statusWarning}>
                   {statusFeedback.message}
                 </p>
               ) : null}
-              
+
               {!isReady ? (
                 <div className={styles.statusIssues}>
                   <p className={styles.statusText}>
-                    {status === null 
-                      ? '无法连接到 Codex 服务，请确保后端服务已启动。'
-                      : '当前 Codex 验证信息不可用，请尽快修复后重新验证。'}
+                    {isServiceDisconnected
+                      ? '当前未连接到本机 Codex 服务，AI 发送能力已暂停。'
+                      : '当前 Codex 验证信息不可用，修复登录或订阅后才能继续发送。'}
                   </p>
-                  {status === null ? (
+                  {isServiceDisconnected ? (
                     <ol className={styles.issueList}>
-                      <li>运行 <code>pnpm dev:server</code> 启动后端服务</li>
-                      <li>确保 Codex CLI 已安装并可执行</li>
-                      <li>运行 <code>codex login --device-auth</code> 完成登录</li>
+                      <li>优先运行 <code>pnpm dev</code>，同时启动前端和本机 Codex bridge。</li>
+                      <li>如果前端已在运行，可单独执行 <code>pnpm dev:server</code> 恢复 <code>8787</code> 服务。</li>
+                      <li>如果当前是在预览 <code>dist</code>，请额外启动 <code>pnpm start:server</code>。</li>
+                      <li>访问 <code>http://127.0.0.1:8787/api/codex/status</code> 确认 bridge 已恢复可达。</li>
                     </ol>
                   ) : (
                     <ol className={styles.issueList}>
                       <li>确认本机已经安装并可执行 <code>codex</code> 命令。</li>
                       <li>运行 <code>codex login --device-auth</code>，并使用可用的 ChatGPT 订阅账号完成登录。</li>
-                      <li>回到这里点击"重新验证"。</li>
+                      <li>完成后回到这里点击“重新验证”。</li>
                     </ol>
                   )}
                   {status?.issues?.length ? (
@@ -341,6 +390,11 @@ export function AiSidebar({
                   ) : null}
                 </div>
               ) : null}
+              {(statusError || lastExecutionError) ? (
+                <p className={styles.statusLogHint}>
+                  完整日志请查看本地启动终端或 bridge 输出，本页不展示原始日志内容。
+                </p>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -348,7 +402,15 @@ export function AiSidebar({
         <div className={styles.body}>
           {/* Context and Status Info */}
           <div className={styles.infoSection}>
-            <AiContextTray selectedTopics={selectedTopics} />
+            <AiContextTray
+              selectedTopics={selectedTopics}
+              allTopics={allTopics}
+              useFullDocument={useFullDocument}
+              onToggleFullDocument={onToggleFullDocument || (() => {})}
+              onAddTopic={onAddContextTopic || (() => {})}
+              onRemoveTopic={onRemoveContextTopic || (() => {})}
+              onCanvasPick={onCanvasPick}
+            />
 
             {lastAppliedSummary ? (
               <section className={styles.appliedCard} aria-label="最近已应用改动">
@@ -371,7 +433,7 @@ export function AiSidebar({
             ) : null}
           </div>
 
-          {/* Chat Area with Resizable Splitter */}
+          {/* Chat Area */}
           <div className={styles.chatArea}>
             <div className={styles.messagesWrapper}>
               <AiMessageList
@@ -384,18 +446,14 @@ export function AiSidebar({
               />
             </div>
 
-            <ResizableSplitter onResize={handleResize} />
-
-            <div
-              className={styles.composerWrapper}
-              style={{ height: composerHeight }}
-            >
+            <div className={styles.composerWrapper}>
               <AiComposer
                 value={draft}
                 runStage={runStage}
                 isSending={isSending}
                 disabled={composerDisabled}
                 disabledHint={composerDisabledHint}
+                disabledPlaceholder={composerDisabledPlaceholder}
                 onChange={onDraftChange}
                 onSubmit={onSend}
               />

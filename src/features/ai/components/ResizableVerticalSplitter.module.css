@@ -1,13 +1,16 @@
 .splitter {
+  position: absolute;
+  left: -6px;
+  top: 0;
+  bottom: 0;
+  width: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 4px;
-  cursor: ns-resize;
+  cursor: ew-resize;
   background: transparent;
+  z-index: 10;
   transition: background-color 150ms ease;
-  margin: 0;
-  padding: 0;
 }
 
 .splitter:hover {
@@ -19,8 +22,8 @@
 }
 
 .handle {
-  width: 40px;
-  height: 4px;
+  width: 4px;
+  height: 40px;
   border-radius: 2px;
   background: rgba(172, 179, 184, 0.4);
   transition: background-color 150ms ease, transform 150ms ease;
@@ -32,5 +35,5 @@
 
 .splitter.dragging .handle {
   background: rgba(0, 122, 255, 0.5);
-  transform: scaleX(1.2);
+  transform: scaleY(1.2);
 }

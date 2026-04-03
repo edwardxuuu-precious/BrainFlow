@@ -9,6 +9,7 @@ interface AiComposerProps {
   runStage: AiRunStage
   disabled?: boolean
   disabledHint?: string
+  disabledPlaceholder?: string
   onChange: (value: string) => void
   onSubmit: () => void
 }
@@ -40,6 +41,7 @@ export function AiComposer({
   runStage,
   disabled = false,
   disabledHint,
+  disabledPlaceholder,
   onChange,
   onSubmit,
 }: AiComposerProps) {
@@ -105,7 +107,7 @@ export function AiComposer({
           aria-label="AI 提问输入框"
           placeholder={
             disabled
-              ? '当前不可发送，请先修复 Codex 验证。'
+              ? (disabledPlaceholder ?? '当前不可发送，请先修复 Codex 验证。')
               : '输入消息...'
           }
           onChange={(event) => onChange(event.target.value)}
