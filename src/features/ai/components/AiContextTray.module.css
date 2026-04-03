@@ -36,7 +36,7 @@
 }
 
 .headerTitle {
-  font-size: 13px;
+  font-size: var(--font-size-label);
   font-weight: 600;
   color: var(--on-surface);
   text-transform: uppercase;
@@ -57,7 +57,7 @@
   padding: 3px 10px;
   background: rgba(0, 88, 188, 0.1);
   color: var(--primary);
-  font-size: 12px;
+  font-size: var(--font-size-label);
   font-weight: 500;
   border-radius: 999px;
   white-space: nowrap;
@@ -72,7 +72,7 @@
   padding: 3px 10px;
   background: var(--surface-container-high);
   color: var(--on-surface-muted);
-  font-size: 12px;
+  font-size: var(--font-size-label);
   border-radius: 999px;
 }
 
@@ -126,14 +126,14 @@
 }
 
 .optionLabel {
-  font-size: 14px;
+  font-size: var(--font-size-body-md);
   font-weight: 500;
   color: var(--on-surface);
 }
 
 .optionHint {
   margin: 6px 0 0 30px;
-  font-size: 12px;
+  font-size: var(--font-size-body-sm);
   color: var(--on-surface-muted);
 }
 
@@ -144,7 +144,7 @@
 }
 
 .sectionLabel {
-  font-size: 12px;
+  font-size: var(--font-size-label);
   font-weight: 600;
   color: var(--on-surface-muted);
   text-transform: uppercase;
@@ -169,7 +169,7 @@
 }
 
 .selectedTitle {
-  font-size: 13px;
+  font-size: var(--font-size-body-sm);
   color: var(--on-surface);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -186,7 +186,7 @@
   border: none;
   background: transparent;
   color: var(--on-surface-muted);
-  font-size: 16px;
+  font-size: var(--font-size-body-lg);
   cursor: pointer;
   border-radius: 4px;
   transition: all 150ms ease;
@@ -230,7 +230,7 @@
 }
 
 .atSymbol {
-  font-size: 16px;
+  font-size: var(--font-size-body-lg);
   font-weight: 600;
   color: var(--primary);
 }
@@ -239,7 +239,7 @@
   flex: 1;
   border: none;
   background: transparent;
-  font-size: 14px;
+  font-size: var(--font-size-body-md);
   color: var(--on-surface);
   outline: none;
 }
@@ -258,7 +258,7 @@
   border: none;
   background: transparent;
   color: var(--on-surface-muted);
-  font-size: 16px;
+  font-size: var(--font-size-body-lg);
   cursor: pointer;
   border-radius: 4px;
   transition: all 150ms ease;
@@ -289,7 +289,7 @@
   border: none;
   background: transparent;
   text-align: left;
-  font-size: 14px;
+  font-size: var(--font-size-body-md);
   color: var(--on-surface);
   cursor: pointer;
   transition: background-color 150ms ease;
@@ -306,7 +306,7 @@
 .noResults {
   padding: 12px;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--font-size-body-sm);
   color: var(--on-surface-muted);
 }
 
@@ -325,7 +325,7 @@
   border-radius: var(--radius-xs);
   background: #34c759;
   color: white;
-  font-size: 14px;
+  font-size: var(--font-size-label);
   font-weight: 600;
   cursor: pointer;
   transition: all 200ms ease;

@@ -1,5 +1,9 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import {
+  attachBridgeUnavailableProxyHandlers,
+  BRIDGE_PROXY_TIMEOUT_MS,
+} from './server/dev-proxy'
 
 export default defineConfig({
   plugins: [react()],
@@ -8,6 +12,11 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8787',
         changeOrigin: false,
+        proxyTimeout: BRIDGE_PROXY_TIMEOUT_MS,
+        timeout: BRIDGE_PROXY_TIMEOUT_MS,
+        configure(proxy) {
+          attachBridgeUnavailableProxyHandlers(proxy)
+        },
       },
     },
   },

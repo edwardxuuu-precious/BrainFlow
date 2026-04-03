@@ -8,7 +8,8 @@ import {
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopicNode } from '../../components/topic-node/TopicNode'
-import { Button, IconButton, StatusPill, ToolbarGroup } from '../../components/ui'
+import { IconButton, ToolbarGroup } from '../../components/ui'
+import { SaveIndicator } from '../../components/SaveIndicator'
 import { AiSidebar } from '../../features/ai/components/AiSidebar'
 import { useAiStore } from '../../features/ai/ai-store'
 import {
@@ -69,7 +70,10 @@ function areFlowNodesEquivalent(
     currentNode.data.isCollapsed === nextNode.data.isCollapsed &&
     currentNode.data.childCount === nextNode.data.childCount &&
     currentNode.data.branchColor === nextNode.data.branchColor &&
-    currentNode.data.side === nextNode.data.side
+    currentNode.data.side === nextNode.data.side &&
+    currentNode.data.aiLocked === nextNode.data.aiLocked &&
+    JSON.stringify(currentNode.data.metadata) === JSON.stringify(nextNode.data.metadata) &&
+    JSON.stringify(currentNode.data.style) === JSON.stringify(nextNode.data.style)
   )
 }
 
@@ -91,21 +95,6 @@ function hasMultiSelectModifier(event: MouseEvent | React.MouseEvent): boolean {
 
 function mergeTopicSelection(currentTopicIds: string[], nextTopicIds: string[]): string[] {
   return Array.from(new Set([...currentTopicIds, ...nextTopicIds]))
-}
-
-function formatSaveState(isDirty: boolean, savedAt: number | null): string {
-  if (isDirty) {
-    return '未保存'
-  }
-
-  if (!savedAt) {
-    return '本地自动保存'
-  }
-
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(savedAt)
 }
 
 function isSameViewport(
@@ -167,6 +156,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const [renameDraft, setRenameDraft] = useState<RenameDraft>({ topicId: null, value: '' })
   const [aiDraft, setAiDraft] = useState('')
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('inspector')
+  const [rightSidebarWidth, setRightSidebarWidth] = useState(300)
 
   const [useFullDocument, setUseFullDocument] = useState(true)
   const [aiContextTopicIds, setAiContextTopicIds] = useState<string[]>([])
@@ -199,6 +189,9 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const addChild = useEditorStore((state) => state.addChild)
   const addSibling = useEditorStore((state) => state.addSibling)
   const updateNote = useEditorStore((state) => state.updateNote)
+  const updateTopicMetadata = useEditorStore((state) => state.updateTopicMetadata)
+  const updateTopicStyle = useEditorStore((state) => state.updateTopicStyle)
+  const updateTopicsStyle = useEditorStore((state) => state.updateTopicsStyle)
   const removeTopic = useEditorStore((state) => state.removeTopic)
   const setBranchSide = useEditorStore((state) => state.setBranchSide)
   const setTopicOffset = useEditorStore((state) => state.setTopicOffset)
@@ -299,6 +292,16 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         : [],
     [document],
   )
+  const topicOptions = useMemo(
+    () =>
+      document
+        ? Object.values(document.topics).map((topic) => ({
+            id: topic.id,
+            title: topic.title,
+          }))
+        : [],
+    [document],
+  )
   const handleAddContextTopic = useCallback((topicId: string) => {
     setAiContextTopicIds((prev) => [...new Set([...prev, topicId])])
   }, [])
@@ -311,8 +314,37 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const handleStartCanvasPick = useCallback(() => {
     setIsPickingCanvasNode(true)
   }, [])
+
+  // Resize handlers for right sidebar
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    document.body.style.cursor = 'ew-resize'
+    document.body.style.userSelect = 'none'
+    
+    const handleMove = (moveEvent: MouseEvent) => {
+      const newWidth = window.innerWidth - moveEvent.clientX
+      const clampedWidth = Math.max(260, Math.min(600, newWidth))
+      setRightSidebarWidth(clampedWidth)
+    }
+    
+    const handleUp = () => {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleUp)
+    }
+    
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleUp)
+  }, [])
+
   const rightSidebarTabs = (onCollapse?: () => void) => (
-    <EditorSidebarTabs activeTab={rightPanelTab} onChange={setRightPanelTab} onCollapse={onCollapse} />
+    <EditorSidebarTabs
+      controlsId={RIGHT_SIDEBAR_ID}
+      activeTab={rightPanelTab}
+      onChange={setRightPanelTab}
+      onCollapse={onCollapse}
+    />
   )
 
   const canUndoLastApplied =
@@ -376,16 +408,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
       setAiDraft('')
     })
   }, [aiHydrate, document?.id, document?.title])
-
-  useEffect(() => {
-    if (rightPanelTab !== 'ai') {
-      return
-    }
-
-    if (!aiStatus && !aiIsCheckingStatus) {
-      void aiRefreshStatus()
-    }
-  }, [aiIsCheckingStatus, aiRefreshStatus, aiStatus, rightPanelTab])
 
   useEffect(() => {
     const syncViewportMode = () => {
@@ -699,7 +721,9 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         onDraftChange={setAiDraft}
         onSend={() => void handleSendAiMessage()}
         onUndoLastApplied={aiUndoLastAppliedChange}
-        onRevalidate={() => void (aiStatus?.ready ? aiRefreshStatus() : aiRevalidateStatus())}
+        onRevalidate={() =>
+          void (aiStatus === null || aiStatus.ready ? aiRefreshStatus() : aiRevalidateStatus())
+        }
         onLoadSettings={() => void aiLoadSettings()}
         onSaveSettings={(businessPrompt) => void aiSaveSettings(businessPrompt)}
         onResetSettings={() => void aiResetSettings()}
@@ -731,6 +755,12 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         isFirstLevel={isFirstLevel}
         draftTitle={draftTitle}
         isInspectorEditing={isInspectorEditing}
+        theme={{
+          surface: document.theme.surface,
+          text: document.theme.text,
+          accent: document.theme.accent,
+        }}
+        topicOptions={topicOptions}
         onCollapse={onCollapse}
         onRenameStart={handleRenameFromInspector}
         onRenameChange={(value) =>
@@ -745,6 +775,9 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         onAddSibling={() => activeTopicId && addSibling(activeTopicId)}
         onDelete={() => activeTopicId && removeTopic(activeTopicId)}
         onNoteChange={(note) => activeTopicId && updateNote(activeTopicId, note)}
+        onMetadataChange={(patch) => activeTopicId && updateTopicMetadata(activeTopicId, patch)}
+        onStyleChange={(patch) => activeTopicId && updateTopicStyle(activeTopicId, patch)}
+        onApplyStyleToSelected={(patch) => updateTopicsStyle(selectedTopicIds, patch)}
         onBranchSideChange={(side) => activeTopicId && setBranchSide(activeTopicId, side)}
         onToggleAiLock={(aiLocked) => activeTopicId && setTopicAiLocked(activeTopicId, aiLocked)}
         onLockSelected={() => setTopicsAiLocked(selectedTopicIds.filter((topicId) => !document.topics[topicId]?.aiLocked), true)}
@@ -757,12 +790,9 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     <main className={styles.page} style={themeVariables}>
       <header className={styles.topbar}>
         <div className={styles.topbarLeft}>
-          <div className={styles.brandBlock}>
+          <button type="button" className={styles.brandBlock} onClick={() => navigate('/')}>
             <span className={styles.wordmark}>BrainFlow</span>
-          </div>
-          <Button type="button" tone="secondary" iconStart="back" onClick={() => navigate('/')}>
-            返回文档
-          </Button>
+          </button>
           <div className={styles.titleWrap}>
             <input
               className={styles.titleInput}
@@ -770,9 +800,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
               aria-label="脑图标题"
               onChange={(event) => renameDocument(event.target.value)}
             />
-            <StatusPill tone={isDirty ? 'accent' : 'soft'}>
-              {formatSaveState(isDirty, lastSavedAt)}
-            </StatusPill>
+            <SaveIndicator lastSavedAt={lastSavedAt} isDirty={isDirty} />
           </div>
         </div>
 
@@ -781,6 +809,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             label="撤销"
             icon="undo"
             tone="secondary"
+            size="sm"
             onClick={undo}
             disabled={history.length === 0}
           />
@@ -788,15 +817,16 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             label="重做"
             icon="redo"
             tone="secondary"
+            size="sm"
             onClick={redo}
             disabled={future.length === 0}
           />
-          <Button type="button" tone="secondary" iconStart="export" onClick={() => exportDocumentAsJson(document)}>
+          <button type="button" className={styles.exportButton} onClick={() => exportDocumentAsJson(document)}>
             导出 JSON
-          </Button>
-          <Button type="button" tone="primary" iconStart="export" onClick={() => void handleExportPng()}>
+          </button>
+          <button type="button" className={styles.exportButtonPrimary} onClick={() => void handleExportPng()}>
             导出 PNG
-          </Button>
+          </button>
         </ToolbarGroup>
       </header>
 
@@ -866,17 +896,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         ) : null}
 
         <div className={styles.canvasColumn}>
-          <div className={styles.canvasToolbar}>
-            <ToolbarGroup className={styles.canvasHint}>
-              <StatusPill tone="soft">Canvas</StatusPill>
-              <span>左键框选可直接建立多选</span>
-              <span>按住 Space 拖动画布</span>
-            </ToolbarGroup>
-            <Button type="button" tone="secondary" iconStart="fitView" onClick={() => void handleFitView()}>
-              适应视图
-            </Button>
-          </div>
-
           <div
             ref={canvasRef}
             className={styles.canvasFrame}
@@ -898,12 +917,17 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
               multiSelectionKeyCode={['Meta', 'Control', 'Shift']}
               zoomOnScroll
               zoomOnDoubleClick={false}
+              deleteKeyCode={null}
               onInit={(instance) => {
                 reactFlowRef.current = instance
                 setReactFlowInstance(instance)
               }}
               onNodesChange={(changes) => {
-                onNodesChange(changes)
+                // Filter out remove changes - we handle deletion via keyboard shortcuts
+                const filteredChanges = changes.filter((change) => change.type !== 'remove')
+                if (filteredChanges.length > 0) {
+                  onNodesChange(filteredChanges)
+                }
               }}
               onSelectionChange={({ nodes: selectedNodes }) => {
                 const selectedFromCanvas = selectedNodes.map((node) => node.id)
@@ -1014,7 +1038,15 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
 
         {isDesktop ? (
           rightSidebarOpen ? (
-            <div className={styles.rightSidebarWrapper}>
+            <div 
+              className={styles.rightSidebarWrapper} 
+              style={{ width: rightSidebarWidth }}
+            >
+              <div 
+                className={styles.resizeHandle} 
+                onMouseDown={handleResizeStart}
+                title="拖拽调整宽度"
+              />
               {renderRightSidebar('docked', styles.rightSidebar, closeRightSidebar)}
             </div>
           ) : (

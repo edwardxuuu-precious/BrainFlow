@@ -26,7 +26,7 @@
   border-radius: 8px;
   background: transparent;
   color: var(--color-text-soft);
-  font-size: 12px;
+  font-size: var(--font-size-label);
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;

@@ -3,7 +3,7 @@ import { Icon, type IconName } from './icons'
 import styles from './Button.module.css'
 
 type ButtonTone = 'primary' | 'secondary' | 'ghost' | 'danger'
-type ButtonSize = 'sm' | 'md' | 'lg'
+type ButtonSize = 'xs' | 'sm' | 'md' | 'lg'
 
 interface BaseButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   tone?: ButtonTone
@@ -41,9 +41,9 @@ export function Button({
       )}
       {...props}
     >
-      {iconStart ? <Icon name={iconStart} size={size === 'sm' ? 16 : 18} /> : null}
+      {iconStart ? <Icon name={iconStart} size={size === 'xs' ? 14 : size === 'sm' ? 16 : 18} /> : null}
       {children ? <span className={styles.label}>{children}</span> : null}
-      {iconEnd ? <Icon name={iconEnd} size={size === 'sm' ? 16 : 18} /> : null}
+      {iconEnd ? <Icon name={iconEnd} size={size === 'xs' ? 14 : size === 'sm' ? 16 : 18} /> : null}
     </button>
   )
 }

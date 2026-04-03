@@ -137,7 +137,17 @@ describe('editor-store', () => {
         offsetX: 0,
         offsetY: 0,
       },
-      style: {},
+      metadata: {
+        labels: [],
+        markers: [],
+        task: null,
+        links: [],
+        attachments: [],
+      },
+      style: {
+        emphasis: 'normal',
+        variant: 'default',
+      },
     }
     document.workspace.hierarchyCollapsedTopicIds = [document.rootTopicId, branchId]
 

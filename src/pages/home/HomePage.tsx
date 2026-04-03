@@ -14,6 +14,13 @@ interface HomePageProps {
   service?: DocumentService
 }
 
+const HOME_QUOTES: Array<{ text: string; author: string }> = [
+  { text: '人须在事上磨，方立得住。', author: '王阳明' },
+  { text: '未经省察的人生不值得过。', author: '苏格拉底' },
+  { text: '与怪物战斗的人，应当小心自己不要成为怪物。', author: '尼采' },
+  { text: '人性一个最特别的弱点，就是在意别人如何看待自己。', author: '叔本华' },
+]
+
 function buildRenamedDocument(document: MindMapDocument, title: string): MindMapDocument {
   return {
     ...document,
@@ -39,6 +46,7 @@ export function HomePage({ service = documentService }: HomePageProps) {
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState('')
+  const [brandQuote] = useState(() => HOME_QUOTES[Math.floor(Math.random() * HOME_QUOTES.length)] ?? HOME_QUOTES[0])
   const deferredQuery = useDeferredValue(query)
 
   const recentDocument = useMemo(
@@ -126,22 +134,19 @@ export function HomePage({ service = documentService }: HomePageProps) {
       <header className={styles.topbar}>
         <div className={styles.topbarBrand}>
           <span className={styles.wordmark}>BrainFlow</span>
-          <div className={styles.topbarMeta}>
-            <span className={styles.topbarLabel}>Document Workspace</span>
-            <StatusPill tone="soft">Local First</StatusPill>
-            <StatusPill tone="soft">{loading ? 'Loading' : `${documents.length} Docs`}</StatusPill>
+          <div className={styles.brandQuote}>
+            <span className={styles.brandQuoteText}>{brandQuote.text}</span>
+            <span className={styles.brandQuoteAuthor}>{brandQuote.author}</span>
           </div>
         </div>
       </header>
 
       <section className={styles.hero}>
         <div className={styles.heroCopy}>
-          <StatusPill tone="accent">Editorial Workspace</StatusPill>
+
           <div className={styles.heroText}>
-            <h1 className={styles.title}>把想法展开成结构</h1>
-            <p className={styles.subtitle}>
-              BrainFlow 是面向深度思考者的本地优先脑图工具。文档只留在你的浏览器里，界面则像一张安静、克制的工作台。
-            </p>
+            <h1 className={styles.title}>你的思考，只属于你</h1>
+            <p className={styles.subtitle}>BrainFlow 让发散的思维自然生长成结构。</p>
           </div>
           <ToolbarGroup className={styles.heroActions}>
             <Button tone="primary" size="lg" iconStart="add" onClick={handleCreate}>
@@ -158,16 +163,6 @@ export function HomePage({ service = documentService }: HomePageProps) {
               </Button>
             ) : null}
           </ToolbarGroup>
-          <div className={styles.heroMeta}>
-            <div>
-              <span className={styles.heroMetaLabel}>本地存储</span>
-              <strong className={styles.heroMetaValue}>IndexedDB / localStorage</strong>
-            </div>
-            <div>
-              <span className={styles.heroMetaLabel}>工作台状态</span>
-              <strong className={styles.heroMetaValue}>{loading ? '正在准备…' : `${documents.length} 份脑图`}</strong>
-            </div>
-          </div>
         </div>
         <div className={styles.heroVisual}>
           <NetworkConstellation />
@@ -302,8 +297,9 @@ export function HomePage({ service = documentService }: HomePageProps) {
                       复制
                     </Button>
                     <Button
-                      tone="danger"
+                      tone="ghost"
                       size="sm"
+                      className={styles.deleteButton}
                       onClick={(event) => {
                         event.stopPropagation()
                         void handleDelete(document.id)
@@ -320,13 +316,19 @@ export function HomePage({ service = documentService }: HomePageProps) {
       </section>
 
       <footer className={styles.footer}>
-        <div className={styles.footerMeta}>
+        <div className={styles.footerSection}>
           <span className={styles.footerLabel}>本地模式</span>
-          <span>自动保存 / 离线优先 / 无云依赖</span>
+          <span className={styles.footerValue}>自动保存 / 离线优先 / 无云依赖</span>
         </div>
-        <div className={styles.footerMeta}>
-          <span className={styles.footerLabel}>工作区</span>
-          <span>{loading ? '载入中' : `${documents.length} 份文档 · 当前版本 Atelier Slate`}</span>
+        <div className={styles.footerSection}>
+          <span className={styles.footerLabel}>本地存储</span>
+          <span className={styles.footerValue}>IndexedDB / localStorage</span>
+        </div>
+        <div className={styles.footerSection}>
+          <span className={styles.footerLabel}>工作区状态</span>
+          <span className={styles.footerValue}>
+            {loading ? '正在准备…' : `${documents.length} 份脑图 · Atelier Slate`}
+          </span>
         </div>
       </footer>
     </main>

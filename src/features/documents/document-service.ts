@@ -1,5 +1,6 @@
 import { createMindMapDocument } from './document-factory'
 import { defaultTheme, normalizeMindMapTheme } from './theme'
+import { normalizeTopicMetadata, normalizeTopicStyle } from './topic-defaults'
 import type {
   DocumentService,
   DocumentSummary,
@@ -146,6 +147,8 @@ function normalizeTopic(topic: TopicNode): TopicNode {
   return {
     ...topic,
     aiLocked: topic.aiLocked ?? false,
+    metadata: normalizeTopicMetadata(topic.metadata),
+    style: normalizeTopicStyle(topic.style),
   }
 }
 

@@ -1,31 +1,31 @@
 .pill {
   display: inline-flex;
-  min-height: 28px;
+  min-height: 30px;
   align-items: center;
   gap: 8px;
-  padding: 0 12px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  font-size: 11px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 0.5px solid transparent;
+  font-size: var(--font-size-label);
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .neutral {
-  border-color: rgba(172, 179, 184, 0.24);
-  background: rgba(255, 255, 255, 0.64);
-  color: var(--color-muted);
+  border-color: rgba(193, 198, 215, 0.4);
+  background: var(--surface-container-low);
+  color: var(--on-surface-muted);
 }
 
 .accent {
-  border-color: rgba(84, 95, 110, 0.22);
-  background: rgba(84, 95, 110, 0.08);
-  color: var(--color-accent-strong);
+  border-color: rgba(0, 88, 188, 0.2);
+  background: rgba(0, 88, 188, 0.08);
+  color: var(--primary);
 }
 
 .soft {
-  border-color: rgba(172, 179, 184, 0.16);
-  background: rgba(242, 244, 246, 0.92);
-  color: var(--color-text-soft);
+  border-color: rgba(193, 198, 215, 0.3);
+  background: var(--surface-container-low);
+  color: var(--on-surface-variant);
 }

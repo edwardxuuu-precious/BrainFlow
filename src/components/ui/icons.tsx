@@ -7,6 +7,8 @@ export type IconName =
   | 'back'
   | 'chat'
   | 'check'
+  | 'calendar'
+  | 'chevronRight'
   | 'close'
   | 'copy'
   | 'delete'
@@ -18,17 +20,22 @@ export type IconName =
   | 'history'
   | 'keyboard'
   | 'local'
+  | 'link'
   | 'lock'
   | 'loading'
   | 'minus'
   | 'note'
+  | 'palette'
+  | 'question'
   | 'redo'
   | 'restore'
   | 'search'
   | 'send'
   | 'settings'
   | 'spark'
+  | 'sparkles'
   | 'storage'
+  | 'tag'
   | 'tree'
   | 'undo'
   | 'unlock'
@@ -43,9 +50,11 @@ interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'children'> {
 const iconPaths: Record<IconName, string[]> = {
   add: ['M12 5v14', 'M5 12h14'],
   archive: ['M4 7h16l-1 12H5L4 7Z', 'M9 11h6', 'M9 4h6l1 3H8l1-3Z'],
-  attachment: ['M16.5 6v9.5a4.5 4.5 0 1 1-9 0V5a2.5 2.5 0 0 1 5 0v10.5a1 1 0 1 1-2 0V6'],
+  attachment: ['M12 4v10a3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a5 5 0 0 0-10 0v10a7 7 0 0 0 7 7 7 7 0 0 0 7-7v-3'],
   back: ['M15 18l-6-6 6-6', 'M9 12h10'],
+  chevronRight: ['M9 6l6 6-6 6'],
   chat: ['M5 6h14v9H9l-4 4V6Z'],
+  calendar: ['M7 4v3', 'M17 4v3', 'M4 8h16', 'M5 6h14v13H5z', 'M8 11h3', 'M13 11h3', 'M8 15h3'],
   check: ['M5 13l4 4L19 7'],
   close: ['M6 6l12 12', 'M18 6L6 18'],
   copy: ['M9 9h9v11H9z', 'M6 15H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v1'],
@@ -58,17 +67,22 @@ const iconPaths: Record<IconName, string[]> = {
   history: ['M5 7v5h5', 'M6 12a7 7 0 1 0 2-5', 'M12 9v4l3 2'],
   keyboard: ['M4 7h16v10H4z', 'M7 10h1', 'M10 10h1', 'M13 10h1', 'M16 10h1', 'M7 13h8'],
   local: ['M7 9a5 5 0 0 1 10 0', 'M5 13a8 8 0 0 1 14 0', 'M12 17h.01'],
+  link: ['M10 14 14 10', 'M8.5 15.5 6 18a3 3 0 0 1-4-4l2.5-2.5a3 3 0 0 1 4 0', 'M15.5 8.5 18 6a3 3 0 1 0-4-4L11.5 4.5a3 3 0 0 0 0 4'],
   lock: ['M7 11h10v9H7z', 'M9 11V8a3 3 0 1 1 6 0v3'],
   loading: ['M12 4a8 8 0 1 1-5.66 2.34', 'M12 2v3', 'M4 12H1'],
   minus: ['M5 12h14'],
   note: ['M7 4h10v16l-5-3-5 3z'],
+  palette: ['M12 3a9 9 0 1 0 0 18h1.5a1.5 1.5 0 0 0 0-3H12a2 2 0 0 1 0-4h4a5 5 0 0 0 0-10h-4Z', 'M7.5 11h.01', 'M9.5 7.5h.01', 'M14.5 7.5h.01', 'M16.5 11h.01'],
+  question: ['M9.1 9a3 3 0 1 1 5.8 1c0 2-3 2-3 4', 'M12 17h.01', 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z'],
   redo: ['M19 7v5h-5', 'M18 12a7 7 0 1 1-2-5', 'M12 9v4l-3 2'],
   restore: ['M12 4v4l3-3', 'M12 8 9 5', 'M7 10a6 6 0 1 0 2-2'],
-  search: ['M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z', 'm20 20-3.5-3.5'],
+  search: ['M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm7 13-4-4'],
   send: ['M4 12 20 4 13 20 11 13 4 12', 'M11 13 20 4'],
   settings: ['M12 3v3', 'M12 18v3', 'M3 12h3', 'M18 12h3', 'M5.6 5.6l2.1 2.1', 'M16.3 16.3l2.1 2.1', 'M18.4 5.6l-2.1 2.1', 'M7.7 16.3l-2.1 2.1', 'M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z'],
   spark: ['M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3', 'M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15', 'M5 14l.8 2.2L8 17l-2.2.8L5 20l-.8-2.2L2 17l2.2-.8L5 14'],
+  sparkles: ['M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3'],
   storage: ['M5 6c0-1.1 3.1-2 7-2s7 .9 7 2-3.1 2-7 2-7-.9-7-2Z', 'M5 6v6c0 1.1 3.1 2 7 2s7-.9 7-2V6', 'M5 12v6c0 1.1 3.1 2 7 2s7-.9 7-2v-6'],
+  tag: ['M4 10V5h5l9 9-5 5-9-9Z', 'M7.5 7.5h.01'],
   tree: ['M7 6h4v4H7z', 'M13 14h4v4h-4z', 'M7 14h4v4H7z', 'M11 8h3v3', 'M14 11v3', 'M14 11H9v3'],
   undo: ['M5 7v5h5', 'M6 12a7 7 0 1 1 2-5', 'M12 9v4l3 2'],
   unlock: ['M7 11h10v9H7z', 'M9 11V8a3 3 0 1 1 5.5 1.5'],

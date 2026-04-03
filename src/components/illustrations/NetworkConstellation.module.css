@@ -18,43 +18,11 @@
   inset: 20px;
   border-radius: 26px;
   border: 1px solid rgba(255, 255, 255, 0.06);
+  pointer-events: none;
 }
 
-.grid {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
-  background-size: 34px 34px;
-  opacity: 0.18;
-}
-
-.svg {
-  position: relative;
+.canvas {
+  display: block;
   width: 100%;
   height: 100%;
-}
-
-.line {
-  fill: none;
-  stroke: rgba(106, 214, 229, 0.42);
-  stroke-width: 1.35;
-}
-
-.lineStrong {
-  stroke: rgba(106, 214, 229, 0.78);
-  stroke-width: 1.6;
-}
-
-.node {
-  fill: #8fe7f2;
-}
-
-.nodeSoft {
-  fill: rgba(143, 231, 242, 0.42);
-}
-
-.glow {
-  filter: drop-shadow(0 0 14px rgba(143, 231, 242, 0.34));
 }

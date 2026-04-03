@@ -1,78 +1,138 @@
+import { useEffect, useRef } from 'react'
 import styles from './NetworkConstellation.module.css'
 
-const points = [
-  [84, 208],
-  [132, 168],
-  [166, 236],
-  [214, 144],
-  [238, 208],
-  [292, 112],
-  [334, 178],
-  [376, 138],
-  [404, 216],
-  [458, 164],
-  [512, 236],
-  [558, 172],
-  [606, 210],
-  [648, 152],
-  [686, 218],
-] as const
-
-const links = [
-  [0, 1],
-  [0, 2],
-  [1, 2],
-  [1, 3],
-  [2, 4],
-  [3, 4],
-  [3, 5],
-  [4, 6],
-  [5, 6],
-  [5, 7],
-  [6, 7],
-  [6, 8],
-  [7, 8],
-  [7, 9],
-  [8, 10],
-  [9, 10],
-  [9, 11],
-  [10, 12],
-  [11, 12],
-  [11, 13],
-  [12, 14],
-  [13, 14],
-  [2, 7],
-  [4, 9],
-  [6, 11],
-  [8, 13],
-] as const
+interface Particle {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  baseRadius: number
+  pulseOffset: number
+  opacity: number
+  age: number
+  lifeSpan: number
+}
 
 export function NetworkConstellation() {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    let animationId: number
+    let particles: Particle[] = []
+
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect()
+      const dpr = window.devicePixelRatio || 1
+      canvas.width = Math.floor(rect.width * dpr)
+      canvas.height = Math.floor(rect.height * dpr)
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      initParticles(rect.width, rect.height)
+    }
+
+    const initParticles = (width: number, height: number) => {
+      const area = width * height
+      const count = Math.min(Math.max(Math.floor(area / 12000), 35), 70)
+      particles = []
+      for (let i = 0; i < count; i++) {
+        particles.push(createParticle(width, height))
+      }
+    }
+
+    const createParticle = (width: number, height: number): Particle => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: (Math.random() - 0.5) * 0.5,
+      baseRadius: 1.5 + Math.random() * 2,
+      pulseOffset: Math.random() * Math.PI * 2,
+      opacity: 0.4 + Math.random() * 0.6,
+      age: Math.random() * 1000,
+      lifeSpan: 600 + Math.random() * 1200,
+    })
+
+    const draw = () => {
+      const width = canvas.clientWidth
+      const height = canvas.clientHeight
+
+      ctx.clearRect(0, 0, width, height)
+
+      const maxDist = 110
+      const time = Date.now() * 0.001
+
+      // 连线
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const p1 = particles[i]
+          const p2 = particles[j]
+          const dx = p1.x - p2.x
+          const dy = p1.y - p2.y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+
+          if (dist < maxDist) {
+            const alpha = (1 - dist / maxDist) * 0.45
+            ctx.beginPath()
+            ctx.strokeStyle = `rgba(106, 214, 229, ${alpha})`
+            ctx.lineWidth = 1.2
+            ctx.moveTo(p1.x, p1.y)
+            ctx.lineTo(p2.x, p2.y)
+            ctx.stroke()
+          }
+        }
+      }
+
+      // 粒子
+      particles.forEach((p) => {
+        p.x += p.vx
+        p.y += p.vy
+        p.age++
+
+        // 边界环绕
+        if (p.x < -10) p.x = width + 10
+        if (p.x > width + 10) p.x = -10
+        if (p.y < -10) p.y = height + 10
+        if (p.y > height + 10) p.y = -10
+
+        // 进化：生命周期结束后重生
+        if (p.age > p.lifeSpan) {
+          Object.assign(p, createParticle(width, height))
+        }
+
+        // 脉冲呼吸效果
+        const pulse = Math.sin(time * 2 + p.pulseOffset)
+        const radius = p.baseRadius + pulse * 0.6
+        const alpha = p.opacity * (0.7 + pulse * 0.3)
+
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, Math.max(0.5, radius), 0, Math.PI * 2)
+        ctx.fillStyle = `rgba(143, 231, 242, ${Math.max(0.2, alpha)})`
+        ctx.shadowColor = 'rgba(143, 231, 242, 0.5)'
+        ctx.shadowBlur = 10 + pulse * 4
+        ctx.fill()
+        ctx.shadowBlur = 0
+      })
+
+      animationId = requestAnimationFrame(draw)
+    }
+
+    resize()
+    draw()
+
+    window.addEventListener('resize', resize)
+
+    return () => {
+      cancelAnimationFrame(animationId)
+      window.removeEventListener('resize', resize)
+    }
+  }, [])
+
   return (
     <div className={styles.frame} aria-hidden="true">
-      <div className={styles.grid} />
-      <svg viewBox="0 0 760 360" className={styles.svg}>
-        <g className={styles.glow}>
-          {links.map(([from, to], index) => (
-            <path
-              key={`${from}-${to}`}
-              className={index % 5 === 0 ? styles.lineStrong : styles.line}
-              d={`M ${points[from][0]} ${points[from][1]} Q ${(points[from][0] + points[to][0]) / 2} ${
-                ((points[from][1] + points[to][1]) / 2) - 18
-              } ${points[to][0]} ${points[to][1]}`}
-            />
-          ))}
-          {points.map(([x, y], index) => (
-            <circle
-              key={`${x}-${y}`}
-              cx={x}
-              cy={y}
-              r={index % 4 === 0 ? 4.5 : 3.4}
-              className={index % 3 === 0 ? styles.node : styles.nodeSoft}
-            />
-          ))}
-        </g>
-      </svg>
+      <canvas ref={canvasRef} className={styles.canvas} />
     </div>
   )
 }

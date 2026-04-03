@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n web,api -c blue,green \"pnpm dev:web\" \"pnpm dev:server\"",
+    "dev": "tsx server/dev-supervisor.ts",
     "dev:web": "vite --host 127.0.0.1 --port 4173",
     "dev:server": "tsx watch server/index.ts",
     "build": "pnpm build:web && pnpm build:server",

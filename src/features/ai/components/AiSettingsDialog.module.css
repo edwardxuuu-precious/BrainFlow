@@ -50,19 +50,18 @@
 
 .heading {
   font-family: var(--font-display);
-  font-size: 28px;
+  font-size: var(--font-size-display-sm);
   line-height: 1;
   color: var(--color-text);
 }
 
 .subtitle,
-.meta,
 .error,
 .archivedSubtitle,
 .emptyArchived,
 .archivedItemTime {
   color: var(--color-text-soft);
-  font-size: 13px;
+  font-size: var(--font-size-body-sm);
   line-height: 1.6;
 }
 
@@ -71,7 +70,7 @@
   gap: 4px;
   text-align: right;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--font-size-label);
 }
 
 .body {
@@ -107,7 +106,7 @@
 
 .archivedGroupTitle {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-label);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -139,7 +138,7 @@
 .archivedItemTitle {
   overflow: hidden;
   color: var(--color-text);
-  font-size: 14px;
+  font-size: var(--font-size-body-md);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;

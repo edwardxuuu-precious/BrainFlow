@@ -1,4 +1,5 @@
 import type { AiDocumentTopicContext, AiSelectionContext } from '../../../shared/ai-contract'
+import { normalizeTopicMetadata, normalizeTopicStyle } from '../documents/topic-defaults'
 import type { MindMapDocument } from '../documents/types'
 
 function uniqueTopicIds(topicIds: string[]): string[] {
@@ -33,6 +34,8 @@ export function buildAiContext(
     topicId: topic.id,
     title: topic.title,
     note: topic.note,
+    metadata: normalizeTopicMetadata(topic.metadata),
+    style: normalizeTopicStyle(topic.style),
     parentTopicId: topic.parentId,
     childTopicIds: [...topic.childIds],
     aiLocked: topic.aiLocked,

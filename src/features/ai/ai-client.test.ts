@@ -24,6 +24,32 @@ describe('ai-client transport handling', () => {
     })
   })
 
+  it('maps structured 503 proxy responses to the same bridge unavailable message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            code: 'request_failed',
+            message: '本机 Codex bridge 无响应，请确认本机 bridge 已启动，并检查 8787 端口服务。',
+          }),
+          {
+            status: 503,
+            statusText: 'Service Unavailable',
+            headers: {
+              'content-type': 'application/json',
+            },
+          },
+        ),
+      ),
+    )
+
+    await expect(fetchCodexStatus()).rejects.toMatchObject({
+      code: 'request_failed',
+      message: '本机 Codex bridge 无响应，请确认本机 bridge 已启动，并检查 8787 端口服务。',
+    })
+  })
+
   it('aborts long-running status requests with a timeout message', async () => {
     vi.useFakeTimers()
     vi.stubGlobal(

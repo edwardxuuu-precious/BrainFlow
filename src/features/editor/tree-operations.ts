@@ -4,8 +4,18 @@ import type {
   MindMapEditorChromeState,
   MindMapViewport,
   TopicLayout,
+  TopicMetadataPatch,
   TopicNode,
+  TopicStylePatch,
 } from '../documents/types'
+import {
+  applyTopicMetadataPatch,
+  applyTopicStylePatch,
+  createDefaultTopicMetadata,
+  createDefaultTopicStyle,
+  normalizeTopicMetadata,
+  normalizeTopicStyle,
+} from '../documents/topic-defaults'
 
 export type ResolvedBranchSide = 'left' | 'right' | 'center'
 
@@ -41,7 +51,8 @@ function createTopic(parentId: string): TopicNode {
       offsetX: 0,
       offsetY: 0,
     },
-    style: {},
+    metadata: createDefaultTopicMetadata(),
+    style: createDefaultTopicStyle(),
   }
 }
 
@@ -224,6 +235,81 @@ export function setTopicsAiLocked(
   const nextDoc = cloneDocument(doc)
   for (const topicId of normalizedTopicIds) {
     nextDoc.topics[topicId].aiLocked = aiLocked
+  }
+
+  return touchDocument(nextDoc)
+}
+
+export function updateTopicMetadata(
+  doc: MindMapDocument,
+  topicId: string,
+  patch: TopicMetadataPatch,
+): MindMapDocument {
+  const topic = doc.topics[topicId]
+  if (!topic) {
+    return doc
+  }
+
+  const nextMetadata = applyTopicMetadataPatch(
+    normalizeTopicMetadata(topic.metadata),
+    patch,
+  )
+
+  if (JSON.stringify(nextMetadata) === JSON.stringify(normalizeTopicMetadata(topic.metadata))) {
+    return doc
+  }
+
+  const nextDoc = cloneDocument(doc)
+  nextDoc.topics[topicId].metadata = nextMetadata
+  return touchDocument(nextDoc)
+}
+
+export function updateTopicStyle(
+  doc: MindMapDocument,
+  topicId: string,
+  patch: TopicStylePatch,
+): MindMapDocument {
+  const topic = doc.topics[topicId]
+  if (!topic) {
+    return doc
+  }
+
+  const nextStyle = applyTopicStylePatch(normalizeTopicStyle(topic.style), patch)
+  if (JSON.stringify(nextStyle) === JSON.stringify(normalizeTopicStyle(topic.style))) {
+    return doc
+  }
+
+  const nextDoc = cloneDocument(doc)
+  nextDoc.topics[topicId].style = nextStyle
+  return touchDocument(nextDoc)
+}
+
+export function updateTopicsStyle(
+  doc: MindMapDocument,
+  topicIds: string[],
+  patch: TopicStylePatch,
+): MindMapDocument {
+  const normalizedTopicIds = Array.from(new Set(topicIds)).filter((topicId) => doc.topics[topicId])
+  if (normalizedTopicIds.length === 0) {
+    return doc
+  }
+
+  let changed = false
+  const nextDoc = cloneDocument(doc)
+
+  for (const topicId of normalizedTopicIds) {
+    const currentStyle = normalizeTopicStyle(nextDoc.topics[topicId].style)
+    const nextStyle = applyTopicStylePatch(currentStyle, patch)
+    if (JSON.stringify(nextStyle) === JSON.stringify(currentStyle)) {
+      continue
+    }
+
+    nextDoc.topics[topicId].style = nextStyle
+    changed = true
+  }
+
+  if (!changed) {
+    return doc
   }
 
   return touchDocument(nextDoc)

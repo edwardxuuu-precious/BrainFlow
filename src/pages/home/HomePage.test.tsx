@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DocumentService, MindMapDocument } from '../../features/documents/types'
 import { createMindMapDocument } from '../../features/documents/document-factory'
 import { HomePage } from './HomePage'
@@ -16,6 +16,10 @@ const COPY = {
   roadmap: '\u8def\u7ebf\u56fe',
   research: '\u7814\u7a76\u603b\u89c8',
 } as const
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 function createFakeService(): DocumentService & { documents: MindMapDocument[] } {
   const initial = createMindMapDocument(COPY.roadmap)
@@ -75,6 +79,34 @@ function createFakeService(): DocumentService & { documents: MindMapDocument[] }
 }
 
 describe('HomePage', () => {
+  it('renders one stable random quote and moves legacy status info into the footer', async () => {
+    const service = createFakeService()
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+
+    render(
+      <MemoryRouter>
+        <HomePage service={service} />
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('人须在事上磨，方立得住。')
+    expect(screen.getByText('王阳明')).toBeInTheDocument()
+    expect(screen.queryByText('Document Workspace')).not.toBeInTheDocument()
+    expect(screen.queryByText('Local First')).not.toBeInTheDocument()
+    expect(screen.queryByText(/\d+\s+Docs/)).not.toBeInTheDocument()
+
+    const footer = screen.getByRole('contentinfo')
+    expect(within(footer).getByText('本地模式')).toBeInTheDocument()
+    expect(within(footer).getByText('本地存储')).toBeInTheDocument()
+    expect(within(footer).getByText('工作区状态')).toBeInTheDocument()
+    expect(within(footer).getByText('自动保存 / 离线优先 / 无云依赖')).toBeInTheDocument()
+    expect(within(footer).getByText('IndexedDB / localStorage')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(within(footer).getByText(`${service.documents.length} 份脑图 · Atelier Slate`)).toBeInTheDocument(),
+    )
+    expect(screen.getAllByText('本地存储')).toHaveLength(1)
+  })
+
   it('creates a document and navigates to the editor route', async () => {
     const service = createFakeService()
 

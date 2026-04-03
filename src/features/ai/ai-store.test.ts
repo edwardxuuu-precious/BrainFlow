@@ -206,6 +206,26 @@ describe('ai-store', () => {
       tone: 'success',
       message: '已重新检查，本机 Codex 当前可用。',
     })
+    expect(useAiStore.getState().hasCheckedStatus).toBe(true)
+  })
+
+  it('marks status as checked after a failed refresh to avoid retry storms', async () => {
+    vi.mocked(fetchCodexStatus).mockRejectedValueOnce(new Error('bridge down'))
+
+    await useAiStore.getState().refreshStatus()
+
+    expect(useAiStore.getState().status).toBeNull()
+    expect(useAiStore.getState().hasCheckedStatus).toBe(true)
+  })
+
+  it('does not refetch codex status when hydrating the same document again', async () => {
+    const document = createMindMapDocument('Same doc')
+
+    await useAiStore.getState().hydrate(document.id, document.title)
+    await useAiStore.getState().hydrate(document.id, `${document.title} renamed`)
+
+    expect(vi.mocked(fetchCodexStatus)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(fetchCodexSettings)).toHaveBeenCalledTimes(1)
   })
 
   it('commits the assistant reply before planning changes begin', async () => {

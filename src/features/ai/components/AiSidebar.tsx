@@ -326,17 +326,29 @@ export function AiSidebar({
           {isStatusExpanded ? (
             <div id={statusDetailsId} className={styles.statusDetails}>
               <div className={styles.statusDetailsHeader}>
-                <span className={classNames(
-                  styles.statusBadge,
-                  isReady
-                    ? styles.statusBadgeReady
-                    : isServiceDisconnected
-                      ? styles.statusBadgeDisconnected
-                      : styles.statusBadgeNeedAuth
-                )}>
-                  {isReady ? '可用' : isServiceDisconnected ? '未连接服务' : '需要验证'}
-                </span>
-                <span className={styles.statusVersion}>Prompt {status?.systemPromptVersion ?? '未加载'}</span>
+                <div className={styles.statusHeaderLeft}>
+                  <span className={classNames(
+                    styles.statusBadge,
+                    isReady
+                      ? styles.statusBadgeReady
+                      : isServiceDisconnected
+                        ? styles.statusBadgeDisconnected
+                        : styles.statusBadgeNeedAuth
+                  )}>
+                    {isReady ? '可用' : isServiceDisconnected ? '未连接服务' : '需要验证'}
+                  </span>
+                  <span className={styles.statusVersion}>Prompt {status?.systemPromptVersion ?? '未加载'}</span>
+                </div>
+                <button
+                  type="button"
+                  className={styles.statusCloseButton}
+                  onClick={() => setIsStatusExpanded(false)}
+                  aria-label="收起状态详情"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path d="M3.5 3.5L10.5 10.5M10.5 3.5L3.5 10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </button>
               </div>
 
               {statusError ? <p className={styles.statusError}>{statusError}</p> : null}

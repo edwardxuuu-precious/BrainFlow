@@ -4,6 +4,8 @@ import type {
   AiCanvasTarget,
   AiChatRequest,
   AiChatResponse,
+  AiTopicMetadataPatch,
+  AiTopicStyle,
   CodexBridgeIssue,
   CodexSettings,
   CodexStatus,
@@ -33,6 +35,8 @@ type RawProposalOperation = {
   targetTopicId?: string | null
   topicId?: string | null
   targetParentId?: string | null
+  metadata?: unknown
+  style?: unknown
 }
 
 interface RawProposalPayload {
@@ -73,6 +77,77 @@ export class CodexBridgeError extends Error {
   }
 }
 
+const METADATA_PATCH_SCHEMA = {
+  type: ['object', 'null'],
+  additionalProperties: false,
+  properties: {
+    labels: {
+      type: ['array', 'null'],
+      items: { type: 'string' },
+    },
+    markers: {
+      type: ['array', 'null'],
+      items: {
+        type: 'string',
+        enum: ['important', 'question', 'idea', 'warning', 'decision', 'blocked'],
+      },
+    },
+    task: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['status', 'priority', 'dueDate'],
+      properties: {
+        status: { type: 'string', enum: ['todo', 'in_progress', 'done'] },
+        priority: { type: 'string', enum: ['low', 'medium', 'high'] },
+        dueDate: { type: ['string', 'null'] },
+      },
+    },
+    links: {
+      type: ['array', 'null'],
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'type', 'label', 'href', 'targetTopicId', 'path'],
+        properties: {
+          id: { type: 'string' },
+          type: { type: 'string', enum: ['web', 'topic', 'local'] },
+          label: { type: 'string' },
+          href: { type: ['string', 'null'] },
+          targetTopicId: { type: ['string', 'null'] },
+          path: { type: ['string', 'null'] },
+        },
+      },
+    },
+    attachments: {
+      type: ['array', 'null'],
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'name', 'uri', 'source', 'mimeType'],
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          uri: { type: 'string' },
+          source: { type: 'string', enum: ['local', 'url'] },
+          mimeType: { type: ['string', 'null'] },
+        },
+      },
+    },
+  },
+} as const
+
+const STYLE_PATCH_SCHEMA = {
+  type: ['object', 'null'],
+  additionalProperties: false,
+  properties: {
+    emphasis: { type: ['string', 'null'], enum: ['normal', 'focus', null] },
+    variant: { type: ['string', 'null'], enum: ['default', 'soft', 'solid', null] },
+    background: { type: ['string', 'null'] },
+    textColor: { type: ['string', 'null'] },
+    branchColor: { type: ['string', 'null'] },
+  },
+} as const
+
 const OPERATION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -90,6 +165,8 @@ const OPERATION_SCHEMA = {
     'targetTopicId',
     'topicId',
     'targetParentId',
+    'metadata',
+    'style',
   ],
   properties: {
     type: { type: ['string', 'null'] },
@@ -105,6 +182,8 @@ const OPERATION_SCHEMA = {
     targetTopicId: { type: ['string', 'null'] },
     topicId: { type: ['string', 'null'] },
     targetParentId: { type: ['string', 'null'] },
+    metadata: METADATA_PATCH_SCHEMA,
+    style: STYLE_PATCH_SCHEMA,
   },
 } as const
 
@@ -159,6 +238,206 @@ function normalizeNote(value: string | null | undefined): string | undefined {
   return value
 }
 
+function normalizeStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+
+  return value
+    .map((item) => normalizeText(typeof item === 'string' ? item : undefined))
+    .filter((item): item is string => !!item)
+}
+
+function normalizeMetadataPatch(value: unknown): AiTopicMetadataPatch | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+
+  const raw = value as {
+    labels?: unknown
+    markers?: unknown
+    task?: unknown
+    links?: unknown
+    attachments?: unknown
+  }
+
+  const patch: AiTopicMetadataPatch = {}
+
+  if ('labels' in raw) {
+    patch.labels = normalizeStringArray(raw.labels) ?? []
+  }
+
+  if ('markers' in raw) {
+    patch.markers = (normalizeStringArray(raw.markers) ?? []).filter((marker) =>
+      ['important', 'question', 'idea', 'warning', 'decision', 'blocked'].includes(marker),
+    ) as AiTopicMetadataPatch['markers']
+  }
+
+  if ('task' in raw) {
+    if (raw.task === null) {
+      patch.task = null
+    } else if (raw.task && typeof raw.task === 'object' && !Array.isArray(raw.task)) {
+      const task = raw.task as {
+        status?: unknown
+        priority?: unknown
+        dueDate?: unknown
+      }
+      if (
+        typeof task.status === 'string' &&
+        ['todo', 'in_progress', 'done'].includes(task.status) &&
+        typeof task.priority === 'string' &&
+        ['low', 'medium', 'high'].includes(task.priority) &&
+        (typeof task.dueDate === 'string' || task.dueDate === null || task.dueDate === undefined)
+      ) {
+        patch.task = {
+          status: task.status as 'todo' | 'in_progress' | 'done',
+          priority: task.priority as 'low' | 'medium' | 'high',
+          dueDate: typeof task.dueDate === 'string' ? task.dueDate : null,
+        }
+      } else {
+        throw new CodexBridgeError('request_failed', 'Codex 返回了无效的 task 提案。')
+      }
+    }
+  }
+
+  if ('links' in raw) {
+    if (raw.links === null) {
+      patch.links = []
+    } else if (Array.isArray(raw.links)) {
+      patch.links = raw.links.map((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          throw new CodexBridgeError('request_failed', 'Codex 返回了无效的链接提案。')
+        }
+
+        const link = item as {
+          id?: unknown
+          type?: unknown
+          label?: unknown
+          href?: unknown
+          targetTopicId?: unknown
+          path?: unknown
+        }
+
+        if (
+          typeof link.id !== 'string' ||
+          typeof link.type !== 'string' ||
+          typeof link.label !== 'string'
+        ) {
+          throw new CodexBridgeError('request_failed', 'Codex 返回了无效的链接提案。')
+        }
+        if (!['web', 'topic', 'local'].includes(link.type)) {
+          throw new CodexBridgeError('request_failed', 'Codex 返回了无效的链接类型。')
+        }
+
+        return {
+          id: link.id,
+          type: link.type as 'web' | 'topic' | 'local',
+          label: link.label,
+          href: typeof link.href === 'string' ? link.href : undefined,
+          targetTopicId: typeof link.targetTopicId === 'string' ? link.targetTopicId : undefined,
+          path: typeof link.path === 'string' ? link.path : undefined,
+        }
+      })
+    }
+  }
+
+  if ('attachments' in raw) {
+    if (raw.attachments === null) {
+      patch.attachments = []
+    } else if (Array.isArray(raw.attachments)) {
+      patch.attachments = raw.attachments.map((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          throw new CodexBridgeError('request_failed', 'Codex 返回了无效的附件提案。')
+        }
+
+        const attachment = item as {
+          id?: unknown
+          name?: unknown
+          uri?: unknown
+          source?: unknown
+          mimeType?: unknown
+        }
+
+        if (
+          typeof attachment.id !== 'string' ||
+          typeof attachment.name !== 'string' ||
+          typeof attachment.uri !== 'string' ||
+          typeof attachment.source !== 'string'
+        ) {
+          throw new CodexBridgeError('request_failed', 'Codex 返回了无效的附件提案。')
+        }
+        if (!['local', 'url'].includes(attachment.source)) {
+          throw new CodexBridgeError('request_failed', 'Codex 返回了无效的附件来源。')
+        }
+
+        return {
+          id: attachment.id,
+          name: attachment.name,
+          uri: attachment.uri,
+          source: attachment.source as 'local' | 'url',
+          mimeType: typeof attachment.mimeType === 'string' ? attachment.mimeType : null,
+        }
+      })
+    }
+  }
+
+  return Object.keys(patch).length > 0 ? patch : undefined
+}
+
+function normalizeStylePatch(value: unknown): AiTopicStyle | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+
+  const raw = value as {
+    emphasis?: unknown
+    variant?: unknown
+    background?: unknown
+    textColor?: unknown
+    branchColor?: unknown
+  }
+  const patch: AiTopicStyle = {}
+
+  if ('emphasis' in raw) {
+    if (
+      raw.emphasis === null ||
+      raw.emphasis === 'normal' ||
+      raw.emphasis === 'focus'
+    ) {
+      patch.emphasis = raw.emphasis ?? undefined
+    } else {
+      throw new CodexBridgeError('request_failed', 'Codex 返回了无效的 emphasis 提案。')
+    }
+  }
+
+  if ('variant' in raw) {
+    if (
+      raw.variant === null ||
+      raw.variant === 'default' ||
+      raw.variant === 'soft' ||
+      raw.variant === 'solid'
+    ) {
+      patch.variant = raw.variant ?? undefined
+    } else {
+      throw new CodexBridgeError('request_failed', 'Codex 返回了无效的 variant 提案。')
+    }
+  }
+
+  if ('background' in raw) {
+    patch.background = typeof raw.background === 'string' ? raw.background : undefined
+  }
+
+  if ('textColor' in raw) {
+    patch.textColor = typeof raw.textColor === 'string' ? raw.textColor : undefined
+  }
+
+  if ('branchColor' in raw) {
+    patch.branchColor = typeof raw.branchColor === 'string' ? raw.branchColor : undefined
+  }
+
+  return Object.keys(patch).length > 0 ? patch : undefined
+}
+
 function toTargetReference(candidate: string): AiCanvasTarget {
   if (candidate.startsWith('topic:') || candidate.startsWith('ref:')) {
     return candidate as AiCanvasTarget
@@ -204,6 +483,8 @@ function normalizeOperation(operation: RawProposalOperation): AiCanvasOperation 
         parent,
         title,
         note: normalizeNote(operation.note),
+        metadata: normalizeMetadataPatch(operation.metadata),
+        style: normalizeStylePatch(operation.style),
         resultRef: normalizeText(operation.resultRef),
       }
     }
@@ -220,6 +501,8 @@ function normalizeOperation(operation: RawProposalOperation): AiCanvasOperation 
         anchor,
         title,
         note: normalizeNote(operation.note),
+        metadata: normalizeMetadataPatch(operation.metadata),
+        style: normalizeStylePatch(operation.style),
         resultRef: normalizeText(operation.resultRef),
       }
     }
@@ -228,7 +511,9 @@ function normalizeOperation(operation: RawProposalOperation): AiCanvasOperation 
       const target = createTargetReference(operation.target, operation.topicId)
       const title = normalizeText(operation.title)
       const note = normalizeNote(operation.note)
-      if (!target || (title === undefined && note === undefined)) {
+      const metadata = normalizeMetadataPatch(operation.metadata)
+      const style = normalizeStylePatch(operation.style)
+      if (!target || (title === undefined && note === undefined && !metadata && !style)) {
         throw new CodexBridgeError('request_failed', 'Codex 返回了无效的 update_topic 提案。')
       }
 
@@ -237,6 +522,8 @@ function normalizeOperation(operation: RawProposalOperation): AiCanvasOperation 
         target,
         title,
         note,
+        metadata,
+        style,
       }
     }
 
@@ -386,7 +673,7 @@ function buildPlanningPrompt(
     '- Convert the natural-language answer into safe mind-map operations.',
     '- Existing node references should prefer topic:<realTopicId>.',
     '- If you create a node and want to reference it later in the same proposal, assign resultRef on the create operation and then refer to it as ref:<resultRef>.',
-    '- Locked nodes have aiLocked=true. You may read them. You may create_child under a locked node or create_sibling around a locked node, but you must not update_topic, move_topic, or delete_topic on a locked node.',
+    '- Locked nodes have aiLocked=true. You may read them. You may create_child under a locked node or create_sibling around a locked node, but you must not update_topic, move_topic, or delete_topic on a locked node. That restriction also covers note, metadata, and style changes.',
     '- If a locked node seems wrong, mention that suggestion in warnings instead of modifying it.',
     '- Only use move_topic or delete_topic when the user explicitly asks to regroup, replace, delete, or reorganize existing content.',
     '- If the request is too ambiguous to apply safely, set needsMoreContext=true and ask one minimal clarification question in contextRequest.',

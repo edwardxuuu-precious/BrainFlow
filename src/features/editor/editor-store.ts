@@ -1,5 +1,11 @@
 import { create } from 'zustand'
-import type { BranchSide, MindMapDocument, MindMapViewport } from '../documents/types'
+import type {
+  BranchSide,
+  MindMapDocument,
+  MindMapViewport,
+  TopicMetadataPatch,
+  TopicStylePatch,
+} from '../documents/types'
 import {
   addChild,
   addSibling,
@@ -13,6 +19,9 @@ import {
   setTopicAiLocked,
   setTopicsAiLocked,
   setTopicOffset,
+  updateTopicMetadata,
+  updateTopicStyle,
+  updateTopicsStyle,
   toggleHierarchyBranch,
   toggleCollapse,
   updateTopicNote,
@@ -55,6 +64,9 @@ interface EditorState {
   addSibling: (topicId: string) => void
   renameTopic: (topicId: string, title: string) => void
   updateNote: (topicId: string, note: string) => void
+  updateTopicMetadata: (topicId: string, patch: TopicMetadataPatch) => void
+  updateTopicStyle: (topicId: string, patch: TopicStylePatch) => void
+  updateTopicsStyle: (topicIds: string[], patch: TopicStylePatch) => void
   removeTopic: (topicId: string) => void
   toggleCollapse: (topicId: string) => void
   moveTopic: (topicId: string, targetParentId: string, targetIndex: number) => void
@@ -555,6 +567,69 @@ export const useEditorStore = create<EditorState>((set) => ({
         activeTopicId: topicId,
         selectedTopicIds,
         history: false,
+        expandActivePath: false,
+      })
+    }),
+
+  updateTopicMetadata: (topicId, patch) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const selectedTopicIds = state.selectedTopicIds.includes(topicId)
+        ? state.selectedTopicIds
+        : [topicId]
+
+      return commitContentDocument(state, updateTopicMetadata(state.document, topicId, patch), {
+        activeTopicId: topicId,
+        selectedTopicIds,
+        history: false,
+        expandActivePath: false,
+      })
+    }),
+
+  updateTopicStyle: (topicId, patch) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const selectedTopicIds = state.selectedTopicIds.includes(topicId)
+        ? state.selectedTopicIds
+        : [topicId]
+
+      return commitContentDocument(state, updateTopicStyle(state.document, topicId, patch), {
+        activeTopicId: topicId,
+        selectedTopicIds,
+        history: false,
+        expandActivePath: false,
+      })
+    }),
+
+  updateTopicsStyle: (topicIds, patch) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const selectedTopicIds = uniqueTopicIds(topicIds).filter((topicId) => state.document?.topics[topicId])
+      if (selectedTopicIds.length === 0) {
+        return {}
+      }
+
+      const nextDocument = updateTopicsStyle(state.document, selectedTopicIds, patch)
+      if (nextDocument === state.document) {
+        return {}
+      }
+
+      const nextActiveTopicId = selectedTopicIds.includes(state.activeTopicId ?? '')
+        ? state.activeTopicId
+        : selectedTopicIds.at(-1) ?? null
+
+      return commitContentDocument(state, nextDocument, {
+        activeTopicId: nextActiveTopicId,
+        selectedTopicIds,
         expandActivePath: false,
       })
     }),

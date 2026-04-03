@@ -9,7 +9,7 @@
   border-radius: 0.5rem;
   padding: 0 16px;
   font-family: var(--font-body);
-  font-size: 13px;
+  font-size: var(--font-size-label);
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1;
@@ -35,10 +35,14 @@
   opacity: 0.45;
 }
 
+.xs {
+  min-height: 30px;
+  padding: 0 10px;
+}
+
 .sm {
   min-height: 36px;
   padding: 0 14px;
-  font-size: 12px;
 }
 
 .md {
@@ -48,7 +52,6 @@
 .lg {
   min-height: 48px;
   padding: 0 18px;
-  font-size: 14px;
 }
 
 /* Primary: Gradient fill (primary to primary-container), white text */
@@ -93,12 +96,18 @@
   box-shadow: 0 4px 12px rgba(198, 30, 58, 0.35);
 }
 
-/* Icon Only: Circular for sm/md, slightly rounded for lg */
+/* Icon Only: square with 6px radius */
 .iconOnly {
   width: 42px;
   min-width: 42px;
   padding: 0;
-  border-radius: 50%;
+  border-radius: 6px;
+}
+
+.iconOnly.xs {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
 }
 
 .iconOnly.sm {

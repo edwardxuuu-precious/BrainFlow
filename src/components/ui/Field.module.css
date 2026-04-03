@@ -48,7 +48,7 @@
 .input {
   min-height: 42px;
   padding: 0 14px;
-  font-size: 14px;
+  font-size: var(--font-size-body-md);
 }
 
 .searchField .input {
@@ -60,6 +60,6 @@
   min-height: 164px;
   resize: vertical;
   padding: 14px;
-  font-size: 13px;
+  font-size: var(--font-size-body-md);
   line-height: 1.6;
 }

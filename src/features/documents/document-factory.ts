@@ -1,4 +1,5 @@
 import { defaultTheme } from './theme'
+import { createDefaultTopicMetadata, createDefaultTopicStyle } from './topic-defaults'
 import type { MindMapDocument, TopicNode } from './types'
 
 function createId(prefix: 'doc' | 'topic'): string {
@@ -25,7 +26,8 @@ function createTopic(
       offsetX: 0,
       offsetY: 0,
     },
-    style: {},
+    metadata: createDefaultTopicMetadata(),
+    style: createDefaultTopicStyle(),
   }
 }
 

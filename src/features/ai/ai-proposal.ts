@@ -12,7 +12,9 @@ import {
   moveTopic,
   removeTopic,
   renameTopic,
+  updateTopicMetadata,
   updateTopicNote,
+  updateTopicStyle,
 } from '../editor/tree-operations'
 
 export interface AiProposalApplyResult {
@@ -49,6 +51,14 @@ function normalizeRef(value: string | undefined): string | undefined {
 
   const trimmed = value.trim()
   return trimmed || undefined
+}
+
+function hasMetadataPatch(operation: Extract<AiCanvasOperation, { metadata?: unknown }>): boolean {
+  return operation.metadata !== undefined
+}
+
+function hasStylePatch(operation: Extract<AiCanvasOperation, { style?: unknown }>): boolean {
+  return operation.style !== undefined
 }
 
 function isLocked(document: MindMapDocument, topicId: string): boolean {
@@ -178,6 +188,12 @@ export function applyAiProposal(
         if (operation.note !== undefined) {
           execution.document = updateTopicNote(execution.document, result.topicId, operation.note)
         }
+        if (hasMetadataPatch(operation)) {
+          execution.document = updateTopicMetadata(execution.document, result.topicId, operation.metadata ?? {})
+        }
+        if (hasStylePatch(operation)) {
+          execution.document = updateTopicStyle(execution.document, result.topicId, operation.style ?? {})
+        }
         registerResultRef(execution, operation.resultRef, result.topicId)
         execution.selectedTopicId = result.topicId
         execution.appliedCount += 1
@@ -211,6 +227,12 @@ export function applyAiProposal(
         if (operation.note !== undefined) {
           execution.document = updateTopicNote(execution.document, result.topicId, operation.note)
         }
+        if (hasMetadataPatch(operation)) {
+          execution.document = updateTopicMetadata(execution.document, result.topicId, operation.metadata ?? {})
+        }
+        if (hasStylePatch(operation)) {
+          execution.document = updateTopicStyle(execution.document, result.topicId, operation.style ?? {})
+        }
         registerResultRef(execution, operation.resultRef, result.topicId)
         execution.selectedTopicId = result.topicId
         execution.appliedCount += 1
@@ -230,8 +252,13 @@ export function applyAiProposal(
         }
 
         const title = normalizeTitle(operation.title)
-        if (title === undefined && operation.note === undefined) {
-          createSkip(execution, index, operation, 'update_topic 至少需要 title 或 note')
+        if (
+          title === undefined &&
+          operation.note === undefined &&
+          !hasMetadataPatch(operation) &&
+          !hasStylePatch(operation)
+        ) {
+          createSkip(execution, index, operation, 'update_topic 至少需要 title、note、metadata 或 style')
           return
         }
 
@@ -240,6 +267,12 @@ export function applyAiProposal(
         }
         if (operation.note !== undefined) {
           execution.document = updateTopicNote(execution.document, targetId, operation.note)
+        }
+        if (hasMetadataPatch(operation)) {
+          execution.document = updateTopicMetadata(execution.document, targetId, operation.metadata ?? {})
+        }
+        if (hasStylePatch(operation)) {
+          execution.document = updateTopicStyle(execution.document, targetId, operation.style ?? {})
         }
 
         execution.selectedTopicId = targetId

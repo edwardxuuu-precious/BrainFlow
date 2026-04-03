@@ -38,6 +38,17 @@ const baseRequest: AiChatRequest = {
         parentTopicId: null,
         childTopicIds: [],
         aiLocked: false,
+        metadata: {
+          labels: [],
+          markers: [],
+          task: null,
+          links: [],
+          attachments: [],
+        },
+        style: {
+          emphasis: 'normal',
+          variant: 'default',
+        },
       },
     ],
     focus: {
@@ -133,6 +144,8 @@ describe('createCodexBridge', () => {
                   type: { type: string[] }
                   parentTopicId: { type: string[] }
                   resultRef: { type: string[] }
+                  metadata: { type: string[] }
+                  style: { type: string[] }
                 }
               }
             }
@@ -160,9 +173,13 @@ describe('createCodexBridge', () => {
       'targetTopicId',
       'topicId',
       'targetParentId',
+      'metadata',
+      'style',
     ])
     expect(operationSchema.properties.parentTopicId.type).toEqual(['string', 'null'])
     expect(operationSchema.properties.resultRef.type).toEqual(['string', 'null'])
+    expect(operationSchema.properties.metadata.type).toEqual(['object', 'null'])
+    expect(operationSchema.properties.style.type).toEqual(['object', 'null'])
   })
 
   it('rewraps runner schema failures as bridge errors with schema_invalid', async () => {

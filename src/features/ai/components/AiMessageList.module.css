@@ -19,14 +19,14 @@
 .emptyTitle {
   margin: 0;
   color: var(--on-surface-muted);
-  font-size: 15px;
+  font-size: var(--font-size-body-lg);
   font-weight: 600;
 }
 
 .emptyText {
   margin: 0;
   color: var(--on-surface-variant);
-  font-size: 13px;
+  font-size: var(--font-size-body-sm);
   line-height: 1.5;
   max-width: 240px;
 }
@@ -59,7 +59,7 @@
   max-width: 80%;
   padding: 10px 14px;
   border-radius: 18px;
-  font-size: 14px;
+  font-size: var(--font-size-body-md);
   line-height: 1.5;
   word-wrap: break-word;
 }
@@ -130,14 +130,14 @@
 .statusTitle {
   margin: 0 0 4px;
   color: var(--primary);
-  font-size: 12px;
+  font-size: var(--font-size-label);
   font-weight: 600;
 }
 
 .statusText {
   margin: 0;
   color: var(--on-surface-variant);
-  font-size: 13px;
+  font-size: var(--font-size-body-sm);
 }
 
 .errorCard {
@@ -150,18 +150,18 @@
 .errorTitle {
   margin: 0 0 4px;
   color: #c41e3a;
-  font-size: 12px;
+  font-size: var(--font-size-label);
   font-weight: 600;
 }
 
 .error {
   margin: 0 0 4px;
   color: var(--on-surface);
-  font-size: 13px;
+  font-size: var(--font-size-body-sm);
 }
 
 .errorHint {
   margin: 0;
   color: var(--on-surface-muted);
-  font-size: 12px;
+  font-size: var(--font-size-body-sm);
 }

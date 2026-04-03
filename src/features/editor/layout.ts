@@ -1,5 +1,6 @@
 import { type Edge, Position, type XYPosition, type Node } from '@xyflow/react'
-import type { MindMapDocument } from '../documents/types'
+import type { MindMapDocument, TopicMetadata, TopicStyle } from '../documents/types'
+import { normalizeTopicMetadata, normalizeTopicStyle } from '../documents/topic-defaults'
 import {
   getRootChildForTopic,
   getTopicDepth,
@@ -31,6 +32,8 @@ export interface TopicRenderData extends Record<string, unknown> {
   title: string
   note: string
   aiLocked: boolean
+  metadata: TopicMetadata
+  style: TopicStyle
   depth: number
   isRoot: boolean
   isCollapsed: boolean
@@ -123,6 +126,12 @@ export function layoutMindMap(doc: MindMapDocument): LayoutResult {
   const rootChildIndex = new Map(root.childIds.map((childId, index) => [childId, index]))
 
   const getBranchColor = (topicId: string): string => {
+    const topic = doc.topics[topicId]
+    const style = normalizeTopicStyle(topic?.style)
+    if (style.branchColor) {
+      return style.branchColor
+    }
+
     if (topicId === doc.rootTopicId) {
       return doc.theme.accent
     }
@@ -162,6 +171,8 @@ export function layoutMindMap(doc: MindMapDocument): LayoutResult {
         title: topic.title,
         note: topic.note,
         aiLocked: topic.aiLocked,
+        metadata: normalizeTopicMetadata(topic.metadata),
+        style: normalizeTopicStyle(topic.style),
         depth: getTopicDepth(doc, topicId),
         isRoot: topicId === doc.rootTopicId,
         isCollapsed: topic.isCollapsed,

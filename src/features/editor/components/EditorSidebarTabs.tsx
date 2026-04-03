@@ -2,15 +2,21 @@ import { IconButton } from '../../../components/ui'
 import styles from './EditorSidebarTabs.module.css'
 
 interface EditorSidebarTabsProps {
+  controlsId?: string
   activeTab: 'inspector' | 'ai'
   onChange: (tab: 'inspector' | 'ai') => void
   onCollapse?: () => void
 }
 
-export function EditorSidebarTabs({ activeTab, onChange, onCollapse }: EditorSidebarTabsProps) {
+export function EditorSidebarTabs({
+  controlsId,
+  activeTab,
+  onChange,
+  onCollapse,
+}: EditorSidebarTabsProps) {
   return (
     <div className={styles.wrapper}>
-      <div className={styles.tabs} role="tablist" aria-label="右侧边栏标签">
+      <div className={styles.tabs} role="tablist" aria-label="Right sidebar tabs">
         <button
           type="button"
           role="tab"
@@ -38,6 +44,7 @@ export function EditorSidebarTabs({ activeTab, onChange, onCollapse }: EditorSid
           icon="back"
           tone="secondary"
           size="sm"
+          aria-controls={controlsId}
           className={styles.collapseButton}
           onClick={onCollapse}
         />

@@ -60,6 +60,7 @@ interface AiState {
   status: CodexStatus | null
   statusError: string | null
   statusFeedback: AiStatusFeedback | null
+  hasCheckedStatus: boolean
   settings: CodexSettings | null
   settingsError: string | null
   isHydrating: boolean
@@ -201,6 +202,7 @@ async function applyStatusRequest(
       status,
       statusError: null,
       statusFeedback: options?.successFeedback?.(status) ?? null,
+      hasCheckedStatus: true,
       isCheckingStatus: false,
     })
   } catch (error) {
@@ -208,6 +210,7 @@ async function applyStatusRequest(
       status: null,
       statusError: error instanceof Error ? error.message : 'Codex 状态检查失败。',
       statusFeedback: null,
+      hasCheckedStatus: true,
       isCheckingStatus: false,
     })
   }
@@ -305,6 +308,7 @@ export const useAiStore = create<AiState>((set, get) => ({
   status: null,
   statusError: null,
   statusFeedback: null,
+  hasCheckedStatus: false,
   settings: null,
   settingsError: null,
   isHydrating: false,
@@ -323,6 +327,10 @@ export const useAiStore = create<AiState>((set, get) => ({
   setError: (message) => set({ error: message }),
 
   hydrate: async (documentId, documentTitle, sessionId) => {
+    const currentState = get()
+    const shouldRefreshCodexState =
+      currentState.documentId !== documentId || !currentState.hasCheckedStatus
+
     set({
       isHydrating: true,
       error: null,
@@ -331,6 +339,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       streamingText: '',
       lastExecutionError: null,
       lastAppliedChange: null,
+      hasCheckedStatus: shouldRefreshCodexState ? false : currentState.hasCheckedStatus,
     })
 
     const { conversation, sessionList } = await ensureSession(documentId, documentTitle, sessionId)
@@ -342,21 +351,27 @@ export const useAiStore = create<AiState>((set, get) => ({
       activeSessionTitle: conversation.title,
       sessionList,
       messages: conversation.messages,
-      isHydrating: false,
+      isHydrating: shouldRefreshCodexState,
       isSending: false,
       runStage: 'idle',
       streamingStatusText: '',
       streamingText: '',
       error: null,
       statusFeedback: null,
+      hasCheckedStatus: shouldRefreshCodexState ? false : currentState.hasCheckedStatus,
       lastExecutionError: null,
       lastAppliedChange: null,
     })
 
-    await Promise.all([
-      applyStatusRequest(fetchCodexStatus, set),
-      applySettingsRequest(fetchCodexSettings, set),
-    ])
+    if (shouldRefreshCodexState) {
+      await Promise.all([
+        applyStatusRequest(fetchCodexStatus, set),
+        applySettingsRequest(fetchCodexSettings, set),
+      ])
+      set({
+        isHydrating: false,
+      })
+    }
   },
 
   createSession: async () => {
@@ -929,6 +944,7 @@ export function resetAiStore(): void {
     status: null,
     statusError: null,
     statusFeedback: null,
+    hasCheckedStatus: false,
     settings: null,
     settingsError: null,
     isHydrating: false,
@@ -972,6 +988,7 @@ export async function seedAiConversation(conversation: AiConversation): Promise<
     streamingText: '',
     error: null,
     statusFeedback: null,
+    hasCheckedStatus: false,
     lastExecutionError: null,
     lastAppliedChange: null,
   })

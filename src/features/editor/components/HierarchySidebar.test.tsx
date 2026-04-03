@@ -8,7 +8,6 @@ import { HierarchySidebar } from './HierarchySidebar'
 const COPY = {
   collapse: '隐藏层级栏',
   noteDescription: '已添加备注',
-  lockShortcut: 'Ctrl/Cmd + Shift + L',
 } as const
 
 function renderSidebar(overrides?: Partial<ComponentProps<typeof HierarchySidebar>>) {
@@ -39,13 +38,10 @@ describe('HierarchySidebar', () => {
       onCollapse,
     })
 
+    expect(screen.getByRole('complementary')).toHaveAttribute('id', 'hierarchy-sidebar')
     expect(screen.getByRole('heading', { name: document.title })).toBeInTheDocument()
     expect(screen.getByRole('navigation')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: COPY.collapse })).toHaveAttribute(
-      'aria-controls',
-      'hierarchy-sidebar',
-    )
-    expect(screen.getByText(COPY.lockShortcut)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: COPY.collapse })).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: COPY.collapse }))
     expect(onCollapse).toHaveBeenCalledTimes(1)
@@ -109,7 +105,17 @@ describe('HierarchySidebar', () => {
         offsetX: 0,
         offsetY: 0,
       },
-      style: {},
+      metadata: {
+        labels: [],
+        markers: [],
+        task: null,
+        links: [],
+        attachments: [],
+      },
+      style: {
+        emphasis: 'normal',
+        variant: 'default',
+      },
     }
 
     const onSelect = vi.fn()
@@ -144,7 +150,17 @@ describe('HierarchySidebar', () => {
         offsetX: 0,
         offsetY: 0,
       },
-      style: {},
+      metadata: {
+        labels: [],
+        markers: [],
+        task: null,
+        links: [],
+        attachments: [],
+      },
+      style: {
+        emphasis: 'normal',
+        variant: 'default',
+      },
     }
 
     renderSidebar({

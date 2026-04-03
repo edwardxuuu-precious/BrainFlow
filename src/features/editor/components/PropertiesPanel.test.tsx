@@ -3,28 +3,15 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { createMindMapDocument } from '../../documents/document-factory'
+import { EditorSidebarTabs } from './EditorSidebarTabs'
 import { PropertiesPanel } from './PropertiesPanel'
 import styles from './PropertiesPanel.module.css'
 
-const COPY = {
-  auto: '自动',
-  left: '左侧',
-  right: '右侧',
-  reset: '重置位置',
-  addChild: '新增子主题',
-  deleteTopic: '删除主题',
-  rename: '重命名',
-  renameField: '编辑主题标题',
-  renameHint: '正在编辑右侧标题，按 Enter 保存，Esc 取消。',
-  collapse: '隐藏右侧栏',
-  allowAiEdit: '允许 AI 修改此节点',
-  lockSelected: '锁定所选未锁定节点',
-  unlockSelected: '解锁所选已锁定节点',
-} as const
-
 function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>) {
-  const document = createMindMapDocument()
+  const document = createMindMapDocument('Sidebar regression')
   const firstBranch = document.topics[document.topics[document.rootTopicId].childIds[0]]
+  firstBranch.title = 'Focus topic'
+  firstBranch.note = 'Detailed note for the inspector.'
 
   return {
     document,
@@ -40,6 +27,15 @@ function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>
         isFirstLevel
         draftTitle={firstBranch.title}
         isInspectorEditing={false}
+        theme={{
+          surface: document.theme.surface,
+          text: document.theme.text,
+          accent: document.theme.accent,
+        }}
+        topicOptions={Object.values(document.topics).map((topic) => ({
+          id: topic.id,
+          title: topic.title,
+        }))}
         onRenameStart={vi.fn()}
         onRenameChange={vi.fn()}
         onRenameCommit={vi.fn()}
@@ -48,6 +44,9 @@ function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>
         onAddSibling={vi.fn()}
         onDelete={vi.fn()}
         onNoteChange={vi.fn()}
+        onMetadataChange={vi.fn()}
+        onStyleChange={vi.fn()}
+        onApplyStyleToSelected={vi.fn()}
         onBranchSideChange={vi.fn()}
         onResetPosition={vi.fn()}
         onToggleAiLock={vi.fn()}
@@ -61,139 +60,63 @@ function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>
 }
 
 describe('PropertiesPanel', () => {
-  it('renders the integrated inspector chrome and collapse control', async () => {
+  it('renders shared sidebar tabs and the collapse control', async () => {
     const onCollapse = vi.fn()
+    const onChange = vi.fn()
 
-    renderPanel({ onCollapse })
+    renderPanel({
+      tabs: (
+        <EditorSidebarTabs
+          controlsId="inspector-sidebar"
+          activeTab="inspector"
+          onChange={onChange}
+          onCollapse={onCollapse}
+        />
+      ),
+    })
 
-    const collapseButton = screen.getByRole('button', { name: COPY.collapse })
+    expect(screen.getByRole('tab', { name: 'Inspector' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'false')
+
+    await userEvent.click(screen.getByRole('tab', { name: 'AI' }))
+    expect(onChange).toHaveBeenCalledWith('ai')
+
+    const collapseButton = screen.getByRole('button', { name: '隐藏右侧栏' })
     expect(collapseButton).toHaveAttribute('aria-controls', 'inspector-sidebar')
 
     await userEvent.click(collapseButton)
     expect(onCollapse).toHaveBeenCalledTimes(1)
   })
 
-  it('shows the heading by default and starts inspector rename from the button', async () => {
-    const renameStartSpy = vi.fn()
-    const { firstBranch } = renderPanel({ onRenameStart: renameStartSpy })
+  it('shows the selected topic heading and note field by default', () => {
+    const { container } = renderPanel()
 
-    const renameButton = screen.getByRole('button', { name: COPY.rename })
-    await userEvent.click(renameButton)
-
-    expect(screen.getByRole('heading', { name: firstBranch.title })).toBeInTheDocument()
-    expect(renameButton).toHaveAttribute('aria-pressed', 'false')
-    expect(renameStartSpy).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('heading', { name: 'Focus topic' })).toBeInTheDocument()
+    const noteField = container.querySelector<HTMLTextAreaElement>('#topic-note')
+    expect(noteField).not.toBeNull()
+    expect(noteField).toHaveValue('Detailed note for the inspector.')
   })
 
-  it('renders an inspector title input and handles commit and cancel keys', async () => {
-    const commitSpy = vi.fn()
-    const cancelSpy = vi.fn()
-    const changeSpy = vi.fn()
-    const { firstBranch } = renderPanel({
+  it('renders the inspector title input when editing is active', () => {
+    const { container } = renderPanel({
       isInspectorEditing: true,
-      onRenameCommit: commitSpy,
-      onRenameCancel: cancelSpy,
-      onRenameChange: changeSpy,
     })
 
-    const renameButton = screen.getByRole('button', { name: COPY.rename })
-    const renameField = screen.getByRole('textbox', { name: COPY.renameField })
-
-    expect(renameField).toHaveFocus()
-    expect(renameField).toHaveDisplayValue(firstBranch.title)
-    expect(renameButton).toHaveAttribute('aria-pressed', 'true')
-    expect(renameButton).toHaveClass(styles.renameButtonActive)
-    expect(screen.getByText(COPY.renameHint)).toBeInTheDocument()
-
-    await userEvent.type(renameField, 'X')
-    expect(changeSpy).toHaveBeenCalled()
-
-    await userEvent.type(renameField, '{enter}')
-    expect(commitSpy).toHaveBeenCalledTimes(1)
-
-    await userEvent.type(renameField, '{escape}')
-    expect(cancelSpy).toHaveBeenCalledTimes(1)
+    const titleInput = container.querySelector<HTMLInputElement>(`input.${styles.headingInput}`)
+    expect(titleInput).not.toBeNull()
+    expect(titleInput).toHaveValue('Focus topic')
+    expect(titleInput).toHaveFocus()
   })
 
-  it('switches branch side for first-level topics', async () => {
-    const branchSpy = vi.fn()
-    renderPanel({ onBranchSideChange: branchSpy })
-
-    await userEvent.click(screen.getByRole('button', { name: COPY.right }))
-
-    expect(branchSpy).toHaveBeenCalledWith('right')
-  })
-
-  it('disables branch-side controls for non-first-level topics', () => {
-    const document = createMindMapDocument()
-    const topic = document.topics[document.rootTopicId]
-
-    renderPanel({
-      topic,
-      isRoot: true,
-      isFirstLevel: false,
-      draftTitle: topic.title,
-    })
-
-    expect(screen.getByRole('button', { name: COPY.auto })).toBeDisabled()
-    expect(screen.getByRole('button', { name: COPY.left })).toBeDisabled()
-    expect(screen.getByRole('button', { name: COPY.right })).toBeDisabled()
-  })
-
-  it('resets manual position from the inspector', async () => {
-    const resetSpy = vi.fn()
-    renderPanel({ onResetPosition: resetSpy })
-
-    await userEvent.click(screen.getByRole('button', { name: COPY.reset }))
-
-    expect(resetSpy).toHaveBeenCalledTimes(1)
-  })
-
-  it('toggles the AI lock state from the inspector', async () => {
-    const lockSpy = vi.fn()
-    renderPanel({ onToggleAiLock: lockSpy })
-
-    expect(
-      screen.getByText(/这是 AI 写保护，不影响人工直接编辑。/),
-    ).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: COPY.allowAiEdit }))
-
-    expect(lockSpy).toHaveBeenCalledWith(true)
-  })
-
-  it('triggers create and delete actions for regular topics', async () => {
-    const addChildSpy = vi.fn()
-    const deleteSpy = vi.fn()
-    renderPanel({ onAddChild: addChildSpy, onDelete: deleteSpy })
-
-    await userEvent.click(screen.getByRole('button', { name: COPY.addChild }))
-    await userEvent.click(screen.getByRole('button', { name: COPY.deleteTopic }))
-
-    expect(addChildSpy).toHaveBeenCalledTimes(1)
-    expect(deleteSpy).toHaveBeenCalledTimes(1)
-  })
-
-  it('shows multi-selection lock stats and bulk actions', async () => {
-    const lockSelectedSpy = vi.fn()
-    const unlockSelectedSpy = vi.fn()
-
-    renderPanel({
+  it('hides single-topic fields for multi-selection state', () => {
+    const { container } = renderPanel({
       topic: null,
       selectionCount: 3,
       selectedLockedCount: 1,
       selectedUnlockedCount: 2,
-      onLockSelected: lockSelectedSpy,
-      onUnlockSelected: unlockSelectedSpy,
     })
 
-    expect(screen.getByRole('heading', { name: '已选择 3 个节点' })).toBeInTheDocument()
-    expect(screen.getByText('其中 1 个已锁定，2 个未锁定')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('button', { name: COPY.lockSelected }))
-    await userEvent.click(screen.getByRole('button', { name: COPY.unlockSelected }))
-
-    expect(lockSelectedSpy).toHaveBeenCalledTimes(1)
-    expect(unlockSelectedSpy).toHaveBeenCalledTimes(1)
-    expect(screen.queryByRole('textbox', { name: '备注' })).not.toBeInTheDocument()
+    expect(container.querySelector('#topic-note')).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Focus topic' })).not.toBeInTheDocument()
   })
 })

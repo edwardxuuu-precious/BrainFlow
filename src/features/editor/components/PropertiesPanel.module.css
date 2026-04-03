@@ -5,8 +5,7 @@
   overflow: hidden;
   flex-direction: column;
   gap: 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(242, 244, 246, 0.72));
-  backdrop-filter: blur(22px);
+  background: var(--surface);
 }
 
 .panel[data-mode='docked'] {
@@ -31,6 +30,7 @@
 .tabs {
   display: flex;
   width: 100%;
+  min-width: 0;
 }
 
 .chrome {
@@ -71,7 +71,7 @@
 .multiSelectStats {
   margin: 0;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--font-size-body-sm);
   line-height: 1.6;
 }
 
@@ -101,7 +101,7 @@
 
 .label {
   color: var(--color-muted);
-  font-size: 11px;
+  font-size: var(--font-size-label);
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -111,7 +111,7 @@
   margin: 0;
   color: var(--color-text);
   font-family: var(--font-display);
-  font-size: 34px;
+  font-size: var(--font-size-display-md);
   font-weight: 600;
   line-height: 0.98;
 }
@@ -125,7 +125,7 @@
   background: rgba(255, 255, 255, 0.82);
   color: var(--color-text);
   font-family: var(--font-display);
-  font-size: 34px;
+  font-size: var(--font-size-display-md);
   font-weight: 600;
   letter-spacing: -0.03em;
   line-height: 0.98;
@@ -149,7 +149,7 @@
 .renameHint {
   margin: 0;
   color: var(--color-text-soft);
-  font-size: 13px;
+  font-size: var(--font-size-body-sm);
   line-height: 1.6;
 }
 
@@ -194,4 +194,194 @@
   box-shadow:
     0 14px 28px -22px color-mix(in srgb, var(--color-accent), transparent 48%),
     inset 0 1px 0 rgba(255, 255, 255, 0.88);
+}
+
+.subsection {
+  display: grid;
+  gap: 10px;
+}
+
+.subsection + .subsection {
+  margin-top: 8px;
+}
+
+.subsectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sublabel,
+.fieldCaption {
+  color: var(--color-text);
+  font-size: var(--font-size-label);
+  font-weight: 600;
+}
+
+.fieldCaption {
+  color: var(--color-text-soft);
+}
+
+.chipList,
+.inlineActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid rgba(172, 179, 184, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.chipText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-body-sm);
+  color: var(--color-text);
+}
+
+.chipRemove {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-soft);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.inlineForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.nativeInput,
+.nativeSelect {
+  width: 100%;
+  min-height: 38px;
+  padding: 9px 12px;
+  border: 1px solid rgba(172, 179, 184, 0.2);
+  border-radius: 14px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--color-text);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease;
+}
+
+.nativeInput:focus,
+.nativeSelect:focus {
+  border-color: color-mix(in srgb, var(--color-accent), white 50%);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent), white 88%);
+}
+
+.emptyInline {
+  color: var(--color-text-soft);
+  font-size: var(--font-size-body-sm);
+}
+
+.markerGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.markerButton {
+  justify-content: center;
+}
+
+.fieldGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.fieldItem,
+.fieldItemWide,
+.colorField {
+  display: grid;
+  gap: 6px;
+}
+
+.fieldItemWide {
+  grid-column: 1 / -1;
+}
+
+.stackList {
+  display: grid;
+  gap: 10px;
+}
+
+.stackCard {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(172, 179, 184, 0.16);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cardTitle {
+  color: var(--color-text);
+  font-size: var(--font-size-body-sm);
+  font-weight: 600;
+}
+
+.styleStack {
+  display: grid;
+  gap: 14px;
+}
+
+.colorGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.colorControl {
+  display: grid;
+  gap: 8px;
+}
+
+.colorInput {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid rgba(172, 179, 184, 0.2);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.inlineButton {
+  justify-content: center;
+}
+
+@media (max-width: 960px) {
+  .fieldGrid,
+  .colorGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .fieldItemWide {
+    grid-column: auto;
+  }
 }

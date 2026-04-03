@@ -13,6 +13,28 @@ function targetHandleId(side: 'left' | 'right'): string {
   return `target-${side}`
 }
 
+const markerIconMap = {
+  important: 'sparkles',
+  question: 'question',
+  idea: 'spark',
+  warning: 'warning',
+  decision: 'check',
+  blocked: 'close',
+} as const
+
+const markerLabelMap = {
+  important: '重点',
+  question: '问题',
+  idea: '灵感',
+  warning: '风险',
+  decision: '决策',
+  blocked: '阻塞',
+} as const
+
+function classNames(...values: Array<string | false | null | undefined>) {
+  return values.filter(Boolean).join(' ')
+}
+
 export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
   const activeTopicId = useEditorStore((state) => state.activeTopicId)
   const selectedTopicIds = useEditorStore((state) => state.selectedTopicIds)
@@ -29,6 +51,20 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
   const isActive = activeTopicId === id
   const hasNote = data.note.trim().length > 0
   const isLocked = data.aiLocked
+  const labels = data.metadata.labels.slice(0, 2)
+  const extraLabelCount = Math.max(0, data.metadata.labels.length - labels.length)
+  const markers = data.metadata.markers.slice(0, 2)
+  const extraMarkerCount = Math.max(0, data.metadata.markers.length - markers.length)
+  const hasLinks = data.metadata.links.length > 0
+  const hasAttachments = data.metadata.attachments.length > 0
+  const task = data.metadata.task
+  const showMetaRow =
+    labels.length > 0 ||
+    markers.length > 0 ||
+    extraMarkerCount > 0 ||
+    !!task ||
+    hasLinks ||
+    hasAttachments
 
   useEffect(() => {
     if (!isEditing) {
@@ -57,7 +93,15 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
       data-selected={isSelected ? 'true' : 'false'}
       data-active={isActive ? 'true' : 'false'}
       data-locked={isLocked ? 'true' : 'false'}
-      style={{ '--branch-color': data.branchColor } as CSSProperties}
+      data-variant={data.style.variant}
+      data-emphasis={data.style.emphasis}
+      style={
+        {
+          '--branch-color': data.branchColor,
+          '--topic-fill': data.style.background ?? 'var(--surface-container-lowest)',
+          '--topic-text': data.style.textColor ?? 'var(--color-text)',
+        } as CSSProperties
+      }
       onDoubleClick={() => startEditing(id, 'canvas')}
     >
       <Handle id={targetHandleId('left')} type="target" position={Position.Left} className={styles.handle} />
@@ -101,19 +145,87 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
             }}
           />
         ) : (
-          <div className={styles.titleRow}>
-            <div className={styles.title}>{data.title}</div>
-            {hasNote ? (
-              <span
-                className={styles.noteIndicator}
-                data-note-indicator="true"
-                role="img"
-                aria-label="已添加备注"
-              >
-                <Icon name="note" size={12} strokeWidth={1.9} />
-              </span>
+          <>
+            <div className={styles.titleRow}>
+              <div className={styles.title}>{data.title}</div>
+              {hasNote ? (
+                <span
+                  className={styles.noteIndicator}
+                  data-note-indicator="true"
+                  role="img"
+                  aria-label="已添加备注"
+                >
+                  <Icon name="note" size={12} strokeWidth={1.9} />
+                </span>
+              ) : null}
+            </div>
+            {showMetaRow ? (
+              <div className={styles.metaRow}>
+                {labels.length > 0 ? (
+                  <div className={styles.labelGroup}>
+                    {labels.map((label) => (
+                      <span key={label} className={styles.labelChip}>
+                        {label}
+                      </span>
+                    ))}
+                    {extraLabelCount > 0 ? (
+                      <span className={styles.metaCount}>+{extraLabelCount}</span>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className={styles.badgeGroup}>
+                  {markers.map((marker) => (
+                    <span
+                      key={marker}
+                      className={classNames(styles.metaBadge, styles.markerBadge)}
+                      data-marker={marker}
+                      role="img"
+                      aria-label={`标记：${markerLabelMap[marker]}`}
+                    >
+                      <Icon name={markerIconMap[marker]} size={11} strokeWidth={2} />
+                    </span>
+                  ))}
+                  {extraMarkerCount > 0 ? (
+                    <span className={styles.metaCount}>+{extraMarkerCount}</span>
+                  ) : null}
+                  {task ? (
+                    <span
+                      className={classNames(styles.metaBadge, styles.taskBadge)}
+                      data-task-status={task.status}
+                      role="img"
+                      aria-label={`任务：${task.status}`}
+                    >
+                      <Icon
+                        name={task.status === 'done' ? 'check' : task.status === 'in_progress' ? 'calendar' : 'history'}
+                        size={11}
+                        strokeWidth={2}
+                      />
+                    </span>
+                  ) : null}
+                  {hasLinks ? (
+                    <span
+                      className={classNames(styles.metaBadge, styles.linkBadge)}
+                      data-link-indicator="true"
+                      role="img"
+                      aria-label="包含链接"
+                    >
+                      <Icon name="link" size={11} strokeWidth={2} />
+                    </span>
+                  ) : null}
+                  {hasAttachments ? (
+                    <span
+                      className={classNames(styles.metaBadge, styles.attachmentBadge)}
+                      data-attachment-indicator="true"
+                      role="img"
+                      aria-label="包含附件引用"
+                    >
+                      <Icon name="attachment" size={11} strokeWidth={2} />
+                    </span>
+                  ) : null}
+                </div>
+              </div>
             ) : null}
-          </div>
+          </>
         )}
       </div>
 

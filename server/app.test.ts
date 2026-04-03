@@ -51,6 +51,17 @@ const baseRequest: AiChatRequest = {
         parentTopicId: null,
         childTopicIds: ['topic_1'],
         aiLocked: false,
+        metadata: {
+          labels: [],
+          markers: [],
+          task: null,
+          links: [],
+          attachments: [],
+        },
+        style: {
+          emphasis: 'normal',
+          variant: 'default',
+        },
       },
       {
         topicId: 'topic_1',
@@ -59,6 +70,17 @@ const baseRequest: AiChatRequest = {
         parentTopicId: 'topic_root',
         childTopicIds: [],
         aiLocked: false,
+        metadata: {
+          labels: [],
+          markers: [],
+          task: null,
+          links: [],
+          attachments: [],
+        },
+        style: {
+          emphasis: 'normal',
+          variant: 'default',
+        },
       },
     ],
     focus: {

@@ -1,0 +1,16 @@
+:root {
+  --font-display: 'Newsreader', Georgia, 'Times New Roman', serif;
+  --font-body:
+    'Inter', 'SF Pro Text', 'Segoe UI Variable Text', 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC',
+    sans-serif;
+  --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+
+  --font-size-display-lg: clamp(40px, 6vw, 48px);
+  --font-size-display-md: clamp(28px, 4vw, 32px);
+  --font-size-display-sm: clamp(22px, 3vw, 24px);
+
+  --font-size-body-lg: 16px;
+  --font-size-body-md: 14px;
+  --font-size-body-sm: 13px;
+  --font-size-label: 12px;
+}

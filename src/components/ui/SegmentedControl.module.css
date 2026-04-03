@@ -15,7 +15,7 @@
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.78);
   color: var(--color-text-soft);
-  font-size: 13px;
+  font-size: var(--font-size-label);
   font-weight: 600;
   transition:
     border-color 180ms ease,

@@ -1,5 +1,60 @@
 export type AiRole = 'user' | 'assistant'
 
+export type AiTopicMarker =
+  | 'important'
+  | 'question'
+  | 'idea'
+  | 'warning'
+  | 'decision'
+  | 'blocked'
+
+export interface AiTopicTask {
+  status: 'todo' | 'in_progress' | 'done'
+  priority: 'low' | 'medium' | 'high'
+  dueDate: string | null
+}
+
+export interface AiTopicLink {
+  id: string
+  type: 'web' | 'topic' | 'local'
+  label: string
+  href?: string
+  targetTopicId?: string
+  path?: string
+}
+
+export interface AiTopicAttachmentRef {
+  id: string
+  name: string
+  uri: string
+  source: 'local' | 'url'
+  mimeType?: string | null
+}
+
+export interface AiTopicMetadata {
+  labels: string[]
+  markers: AiTopicMarker[]
+  task: AiTopicTask | null
+  links: AiTopicLink[]
+  attachments: AiTopicAttachmentRef[]
+}
+
+export interface AiTopicMetadataPatch {
+  labels?: string[] | null
+  markers?: AiTopicMarker[] | null
+  task?: AiTopicTask | null
+  links?: AiTopicLink[] | null
+  attachments?: AiTopicAttachmentRef[] | null
+}
+
+export interface AiTopicStyle {
+  emphasis?: 'normal' | 'focus'
+  variant?: 'default' | 'soft' | 'solid'
+  background?: string
+  textColor?: string
+  branchColor?: string
+}
+
 export interface AiMessage {
   id: string
   role: AiRole
@@ -11,6 +66,8 @@ export interface AiDocumentTopicContext {
   topicId: string
   title: string
   note: string
+  metadata: AiTopicMetadata
+  style: AiTopicStyle
   parentTopicId: string | null
   childTopicIds: string[]
   aiLocked: boolean
@@ -38,6 +95,8 @@ export type AiCanvasOperation =
       parent: AiCanvasTarget
       title: string
       note?: string
+      metadata?: AiTopicMetadataPatch
+      style?: AiTopicStyle
       resultRef?: string
     }
   | {
@@ -45,6 +104,8 @@ export type AiCanvasOperation =
       anchor: AiCanvasTarget
       title: string
       note?: string
+      metadata?: AiTopicMetadataPatch
+      style?: AiTopicStyle
       resultRef?: string
     }
   | {
@@ -52,6 +113,8 @@ export type AiCanvasOperation =
       target: AiCanvasTarget
       title?: string
       note?: string
+      metadata?: AiTopicMetadataPatch
+      style?: AiTopicStyle
     }
   | {
       type: 'move_topic'
