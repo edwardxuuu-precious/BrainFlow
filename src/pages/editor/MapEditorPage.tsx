@@ -9,7 +9,6 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopicNode } from '../../components/topic-node/TopicNode'
 import { Button, IconButton, StatusPill, ToolbarGroup } from '../../components/ui'
-import { applyAiProposal } from '../../features/ai/ai-proposal'
 import { AiSidebar } from '../../features/ai/components/AiSidebar'
 import { useAiStore } from '../../features/ai/ai-store'
 import {
@@ -198,27 +197,48 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const setBranchSide = useEditorStore((state) => state.setBranchSide)
   const setTopicOffset = useEditorStore((state) => state.setTopicOffset)
   const resetTopicOffset = useEditorStore((state) => state.resetTopicOffset)
+  const setTopicAiLocked = useEditorStore((state) => state.setTopicAiLocked)
   const setViewport = useEditorStore((state) => state.setViewport)
   const setSidebarOpen = useEditorStore((state) => state.setSidebarOpen)
-  const applyExternalDocument = useEditorStore((state) => state.applyExternalDocument)
   const undo = useEditorStore((state) => state.undo)
   const redo = useEditorStore((state) => state.redo)
   const markDocumentSaved = useEditorStore((state) => state.markSaved)
 
   const aiHydrate = useAiStore((state) => state.hydrate)
+  const aiActiveSessionId = useAiStore((state) => state.activeSessionId)
+  const aiSessionList = useAiStore((state) => state.sessionList)
+  const aiArchivedSessions = useAiStore((state) => state.archivedSessions)
   const aiMessages = useAiStore((state) => state.messages)
-  const aiPendingProposal = useAiStore((state) => state.pendingProposal)
   const aiIsSending = useAiStore((state) => state.isSending)
   const aiIsCheckingStatus = useAiStore((state) => state.isCheckingStatus)
+  const aiIsLoadingSettings = useAiStore((state) => state.isLoadingSettings)
+  const aiIsSavingSettings = useAiStore((state) => state.isSavingSettings)
+  const aiIsLoadingArchivedSessions = useAiStore((state) => state.isLoadingArchivedSessions)
+  const aiRunStage = useAiStore((state) => state.runStage)
+  const aiStreamingStatusText = useAiStore((state) => state.streamingStatusText)
   const aiStreamingText = useAiStore((state) => state.streamingText)
   const aiError = useAiStore((state) => state.error)
   const aiStatus = useAiStore((state) => state.status)
   const aiStatusError = useAiStore((state) => state.statusError)
-  const aiClearPendingProposal = useAiStore((state) => state.clearPendingProposal)
+  const aiStatusFeedback = useAiStore((state) => state.statusFeedback)
+  const aiLastExecutionError = useAiStore((state) => state.lastExecutionError)
+  const aiSettings = useAiStore((state) => state.settings)
+  const aiSettingsError = useAiStore((state) => state.settingsError)
+  const aiLastAppliedChange = useAiStore((state) => state.lastAppliedChange)
+  const aiCreateSession = useAiStore((state) => state.createSession)
+  const aiSwitchSession = useAiStore((state) => state.switchSession)
+  const aiArchiveSession = useAiStore((state) => state.archiveSession)
+  const aiDeleteSession = useAiStore((state) => state.deleteSession)
+  const aiLoadArchivedSessions = useAiStore((state) => state.loadArchivedSessions)
+  const aiRestoreArchivedSession = useAiStore((state) => state.restoreArchivedSession)
+  const aiDeleteArchivedSession = useAiStore((state) => state.deleteArchivedSession)
   const aiSendMessage = useAiStore((state) => state.sendMessage)
-  const aiSetError = useAiStore((state) => state.setError)
   const aiRefreshStatus = useAiStore((state) => state.refreshStatus)
   const aiRevalidateStatus = useAiStore((state) => state.revalidateStatus)
+  const aiLoadSettings = useAiStore((state) => state.loadSettings)
+  const aiSaveSettings = useAiStore((state) => state.saveSettings)
+  const aiResetSettings = useAiStore((state) => state.resetSettings)
+  const aiUndoLastAppliedChange = useAiStore((state) => state.undoLastAppliedChange)
 
   useEditorShortcuts()
 
@@ -252,6 +272,10 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const rightSidebarTabs = (
     <EditorSidebarTabs activeTab={rightPanelTab} onChange={setRightPanelTab} />
   )
+  const canUndoLastApplied =
+    !!aiLastAppliedChange &&
+    history.length === aiLastAppliedChange.historyLength &&
+    document?.updatedAt === aiLastAppliedChange.documentUpdatedAt
   const themeVariables = useMemo(
     () =>
       document
@@ -305,10 +329,10 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
       return
     }
 
-    void aiHydrate(document.id).then(() => {
+    void aiHydrate(document.id, document.title).then(() => {
       setAiDraft('')
     })
-  }, [aiHydrate, document?.id])
+  }, [aiHydrate, document?.id, document?.title])
 
   useEffect(() => {
     if (rightPanelTab !== 'ai') {
@@ -561,21 +585,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     )
   }
 
-  const handleApplyAiProposal = () => {
-    if (!aiPendingProposal) {
-      return
-    }
-
-    try {
-      const result = applyAiProposal(document, aiPendingProposal)
-      applyExternalDocument(result.document, result.selectedTopicId ?? activeTopicId)
-      aiClearPendingProposal()
-      aiSetError(null)
-    } catch (error) {
-      aiSetError(error instanceof Error ? error.message : 'AI 提案应用失败')
-    }
-  }
-
   const handleHierarchySelect = (topicId: string, additive = false) => {
     if (additive) {
       toggleTopicSelection(topicId)
@@ -606,20 +615,46 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         mode={mode}
         tabs={rightSidebarTabs}
         selectedTopics={aiSelectedTopics}
+        sessionList={aiSessionList}
+        activeSessionId={aiActiveSessionId}
+        archivedSessions={aiArchivedSessions}
         status={aiStatus}
         statusError={aiStatusError}
+        statusFeedback={aiStatusFeedback}
         messages={aiMessages}
+        runStage={aiRunStage}
+        streamingStatusText={aiStreamingStatusText}
         streamingText={aiStreamingText}
         error={aiError}
+        lastExecutionError={aiLastExecutionError}
         draft={aiDraft}
         isSending={aiIsSending}
         isCheckingStatus={aiIsCheckingStatus}
-        proposal={aiPendingProposal}
+        settings={aiSettings}
+        settingsError={aiSettingsError}
+        isLoadingSettings={aiIsLoadingSettings}
+        isSavingSettings={aiIsSavingSettings}
+        isLoadingArchivedSessions={aiIsLoadingArchivedSessions}
+        lastAppliedSummary={aiLastAppliedChange?.summary ?? null}
+        canUndoLastApplied={canUndoLastApplied}
         onDraftChange={setAiDraft}
         onSend={() => void handleSendAiMessage()}
-        onApplyProposal={handleApplyAiProposal}
-        onDismissProposal={aiClearPendingProposal}
-        onRevalidate={() => void aiRevalidateStatus()}
+        onUndoLastApplied={aiUndoLastAppliedChange}
+        onRevalidate={() => void (aiStatus?.ready ? aiRefreshStatus() : aiRevalidateStatus())}
+        onLoadSettings={() => void aiLoadSettings()}
+        onSaveSettings={(businessPrompt) => void aiSaveSettings(businessPrompt)}
+        onResetSettings={() => void aiResetSettings()}
+        onLoadArchivedSessions={() => void aiLoadArchivedSessions()}
+        onCreateSession={() => void aiCreateSession()}
+        onSwitchSession={(sessionId) => void aiSwitchSession(sessionId)}
+        onArchiveSession={(sessionId) => void aiArchiveSession(sessionId)}
+        onDeleteSession={(sessionId) => void aiDeleteSession(sessionId)}
+        onRestoreArchivedSession={(docId, sessionId) =>
+          void aiRestoreArchivedSession(docId, sessionId)
+        }
+        onDeleteArchivedSession={(docId, sessionId) =>
+          void aiDeleteArchivedSession(docId, sessionId)
+        }
         resolveTopicTitle={(topicId) => document.topics[topicId]?.title ?? '已删除节点'}
         onCollapse={onCollapse}
       />
@@ -650,6 +685,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         onDelete={() => activeTopicId && removeTopic(activeTopicId)}
         onNoteChange={(note) => activeTopicId && updateNote(activeTopicId, note)}
         onBranchSideChange={(side) => activeTopicId && setBranchSide(activeTopicId, side)}
+        onToggleAiLock={(aiLocked) => activeTopicId && setTopicAiLocked(activeTopicId, aiLocked)}
         onResetPosition={() => activeTopicId && resetTopicOffset(activeTopicId)}
       />
     )

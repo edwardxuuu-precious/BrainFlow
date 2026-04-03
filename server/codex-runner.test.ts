@@ -73,4 +73,30 @@ describe('createCodexRunner', () => {
       force: true,
     })
   })
+
+  it('maps invalid response schema failures to schema_invalid', async () => {
+    const runCommand = vi.fn().mockResolvedValue({
+      stdout: [
+        JSON.stringify({ type: 'thread.started', thread_id: 'thread_1' }),
+        JSON.stringify({ type: 'turn.started' }),
+        JSON.stringify({
+          type: 'error',
+          message:
+            '{"type":"error","error":{"type":"invalid_request_error","code":"invalid_json_schema","message":"Invalid schema for response_format \\"codex_output_schema\\": schema must have a \\"type\\" key.","param":"text.format.schema"},"status":400}',
+        }),
+      ].join('\n'),
+      stderr: '',
+      exitCode: 1,
+    })
+    const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
+    const writeFile = vi.fn().mockResolvedValue(undefined)
+    const rm = vi.fn().mockResolvedValue(undefined)
+    const runner = createCodexRunner({ runCommand, mkdtemp, writeFile, rm })
+
+    await expect(runner.execute('prompt text', { type: 'object' })).rejects.toMatchObject({
+      issue: expect.objectContaining({
+        code: 'schema_invalid',
+      }),
+    })
+  })
 })

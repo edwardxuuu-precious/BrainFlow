@@ -9,6 +9,7 @@ import {
   renameTopic,
   resetTopicOffset,
   setBranchSide,
+  setTopicAiLocked,
   setTopicOffset,
   toggleCollapse,
   updateTopicNote,
@@ -42,6 +43,7 @@ interface EditorState {
   startEditing: (topicId: string, surface?: EditingSurface) => void
   stopEditing: () => void
   renameDocument: (title: string) => void
+  setTopicAiLocked: (topicId: string, aiLocked: boolean) => void
   addChild: (topicId: string) => void
   addSibling: (topicId: string) => void
   renameTopic: (topicId: string, title: string) => void
@@ -361,6 +363,23 @@ export const useEditorStore = create<EditorState>((set) => ({
       }
 
       return commitContentDocument(state, renameDocumentTitle(state.document, title), { history: false })
+    }),
+
+  setTopicAiLocked: (topicId, aiLocked) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const selectedTopicIds = state.selectedTopicIds.includes(topicId)
+        ? state.selectedTopicIds
+        : [topicId]
+
+      return commitContentDocument(state, setTopicAiLocked(state.document, topicId, aiLocked), {
+        activeTopicId: topicId,
+        selectedTopicIds,
+        history: false,
+      })
     }),
 
   addChild: (topicId) =>

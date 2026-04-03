@@ -35,6 +35,36 @@
   align-items: flex-start;
 }
 
+.chromeActions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sessionPicker {
+  display: grid;
+  gap: 4px;
+  min-width: 160px;
+}
+
+.sessionLabel {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sessionSelect {
+  min-width: 160px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(172, 179, 184, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--color-text);
+  font-size: 13px;
+}
+
 .collapseButton {
   width: 32px;
   min-width: 32px;
@@ -56,7 +86,13 @@
 .subtitle,
 .statusText,
 .statusError,
-.promptExcerpt {
+.statusSuccess,
+.statusWarning,
+.promptExcerpt,
+.appliedSummary,
+.executionIssueTitle,
+.executionIssueText,
+.executionIssueHint {
   margin: 0;
 }
 
@@ -71,12 +107,25 @@
 .subtitle,
 .statusText,
 .statusError,
+.statusSuccess,
+.statusWarning,
 .promptExcerpt,
 .issueDetails,
-.issueList {
+.issueList,
+.appliedSummary,
+.executionIssueText,
+.executionIssueHint {
   color: var(--color-text-soft);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.statusSuccess {
+  color: color-mix(in srgb, var(--color-accent), black 16%);
+}
+
+.statusWarning {
+  color: color-mix(in srgb, var(--color-danger), black 10%);
 }
 
 .body {
@@ -88,7 +137,8 @@
 }
 
 .statusCard,
-.promptCard {
+.promptCard,
+.appliedCard {
   display: grid;
   gap: 10px;
   padding: 14px 16px;
@@ -98,7 +148,9 @@
 }
 
 .statusHeader,
-.promptSummary {
+.promptSummary,
+.appliedHeader,
+.appliedActions {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -115,6 +167,29 @@
 .statusIssues {
   display: grid;
   gap: 8px;
+}
+
+.executionIssue {
+  display: grid;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(172, 179, 184, 0.14);
+}
+
+.executionIssueTitle {
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.executionIssueText {
+  color: var(--color-danger);
+}
+
+.executionIssueHint {
+  color: var(--color-text-soft);
 }
 
 .issueList,
@@ -150,4 +225,8 @@
   font-size: 11px;
   line-height: 1.6;
   white-space: pre-wrap;
+}
+
+.appliedSummary {
+  color: var(--color-text);
 }

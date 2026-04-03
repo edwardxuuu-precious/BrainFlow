@@ -7,6 +7,7 @@ import type {
   MindMapEditorChromeState,
   MindMapViewport,
   MindMapWorkspaceState,
+  TopicNode,
 } from './types'
 
 const DB_NAME = 'brainflow-documents-v1'
@@ -130,9 +131,19 @@ function normalizeWorkspace(doc: MindMapDocument): MindMapWorkspaceState {
   }
 }
 
+function normalizeTopic(topic: TopicNode): TopicNode {
+  return {
+    ...topic,
+    aiLocked: topic.aiLocked ?? false,
+  }
+}
+
 function normalizeDocument(doc: MindMapDocument): MindMapDocument {
   return {
     ...doc,
+    topics: Object.fromEntries(
+      Object.entries(doc.topics).map(([topicId, topic]) => [topicId, normalizeTopic(topic)]),
+    ),
     viewport: normalizeViewport(doc.viewport),
     workspace: normalizeWorkspace(doc),
     theme: normalizeMindMapTheme(doc.theme),

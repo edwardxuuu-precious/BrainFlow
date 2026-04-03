@@ -17,64 +17,92 @@ describe('AI proposal helpers', () => {
     const document = createMindMapDocument()
     const proposal = createProposal(document.updatedAt - 1)
 
-    expect(() => validateAiProposal(document, proposal)).toThrow('当前脑图已变化')
+    expect(() => validateAiProposal(document, proposal)).toThrow('当前脑图已发生变化')
   })
 
-  it('creates child and sibling topics and updates notes locally', () => {
+  it('creates, updates, moves, and deletes topics locally in one batch with temp refs', () => {
     const document = createMindMapDocument()
     const root = document.topics[document.rootTopicId]
-    const anchorId = root.childIds[0]
-    const siblingAnchorId = root.childIds[1]
-
-    const proposal: AiCanvasProposal = {
+    const firstBranchId = root.childIds[0]
+    const secondBranchId = root.childIds[1]
+    const result = applyAiProposal(document, {
       ...createProposal(document.updatedAt),
+      summary: '移动并删除节点',
       operations: [
-        {
-          type: 'create_child',
-          parentTopicId: anchorId,
-          title: 'AI 子主题',
-          note: '子主题备注',
-        },
-        {
-          type: 'create_sibling',
-          targetTopicId: siblingAnchorId,
-          title: 'AI 同级主题',
-        },
         {
           type: 'update_topic',
-          topicId: anchorId,
+          target: `topic:${firstBranchId}`,
           note: '更新后的备注',
         },
+        {
+          type: 'create_child',
+          parent: `topic:${firstBranchId}`,
+          title: 'GTM 定价',
+          note: '定价策略骨架',
+          resultRef: 'tmp_gtm_pricing',
+        },
+        {
+          type: 'create_child',
+          parent: 'ref:tmp_gtm_pricing',
+          title: '目标用户',
+          note: '聚焦核心客群',
+        },
+        {
+          type: 'move_topic',
+          target: 'ref:tmp_gtm_pricing',
+          newParent: `topic:${secondBranchId}`,
+          targetIndex: 0,
+        },
+        {
+          type: 'delete_topic',
+          target: `topic:${firstBranchId}`,
+        },
       ],
-    }
+    })
+    const createdParent = Object.values(result.document.topics).find((topic) => topic.title === 'GTM 定价')
+    const createdChild = Object.values(result.document.topics).find((topic) => topic.title === '目标用户')
 
-    const result = applyAiProposal(document, proposal)
-    const createdChild = Object.values(result.document.topics).find((topic) => topic.title === 'AI 子主题')
-    const createdSibling = Object.values(result.document.topics).find(
-      (topic) => topic.title === 'AI 同级主题',
-    )
-
+    expect(createdParent).toBeTruthy()
     expect(createdChild).toBeTruthy()
-    expect(createdChild?.parentId).toBe(anchorId)
-    expect(createdChild?.note).toBe('子主题备注')
-    expect(createdSibling).toBeTruthy()
-    expect(result.document.topics[anchorId]?.note).toBe('更新后的备注')
-    expect(result.selectedTopicId).toBe(anchorId)
+    expect(result.document.topics[createdParent!.id]?.parentId).toBe(secondBranchId)
+    expect(result.document.topics[createdChild!.id]?.parentId).toBe(createdParent!.id)
+    expect(result.document.topics[firstBranchId]).toBeUndefined()
+    expect(result.selectedTopicId).toBe(document.rootTopicId)
+    expect(result.appliedCount).toBe(5)
+    expect(result.skippedCount).toBe(0)
+    expect(result.appliedSummary).toContain('移动并删除节点')
   })
 
-  it('rejects unsupported target references', () => {
+  it('skips locked node mutations while still applying safe operations', () => {
     const document = createMindMapDocument()
-    const proposal: AiCanvasProposal = {
+    const root = document.topics[document.rootTopicId]
+    const firstBranchId = root.childIds[0]
+    document.topics[firstBranchId].aiLocked = true
+
+    const proposal = {
       ...createProposal(document.updatedAt),
       operations: [
         {
+          type: 'update_topic',
+          target: `topic:${firstBranchId}`,
+          title: '不应被修改',
+        },
+        {
           type: 'create_child',
-          parentTopicId: 'missing-topic',
-          title: '不应通过',
+          parent: `topic:${firstBranchId}`,
+          title: '允许新增的子主题',
         },
       ],
-    }
+    } satisfies AiCanvasProposal
 
-    expect(() => validateAiProposal(document, proposal)).toThrow('父节点不存在')
+    const result = applyAiProposal(document, proposal)
+
+    expect(result.appliedCount).toBe(1)
+    expect(result.skippedCount).toBe(1)
+    expect(result.warnings.join(' ')).toContain('节点已锁定')
+    expect(
+      Object.values(result.document.topics).some((topic) => topic.title === '允许新增的子主题'),
+    ).toBe(true)
+    expect(result.document.topics[firstBranchId].title).toBe('分支一')
   })
 })

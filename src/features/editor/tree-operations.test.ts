@@ -7,6 +7,7 @@ import {
   removeTopic,
   resetTopicOffset,
   resolveTopicSide,
+  setTopicAiLocked,
   setTopicOffset,
   toggleCollapse,
 } from './tree-operations'
@@ -68,5 +69,16 @@ describe('tree-operations', () => {
     expect(document.topics[branchId].layout).toEqual({ offsetX: 0, offsetY: 0 })
     expect(moved.topics[branchId].layout).toEqual({ offsetX: 40, offsetY: 18 })
     expect(reset.topics[branchId].layout).toEqual({ offsetX: 0, offsetY: 0 })
+  })
+
+  it('toggles AI lock state without mutating the source document', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    const locked = setTopicAiLocked(document, branchId, true)
+    const unlocked = setTopicAiLocked(locked, branchId, false)
+
+    expect(document.topics[branchId].aiLocked).toBe(false)
+    expect(locked.topics[branchId].aiLocked).toBe(true)
+    expect(unlocked.topics[branchId].aiLocked).toBe(false)
   })
 })

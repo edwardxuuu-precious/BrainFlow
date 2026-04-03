@@ -45,6 +45,7 @@ function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>
         onNoteChange={vi.fn()}
         onBranchSideChange={vi.fn()}
         onResetPosition={vi.fn()}
+        onToggleAiLock={vi.fn()}
         onCollapse={vi.fn()}
         {...overrides}
       />,
@@ -139,6 +140,15 @@ describe('PropertiesPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: COPY.reset }))
 
     expect(resetSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('toggles the AI lock state from the inspector', async () => {
+    const lockSpy = vi.fn()
+    renderPanel({ onToggleAiLock: lockSpy })
+
+    await userEvent.click(screen.getByRole('button', { name: '允许 AI 修改此节点' }))
+
+    expect(lockSpy).toHaveBeenCalledWith(true)
   })
 
   it('triggers create and delete actions for regular topics', async () => {

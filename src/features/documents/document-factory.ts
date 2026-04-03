@@ -18,6 +18,7 @@ function createTopic(
     childIds: [],
     title,
     note: '',
+    aiLocked: false,
     isCollapsed: false,
     branchSide,
     layout: {

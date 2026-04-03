@@ -167,6 +167,19 @@
   color: color-mix(in srgb, var(--branch-color), #5b6470 48%);
 }
 
+.lockIndicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(84, 95, 110, 0.18);
+  border-radius: 999px;
+  background: rgba(84, 95, 110, 0.08);
+  color: color-mix(in srgb, var(--branch-color), #3f4955 54%);
+}
+
 .input {
   width: 100%;
   padding: 4px 6px;

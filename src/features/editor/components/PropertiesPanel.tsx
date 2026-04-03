@@ -21,6 +21,7 @@ interface PropertiesPanelProps {
   onNoteChange: (note: string) => void
   onBranchSideChange: (side: BranchSide) => void
   onResetPosition: () => void
+  onToggleAiLock: (aiLocked: boolean) => void
   onCollapse?: () => void
   id?: string
   className?: string
@@ -51,6 +52,7 @@ export function PropertiesPanel({
   onNoteChange,
   onBranchSideChange,
   onResetPosition,
+  onToggleAiLock,
   onCollapse,
   id,
   className,
@@ -93,11 +95,13 @@ export function PropertiesPanel({
 
         {!topic ? (
           <div className={styles.placeholder}>
-            <h2 className={styles.heading}>{isMultiSelection ? `已选择 ${selectionCount} 个节点` : '未选中主题'}</h2>
+            <h2 className={styles.heading}>
+              {isMultiSelection ? `已选择 ${selectionCount} 个节点` : '未选中主题'}
+            </h2>
             <p className={styles.empty}>
               {isMultiSelection
-                ? '多选模式下不显示单节点编辑表单。可切换到 AI，直接把当前选区作为上下文。'
-                : '点击画布中的任意节点后，可在这里编辑备注、调整方向和重置位置。'}
+                ? '多选模式下不显示单节点表单。你可以切换到 AI，直接把当前选区作为聚焦上下文。'
+                : '点击画布中的任意节点后，可以在这里编辑备注、方向、锁定状态和位置。'}
             </p>
           </div>
         ) : (
@@ -135,7 +139,9 @@ export function PropertiesPanel({
               ) : (
                 <h2 className={styles.heading}>{topic.title}</h2>
               )}
-              <p className={styles.topicType}>{isRoot ? '中心主题' : isFirstLevel ? '一级分支' : '普通主题'}</p>
+              <p className={styles.topicType}>
+                {isRoot ? '中心主题' : isFirstLevel ? '一级分支' : '普通主题'}
+              </p>
               {isInspectorEditing ? (
                 <p className={styles.renameHint}>正在编辑右侧标题，按 Enter 保存，Esc 取消。</p>
               ) : null}
@@ -193,12 +199,34 @@ export function PropertiesPanel({
                 disabled: !isFirstLevel,
               }))}
             />
-            {!isFirstLevel ? <p className={styles.helperText}>只有一级分支可以切换左右方向。</p> : null}
+            {!isFirstLevel ? (
+              <p className={styles.helperText}>只有一级分支可以切换左右方向。</p>
+            ) : null}
+          </div>
+
+          <div className={styles.block}>
+            <span className={styles.label}>AI 锁定</span>
+            <Button
+              tone={topic.aiLocked ? 'secondary' : 'ghost'}
+              iconStart={topic.aiLocked ? 'lock' : 'unlock'}
+              className={styles.actionButton}
+              onClick={() => onToggleAiLock(!topic.aiLocked)}
+            >
+              {topic.aiLocked ? '已锁定，点击解锁' : '允许 AI 修改此节点'}
+            </Button>
+            <p className={styles.helperText}>
+              锁定后，AI 仍可读取该节点，并在其下生成子节点或基于它生成同级节点，但不会修改、移动或删除它。
+            </p>
           </div>
 
           <div className={styles.block}>
             <span className={styles.label}>位置</span>
-            <Button tone="secondary" iconStart="fitView" className={styles.actionButton} onClick={onResetPosition}>
+            <Button
+              tone="secondary"
+              iconStart="fitView"
+              className={styles.actionButton}
+              onClick={onResetPosition}
+            >
               重置位置
             </Button>
           </div>

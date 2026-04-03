@@ -7,42 +7,61 @@ export interface AiMessage {
   createdAt: number
 }
 
-export interface AiSelectedTopicContext {
+export interface AiDocumentTopicContext {
   topicId: string
   title: string
   note: string
-  ancestorTitles: string[]
-  childTitles: string[]
-  selectedChildTitles: string[]
-  selectedParentTitle: string | null
+  parentTopicId: string | null
+  childTopicIds: string[]
+  aiLocked: boolean
+}
+
+export interface AiFocusContext {
+  activeTopicId: string | null
+  selectedTopicIds: string[]
+  relationSummary: string[]
 }
 
 export interface AiSelectionContext {
   documentTitle: string
-  activeTopicId: string | null
-  selectedTopicIds: string[]
-  topics: AiSelectedTopicContext[]
-  relationSummary: string[]
+  rootTopicId: string
+  topicCount: number
+  topics: AiDocumentTopicContext[]
+  focus: AiFocusContext
 }
+
+export type AiCanvasTarget = `topic:${string}` | `ref:${string}`
 
 export type AiCanvasOperation =
   | {
       type: 'create_child'
-      parentTopicId: string
+      parent: AiCanvasTarget
       title: string
       note?: string
+      resultRef?: string
     }
   | {
       type: 'create_sibling'
-      targetTopicId: string
+      anchor: AiCanvasTarget
       title: string
       note?: string
+      resultRef?: string
     }
   | {
       type: 'update_topic'
-      topicId: string
+      target: AiCanvasTarget
       title?: string
       note?: string
+    }
+  | {
+      type: 'move_topic'
+      target: AiCanvasTarget
+      newParent: AiCanvasTarget
+      targetIndex?: number
+    }
+  | {
+      type: 'delete_topic'
+      target: AiCanvasTarget
     }
 
 export interface AiCanvasProposal {
@@ -52,17 +71,41 @@ export interface AiCanvasProposal {
   operations: AiCanvasOperation[]
 }
 
+export interface AiSkippedOperation {
+  index: number
+  type: AiCanvasOperation['type']
+  reason: string
+}
+
+export interface AiApplySummary {
+  summary: string
+  appliedCount: number
+  skippedCount: number
+  warnings: string[]
+}
+
 export interface AiConversation {
   documentId: string
-  conversationId: string
+  documentTitle: string
+  sessionId: string
+  title: string
   messages: AiMessage[]
-  pendingProposal: AiCanvasProposal | null
   updatedAt: number
+  archivedAt: number | null
+}
+
+export interface AiSessionSummary {
+  documentId: string
+  documentTitle: string
+  sessionId: string
+  title: string
+  updatedAt: number
+  archivedAt: number | null
 }
 
 export interface AiChatRequest {
   documentId: string
-  conversationId: string
+  sessionId: string
   messages: AiMessage[]
   context: AiSelectionContext
   baseDocumentUpdatedAt: number
@@ -73,6 +116,7 @@ export interface AiChatResponse {
   needsMoreContext: boolean
   contextRequest?: string[]
   proposal?: AiCanvasProposal | null
+  warnings?: string[]
 }
 
 export type CodexBridgeIssueCode =
@@ -80,6 +124,7 @@ export type CodexBridgeIssueCode =
   | 'login_required'
   | 'verification_required'
   | 'subscription_required'
+  | 'schema_invalid'
   | 'request_failed'
 
 export interface CodexBridgeIssue {
@@ -98,13 +143,46 @@ export interface CodexStatus {
   systemPrompt: string
 }
 
+export interface CodexSettings {
+  businessPrompt: string
+  updatedAt: number
+  version: string
+}
+
 export interface CodexApiError {
   code: CodexBridgeIssueCode | 'invalid_request'
   message: string
   issues?: CodexBridgeIssue[]
 }
 
+export type AiRunStage =
+  | 'idle'
+  | 'checking_status'
+  | 'building_context'
+  | 'starting_codex'
+  | 'waiting_first_token'
+  | 'streaming'
+  | 'applying_changes'
+  | 'completed'
+  | 'error'
+
+export interface AiExecutionError {
+  code?: CodexApiError['code']
+  message: string
+  stage?: AiRunStage
+}
+
+export interface AiStatusFeedback {
+  tone: 'success' | 'warning'
+  message: string
+}
+
 export type AiStreamEvent =
+  | {
+      type: 'status'
+      stage: Exclude<AiRunStage, 'idle' | 'completed' | 'error'>
+      message: string
+    }
   | {
       type: 'assistant_delta'
       delta: string

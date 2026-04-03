@@ -34,6 +34,7 @@ function createTopic(parentId: string): TopicNode {
     childIds: [],
     title: '新主题',
     note: '',
+    aiLocked: false,
     isCollapsed: false,
     branchSide: 'auto',
     layout: {
@@ -175,6 +176,22 @@ export function updateTopicNote(doc: MindMapDocument, topicId: string, note: str
 
   const nextDoc = cloneDocument(doc)
   nextDoc.topics[topicId].note = note
+  return touchDocument(nextDoc)
+}
+
+export function setTopicAiLocked(
+  doc: MindMapDocument,
+  topicId: string,
+  aiLocked: boolean,
+): MindMapDocument {
+  const topic = doc.topics[topicId]
+
+  if (!topic || topic.aiLocked === aiLocked) {
+    return doc
+  }
+
+  const nextDoc = cloneDocument(doc)
+  nextDoc.topics[topicId].aiLocked = aiLocked
   return touchDocument(nextDoc)
 }
 

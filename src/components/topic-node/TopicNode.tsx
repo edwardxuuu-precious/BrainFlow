@@ -28,6 +28,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
   const isSelected = selected || selectedTopicIds.includes(id)
   const isActive = activeTopicId === id
   const hasNote = data.note.trim().length > 0
+  const isLocked = data.aiLocked
 
   useEffect(() => {
     if (!isEditing) {
@@ -89,6 +90,16 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
         ) : (
           <div className={styles.titleRow}>
             <div className={styles.title}>{data.title}</div>
+            {isLocked ? (
+              <span
+                className={styles.lockIndicator}
+                data-lock-indicator="true"
+                role="img"
+                aria-label="AI 锁定"
+              >
+                <Icon name="lock" size={12} strokeWidth={1.9} />
+              </span>
+            ) : null}
             {hasNote ? (
               <span
                 className={styles.noteIndicator}

@@ -30,6 +30,7 @@ export interface TopicRenderData extends Record<string, unknown> {
   topicId: string
   title: string
   note: string
+  aiLocked: boolean
   depth: number
   isRoot: boolean
   isCollapsed: boolean
@@ -160,6 +161,7 @@ export function layoutMindMap(doc: MindMapDocument): LayoutResult {
         topicId,
         title: topic.title,
         note: topic.note,
+        aiLocked: topic.aiLocked,
         depth: getTopicDepth(doc, topicId),
         isRoot: topicId === doc.rootTopicId,
         isCollapsed: topic.isCollapsed,

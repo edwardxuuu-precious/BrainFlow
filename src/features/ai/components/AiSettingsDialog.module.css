@@ -1,0 +1,157 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(24, 30, 38, 0.34);
+  backdrop-filter: blur(10px);
+}
+
+.dialog {
+  display: grid;
+  width: min(860px, 100%);
+  max-height: min(88vh, 960px);
+  grid-template-rows: auto minmax(0, auto) minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid rgba(172, 179, 184, 0.2);
+  border-radius: 28px;
+  background: rgba(250, 251, 252, 0.96);
+  box-shadow: 0 30px 70px rgba(20, 29, 38, 0.18);
+}
+
+.header,
+.footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px 24px;
+}
+
+.header {
+  border-bottom: 1px solid rgba(172, 179, 184, 0.14);
+}
+
+.headingBlock {
+  display: grid;
+  gap: 10px;
+}
+
+.heading,
+.subtitle,
+.error,
+.archivedSubtitle,
+.emptyArchived,
+.archivedItemTime {
+  margin: 0;
+}
+
+.heading {
+  font-family: var(--font-display);
+  font-size: 28px;
+  line-height: 1;
+  color: var(--color-text);
+}
+
+.subtitle,
+.meta,
+.error,
+.archivedSubtitle,
+.emptyArchived,
+.archivedItemTime {
+  color: var(--color-text-soft);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.meta {
+  display: grid;
+  gap: 4px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.body {
+  display: grid;
+  gap: 12px;
+  padding: 24px;
+  border-bottom: 1px solid rgba(172, 179, 184, 0.14);
+}
+
+.field {
+  min-height: 240px;
+}
+
+.archivedSection {
+  display: grid;
+  gap: 16px;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px;
+}
+
+.archivedHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.archivedGroup {
+  display: grid;
+  gap: 12px;
+}
+
+.archivedGroupTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-soft);
+}
+
+.archivedList {
+  display: grid;
+  gap: 10px;
+}
+
+.archivedItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid rgba(172, 179, 184, 0.16);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.archivedItemMeta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.archivedItemTitle {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archivedItemActions {
+  display: flex;
+  gap: 8px;
+}
+
+.footer {
+  align-items: center;
+  justify-content: flex-end;
+  border-top: 1px solid rgba(172, 179, 184, 0.14);
+}

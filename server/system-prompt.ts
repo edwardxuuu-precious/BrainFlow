@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
+import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import type { CodexSettings } from '../shared/ai-contract.js'
 
 const DEFAULT_SUMMARY_MAX_CHARS = 220
-const SYSTEM_PROMPT_FILE = process.env.BRAINFLOW_SYSTEM_PROMPT_FILE
 const DEFAULT_SYSTEM_PROMPT_FILE = join(
   dirname(fileURLToPath(import.meta.url)),
   'prompts',
@@ -15,23 +17,40 @@ const SAFETY_SYSTEM_PROMPT = `
 You are BrainFlow's embedded Codex assistant.
 
 Non-negotiable safety rules:
-- You may only use the selected-node context provided in the request.
+- You may use the full mind-map context provided in the request, and treat the current selection only as a focus hint.
 - You must not read or infer repository contents, file-system contents, backend data, secrets, or external system state.
 - You must not propose or attempt shell commands, file edits, git actions, database writes, or background service mutations.
-- You may only return a structured BrainFlow proposal using the allowed operation types: create_child, create_sibling, update_topic.
-- You must never propose deleting nodes, re-parenting nodes, changing branch side, or changing manual layout offsets.
-- If context is insufficient, set needsMoreContext=true and use contextRequest to ask for more selected nodes.
-- assistantMessage must answer the user's actual question directly, and any proposal must be described as a local change pending user approval.
+- You may only return structured BrainFlow mind-map operations.
+- Allowed operations are create_child, create_sibling, update_topic, move_topic, and delete_topic.
+- You must never propose changing branch side, manual layout offsets, export settings, or any repo/backend behavior.
+- Prefer preserving the user's original framing; do not force a methodology unless the user explicitly asks for one.
+- Only delete or restructure existing nodes when the user explicitly asks to delete, replace, regroup, or reorganize content.
+- If the request is too ambiguous to apply safely, ask one minimal clarification question instead of guessing.
+- assistantMessage should answer the user's actual request directly, and proposal should represent local canvas changes only.
 `.trim()
 
 export interface LoadedSystemPrompt {
   fullPrompt: string
   summary: string
   version: string
+  settings: CodexSettings
+}
+
+export interface SystemPromptStore {
+  loadPrompt(): Promise<LoadedSystemPrompt>
+  getSettings(): Promise<CodexSettings>
+  saveSettings(businessPrompt: string): Promise<CodexSettings>
+  resetSettings(): Promise<CodexSettings>
+}
+
+function hashPrompt(prompt: string): string {
+  return createHash('sha256').update(prompt).digest('hex').slice(0, 12)
 }
 
 function summarizePrompt(prompt: string): string {
-  const maxChars = Number(process.env.BRAINFLOW_SYSTEM_PROMPT_SUMMARY_MAX_CHARS ?? DEFAULT_SUMMARY_MAX_CHARS)
+  const maxChars = Number(
+    process.env.BRAINFLOW_SYSTEM_PROMPT_SUMMARY_MAX_CHARS ?? DEFAULT_SUMMARY_MAX_CHARS,
+  )
   const condensed = prompt
     .split('\n')
     .map((line) => line.trim())
@@ -45,15 +64,142 @@ function summarizePrompt(prompt: string): string {
   return `${condensed.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`
 }
 
-export async function loadSystemPrompt(): Promise<LoadedSystemPrompt> {
-  const promptFile = SYSTEM_PROMPT_FILE ?? DEFAULT_SYSTEM_PROMPT_FILE
-  const businessPrompt = (await readFile(promptFile, 'utf8')).trim()
-  const fullPrompt = `${SAFETY_SYSTEM_PROMPT}\n\n${businessPrompt}`.trim()
-  const version = createHash('sha256').update(fullPrompt).digest('hex').slice(0, 12)
+function resolveDefaultPromptFile(): string {
+  const configured = process.env.BRAINFLOW_SYSTEM_PROMPT_FILE
+  if (!configured) {
+    return DEFAULT_SYSTEM_PROMPT_FILE
+  }
+
+  return isAbsolute(configured) ? configured : resolve(process.cwd(), configured)
+}
+
+function resolveSettingsFile(): string {
+  const configured = process.env.BRAINFLOW_AI_SETTINGS_FILE
+  if (configured) {
+    return isAbsolute(configured) ? configured : resolve(process.cwd(), configured)
+  }
+
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming')
+    return join(appData, 'BrainFlow', 'ai-settings.json')
+  }
+
+  if (process.platform === 'darwin') {
+    return join(homedir(), 'Library', 'Application Support', 'BrainFlow', 'ai-settings.json')
+  }
+
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config')
+  return join(xdgConfigHome, 'BrainFlow', 'ai-settings.json')
+}
+
+async function loadDefaultBusinessPrompt(defaultPromptFile: string): Promise<string> {
+  return (await readFile(defaultPromptFile, 'utf8')).trim()
+}
+
+async function readStoredPrompt(
+  settingsFile: string,
+): Promise<{ businessPrompt: string; updatedAt: number } | null> {
+  try {
+    const raw = await readFile(settingsFile, 'utf8')
+    const parsed = JSON.parse(raw) as Partial<{
+      businessPrompt: unknown
+      updatedAt: unknown
+    }>
+
+    if (typeof parsed.businessPrompt !== 'string') {
+      return null
+    }
+
+    return {
+      businessPrompt: parsed.businessPrompt,
+      updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
+    }
+  } catch {
+    return null
+  }
+}
+
+function toSettings(
+  businessPrompt: string,
+  updatedAt: number,
+): CodexSettings {
+  return {
+    businessPrompt,
+    updatedAt,
+    version: hashPrompt(businessPrompt),
+  }
+}
+
+export function createSystemPromptStore(): SystemPromptStore {
+  const defaultPromptFile = resolveDefaultPromptFile()
+  const settingsFile = resolveSettingsFile()
 
   return {
-    fullPrompt,
-    summary: summarizePrompt(businessPrompt),
-    version,
+    async getSettings() {
+      const stored = await readStoredPrompt(settingsFile)
+      if (stored) {
+        return toSettings(stored.businessPrompt, stored.updatedAt)
+      }
+
+      const defaultPrompt = await loadDefaultBusinessPrompt(defaultPromptFile)
+      return toSettings(defaultPrompt, 0)
+    },
+
+    async saveSettings(businessPrompt) {
+      const nextPrompt = businessPrompt.trim()
+      const updatedAt = Date.now()
+
+      await mkdir(dirname(settingsFile), { recursive: true })
+      await writeFile(
+        settingsFile,
+        JSON.stringify(
+          {
+            businessPrompt: nextPrompt,
+            updatedAt,
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      )
+
+      return toSettings(nextPrompt, updatedAt)
+    },
+
+    async resetSettings() {
+      await rm(settingsFile, { force: true })
+      const defaultPrompt = await loadDefaultBusinessPrompt(defaultPromptFile)
+      return toSettings(defaultPrompt, 0)
+    },
+
+    async loadPrompt() {
+      const settings = await this.getSettings()
+      const fullPrompt = `${SAFETY_SYSTEM_PROMPT}\n\n${settings.businessPrompt}`.trim()
+
+      return {
+        fullPrompt,
+        summary: summarizePrompt(fullPrompt),
+        version: hashPrompt(fullPrompt),
+        settings,
+      }
+    },
   }
+}
+
+const defaultSystemPromptStore = createSystemPromptStore()
+
+export async function loadSystemPrompt(): Promise<LoadedSystemPrompt> {
+  return defaultSystemPromptStore.loadPrompt()
+}
+
+export async function getCodexSettings(): Promise<CodexSettings> {
+  return defaultSystemPromptStore.getSettings()
+}
+
+export async function saveCodexSettings(businessPrompt: string): Promise<CodexSettings> {
+  return defaultSystemPromptStore.saveSettings(businessPrompt)
+}
+
+export async function resetCodexSettings(): Promise<CodexSettings> {
+  return defaultSystemPromptStore.resetSettings()
 }

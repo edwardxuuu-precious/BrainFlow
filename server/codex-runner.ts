@@ -121,6 +121,19 @@ function parseAuthProvider(output: string): string | null {
 function normalizeExecutionError(message: string): CodexBridgeIssue {
   const text = message.toLowerCase()
 
+  if (
+    text.includes('invalid_json_schema') ||
+    text.includes('text.format.schema') ||
+    text.includes('response_format') ||
+    text.includes('output-schema') ||
+    text.includes("schema must have a 'type' key")
+  ) {
+    return {
+      code: 'schema_invalid',
+      message: '本地 AI bridge 的输出 schema 与当前 Codex CLI 不兼容。这不是登录问题，重新验证不会解决，请修复应用端格式后再试。',
+    }
+  }
+
   if (text.includes('entitlement') || text.includes('subscription')) {
     return {
       code: 'subscription_required',
@@ -137,7 +150,7 @@ function normalizeExecutionError(message: string): CodexBridgeIssue {
 
   return {
     code: 'request_failed',
-    message: 'Codex 执行失败，请重新验证本机登录状态后再试。',
+    message: 'Codex 执行失败，请稍后重试；如果持续失败，请检查本地 bridge 日志。',
   }
 }
 

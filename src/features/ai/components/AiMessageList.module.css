@@ -18,7 +18,11 @@
 
 .emptyTitle,
 .emptyText,
-.error {
+.statusTitle,
+.statusText,
+.error,
+.errorTitle,
+.errorHint {
   margin: 0;
 }
 
@@ -29,10 +33,27 @@
 }
 
 .emptyText,
-.error {
+.statusText,
+.error,
+.errorHint {
   color: var(--color-text-soft);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.statusCard {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid rgba(172, 179, 184, 0.2);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.statusTitle {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .message {
@@ -65,6 +86,21 @@
 
 .message[data-role='user'] .bubble {
   background: color-mix(in srgb, var(--color-accent), white 88%);
+}
+
+.errorCard {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--color-danger), white 76%);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--color-danger), white 96%);
+}
+
+.errorTitle {
+  color: var(--color-danger);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .error {

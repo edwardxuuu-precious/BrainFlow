@@ -1,42 +1,56 @@
 import type {
+  AiCanvasTarget,
   AiCanvasOperation,
   AiCanvasProposal,
   AiChatRequest,
   AiChatResponse,
   CodexBridgeIssue,
+  CodexSettings,
   CodexStatus,
 } from '../shared/ai-contract.js'
 import { createCodexRunner, type CodexRunner } from './codex-runner.js'
-import { loadSystemPrompt, type LoadedSystemPrompt } from './system-prompt.js'
+import {
+  createSystemPromptStore,
+  type LoadedSystemPrompt,
+  type SystemPromptStore,
+} from './system-prompt.js'
 
-interface RawProposalOperation {
-  type: 'create_child' | 'create_sibling' | 'update_topic'
-  parentTopicId: string | null
-  targetTopicId: string | null
-  topicId: string | null
-  title: string | null
-  note: string | null
+type RawProposalOperation = {
+  type?: string | null
+  parent?: string | null
+  anchor?: string | null
+  target?: string | null
+  newParent?: string | null
+  targetIndex?: number | null
+  title?: string | null
+  note?: string | null
+  resultRef?: string | null
+  parentTopicId?: string | null
+  targetTopicId?: string | null
+  topicId?: string | null
+  targetParentId?: string | null
 }
 
 interface RawProposalPayload {
-  id: string
-  summary: string
-  operations: RawProposalOperation[]
+  id?: string | null
+  summary?: string | null
+  operations?: RawProposalOperation[] | null
 }
 
 interface RawAiResponsePayload {
-  assistantMessage: string
-  needsMoreContext: boolean
-  contextRequest: string[] | null
-  proposal: RawProposalPayload | null
+  assistantMessage?: string | null
+  needsMoreContext?: boolean | null
+  contextRequest?: string[] | null
+  warnings?: string[] | null
+  proposal?: RawProposalPayload | null
 }
 
 export class CodexBridgeError extends Error {
-  code: 'verification_required' | 'request_failed' | 'invalid_request'
+  code: CodexBridgeIssue['code'] | 'invalid_request'
   issues?: CodexBridgeIssue[]
 
   constructor(
-    code: 'verification_required' | 'request_failed' | 'invalid_request',
+    code: CodexBridgeIssue['code'] | 'invalid_request',
     message: string,
     issues?: CodexBridgeIssue[],
   ) {
@@ -47,61 +61,68 @@ export class CodexBridgeError extends Error {
   }
 }
 
+const OPERATION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'type',
+    'parent',
+    'anchor',
+    'target',
+    'newParent',
+    'targetIndex',
+    'title',
+    'note',
+    'resultRef',
+    'parentTopicId',
+    'targetTopicId',
+    'topicId',
+    'targetParentId',
+  ],
+  properties: {
+    type: { type: ['string', 'null'] },
+    parent: { type: ['string', 'null'] },
+    anchor: { type: ['string', 'null'] },
+    target: { type: ['string', 'null'] },
+    newParent: { type: ['string', 'null'] },
+    targetIndex: { type: ['integer', 'null'], minimum: 0 },
+    title: { type: ['string', 'null'] },
+    note: { type: ['string', 'null'] },
+    resultRef: { type: ['string', 'null'] },
+    parentTopicId: { type: ['string', 'null'] },
+    targetTopicId: { type: ['string', 'null'] },
+    topicId: { type: ['string', 'null'] },
+    targetParentId: { type: ['string', 'null'] },
+  },
+} as const
+
 const RESPONSE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['assistantMessage', 'needsMoreContext', 'contextRequest', 'proposal'],
+  required: ['assistantMessage', 'needsMoreContext', 'contextRequest', 'warnings', 'proposal'],
   properties: {
-    assistantMessage: { type: 'string' },
-    needsMoreContext: { type: 'boolean' },
+    assistantMessage: { type: ['string', 'null'] },
+    needsMoreContext: { type: ['boolean', 'null'] },
     contextRequest: {
-      anyOf: [
-        {
-          type: 'array',
-          items: { type: 'string' },
-        },
-        { type: 'null' },
-      ],
+      type: ['array', 'null'],
+      items: { type: 'string' },
+    },
+    warnings: {
+      type: ['array', 'null'],
+      items: { type: 'string' },
     },
     proposal: {
-      anyOf: [
-        {
-          type: 'object',
-          additionalProperties: false,
-          required: ['id', 'summary', 'operations'],
-          properties: {
-            id: { type: 'string' },
-            summary: { type: 'string' },
-            operations: {
-              type: 'array',
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                required: [
-                  'type',
-                  'parentTopicId',
-                  'targetTopicId',
-                  'topicId',
-                  'title',
-                  'note',
-                ],
-                properties: {
-                  type: {
-                    type: 'string',
-                    enum: ['create_child', 'create_sibling', 'update_topic'],
-                  },
-                  parentTopicId: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-                  targetTopicId: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-                  topicId: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-                  title: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-                  note: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-                },
-              },
-            },
-          },
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['id', 'summary', 'operations'],
+      properties: {
+        id: { type: ['string', 'null'] },
+        summary: { type: ['string', 'null'] },
+        operations: {
+          type: ['array', 'null'],
+          items: OPERATION_SCHEMA,
         },
-        { type: 'null' },
-      ],
+      },
     },
   },
 } as const
@@ -116,59 +137,130 @@ function normalizeText(value: string | null | undefined): string | undefined {
   }
 
   const trimmed = value.trim()
-  return trimmed ? trimmed : undefined
+  return trimmed || undefined
+}
+
+function normalizeNote(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+
+  return value
+}
+
+function toTargetReference(candidate: string): AiCanvasTarget {
+  if (candidate.startsWith('topic:') || candidate.startsWith('ref:')) {
+    return candidate as AiCanvasTarget
+  }
+
+  if (
+    candidate.startsWith('tmp_') ||
+    candidate.startsWith('temp_') ||
+    candidate.startsWith('ref_')
+  ) {
+    return `ref:${candidate}`
+  }
+
+  return `topic:${candidate}`
+}
+
+function createTargetReference(
+  ...candidates: Array<string | null | undefined>
+): AiCanvasTarget | undefined {
+  for (const candidate of candidates) {
+    const normalized = normalizeText(candidate)
+    if (normalized) {
+      return toTargetReference(normalized)
+    }
+  }
+
+  return undefined
 }
 
 function normalizeOperation(operation: RawProposalOperation): AiCanvasOperation {
-  switch (operation.type) {
-    case 'create_child': {
-      const parentTopicId = normalizeText(operation.parentTopicId)
-      const title = normalizeText(operation.title)
+  const operationType = normalizeText(operation.type)
 
-      if (!parentTopicId || !title) {
+  switch (operationType) {
+    case 'create_child': {
+      const parent = createTargetReference(operation.parent, operation.parentTopicId)
+      const title = normalizeText(operation.title)
+      if (!parent || !title) {
         throw new CodexBridgeError('request_failed', 'Codex 返回了无效的 create_child 提案。')
       }
 
       return {
         type: 'create_child',
-        parentTopicId,
+        parent,
         title,
-        note: normalizeText(operation.note),
+        note: normalizeNote(operation.note),
+        resultRef: normalizeText(operation.resultRef),
       }
     }
 
     case 'create_sibling': {
-      const targetTopicId = normalizeText(operation.targetTopicId)
+      const anchor = createTargetReference(operation.anchor, operation.targetTopicId)
       const title = normalizeText(operation.title)
-
-      if (!targetTopicId || !title) {
+      if (!anchor || !title) {
         throw new CodexBridgeError('request_failed', 'Codex 返回了无效的 create_sibling 提案。')
       }
 
       return {
         type: 'create_sibling',
-        targetTopicId,
+        anchor,
         title,
-        note: normalizeText(operation.note),
+        note: normalizeNote(operation.note),
+        resultRef: normalizeText(operation.resultRef),
       }
     }
 
     case 'update_topic': {
-      const topicId = normalizeText(operation.topicId)
+      const target = createTargetReference(operation.target, operation.topicId)
       const title = normalizeText(operation.title)
-      const note = normalizeText(operation.note)
-
-      if (!topicId || (!title && note === undefined)) {
+      const note = normalizeNote(operation.note)
+      if (!target || (title === undefined && note === undefined)) {
         throw new CodexBridgeError('request_failed', 'Codex 返回了无效的 update_topic 提案。')
       }
 
       return {
         type: 'update_topic',
-        topicId,
+        target,
         title,
         note,
       }
     }
+
+    case 'move_topic': {
+      const target = createTargetReference(operation.target, operation.topicId)
+      const newParent = createTargetReference(operation.newParent, operation.targetParentId)
+      if (!target || !newParent) {
+        throw new CodexBridgeError('request_failed', 'Codex 返回了无效的 move_topic 提案。')
+      }
+
+      return {
+        type: 'move_topic',
+        target,
+        newParent,
+        targetIndex:
+          typeof operation.targetIndex === 'number' && Number.isInteger(operation.targetIndex)
+            ? operation.targetIndex
+            : undefined,
+      }
+    }
+
+    case 'delete_topic': {
+      const target = createTargetReference(operation.target, operation.topicId)
+      if (!target) {
+        throw new CodexBridgeError('request_failed', 'Codex 返回了无效的 delete_topic 提案。')
+      }
+
+      return {
+        type: 'delete_topic',
+        target,
+      }
+    }
+
+    default:
+      throw new CodexBridgeError('request_failed', 'Codex 返回了不支持的操作类型。')
   }
 }
 
@@ -177,15 +269,19 @@ function normalizeResponsePayload(
   rawPayload: RawAiResponsePayload,
 ): AiChatResponse {
   const assistantMessage =
-    normalizeText(rawPayload.assistantMessage) ?? '我需要更多上下文才能安全回答这个问题。'
-  const contextRequest =
-    rawPayload.contextRequest?.map(normalizeText).filter(Boolean) as string[] | undefined
+    normalizeText(rawPayload.assistantMessage) ?? '我需要更多上下文才能安全地回答这个问题。'
+  const contextRequest = (rawPayload.contextRequest ?? [])
+    .map((item) => normalizeText(item))
+    .filter(Boolean) as string[] | undefined
+  const warnings = (rawPayload.warnings ?? [])
+    .map((item) => normalizeText(item))
+    .filter(Boolean) as string[] | undefined
 
   let proposal: AiCanvasProposal | null = null
-  if (rawPayload.proposal && rawPayload.proposal.operations.length > 0) {
+  if (rawPayload.proposal?.operations?.length) {
     proposal = {
       id: normalizeText(rawPayload.proposal.id) ?? createProposalId(),
-      summary: normalizeText(rawPayload.proposal.summary) ?? 'Codex 生成了一组待审批的脑图变更。',
+      summary: normalizeText(rawPayload.proposal.summary) ?? 'Codex 已生成一组脑图变更。',
       baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
       operations: rawPayload.proposal.operations.map(normalizeOperation),
     }
@@ -193,9 +289,10 @@ function normalizeResponsePayload(
 
   return {
     assistantMessage,
-    needsMoreContext: rawPayload.needsMoreContext,
+    needsMoreContext: rawPayload.needsMoreContext === true,
     contextRequest,
     proposal,
+    warnings,
   }
 }
 
@@ -204,17 +301,32 @@ function parseResponsePayload(rawText: string | null | undefined): RawAiResponse
     throw new CodexBridgeError('request_failed', 'Codex 返回了空响应。')
   }
 
-  const parsed = JSON.parse(rawText) as Partial<RawAiResponsePayload>
-  if (
-    typeof parsed.assistantMessage !== 'string' ||
-    typeof parsed.needsMoreContext !== 'boolean' ||
-    !('contextRequest' in parsed) ||
-    !('proposal' in parsed)
-  ) {
-    throw new CodexBridgeError('request_failed', 'Codex 返回了不符合约束的结构化结果。')
+  const parsed = JSON.parse(rawText) as RawAiResponsePayload
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new CodexBridgeError('request_failed', 'Codex 返回了无效的结构化结果。')
   }
 
-  return parsed as RawAiResponsePayload
+  return parsed
+}
+
+function normalizeBridgeError(error: unknown): CodexBridgeError {
+  if (error instanceof CodexBridgeError) {
+    return error
+  }
+
+  const issue =
+    typeof error === 'object' && error && 'issue' in error
+      ? (error as { issue?: CodexBridgeIssue }).issue
+      : undefined
+
+  if (issue) {
+    return new CodexBridgeError(issue.code, issue.message, [issue])
+  }
+
+  return new CodexBridgeError(
+    'request_failed',
+    error instanceof Error ? error.message : 'Codex 请求失败。',
+  )
 }
 
 function buildPrompt(request: AiChatRequest, prompt: LoadedSystemPrompt): string {
@@ -227,17 +339,22 @@ function buildPrompt(request: AiChatRequest, prompt: LoadedSystemPrompt): string
   return [
     prompt.fullPrompt,
     '',
-    '返回要求：',
-    '- 必须严格返回符合 schema 的 JSON。',
-    '- assistantMessage 直接回答用户问题。',
-    '- 当上下文不足时，needsMoreContext=true，并在 contextRequest 中说明还需要哪些节点。',
-    '- proposal 只能使用 create_child、create_sibling、update_topic，且 update_topic 仅允许 title / note。',
+    'Return requirements:',
+    '- Return valid JSON only.',
+    '- Use the full graph context to understand the request; treat focus selection only as a hint.',
+    '- Existing node references should prefer topic:<realTopicId>.',
+    '- If you create a node and want to reference it later in the same proposal, assign resultRef on the create operation and then refer to it as ref:<resultRef>.',
+    '- Locked nodes have aiLocked=true. You may read them. You may create_child under a locked node or create_sibling around a locked node, but you must not update_topic, move_topic, or delete_topic on a locked node.',
+    '- If a locked node seems wrong, mention that suggestion in assistantMessage instead of modifying it.',
+    '- Prefer preserving the user’s original framing; do not force a methodology the user did not ask for.',
+    '- Only use move_topic or delete_topic when the user explicitly asks to regroup, replace, delete, or reorganize existing content.',
+    '- If the request is too ambiguous to apply safely, set needsMoreContext=true and ask one minimal clarification question in contextRequest.',
     '',
-    '当前请求上下文：',
+    'Current request context:',
     JSON.stringify(
       {
         documentId: request.documentId,
-        conversationId: request.conversationId,
+        sessionId: request.sessionId,
         baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
         context: request.context,
         messages: history,
@@ -251,20 +368,26 @@ function buildPrompt(request: AiChatRequest, prompt: LoadedSystemPrompt): string
 export interface CodexBridge {
   getStatus(): Promise<CodexStatus>
   revalidate(): Promise<CodexStatus>
+  getSettings(): Promise<CodexSettings>
+  saveSettings(businessPrompt: string): Promise<CodexSettings>
+  resetSettings(): Promise<CodexSettings>
   chat(request: AiChatRequest): Promise<AiChatResponse>
 }
 
 interface CreateCodexBridgeOptions {
   runner?: CodexRunner
-  loadedPrompt?: LoadedSystemPrompt
+  promptStore?: SystemPromptStore
 }
 
 export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBridge {
   const runner = options?.runner ?? createCodexRunner()
-  const promptPromise = options?.loadedPrompt ? Promise.resolve(options.loadedPrompt) : loadSystemPrompt()
+  const promptStore = options?.promptStore ?? createSystemPromptStore()
 
   const buildStatus = async (): Promise<CodexStatus> => {
-    const [runnerStatus, loadedPrompt] = await Promise.all([runner.getStatus(), promptPromise])
+    const [runnerStatus, loadedPrompt] = await Promise.all([
+      runner.getStatus(),
+      promptStore.loadPrompt(),
+    ])
 
     return {
       ...runnerStatus,
@@ -277,6 +400,9 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
   return {
     getStatus: buildStatus,
     revalidate: buildStatus,
+    getSettings: () => promptStore.getSettings(),
+    saveSettings: (businessPrompt) => promptStore.saveSettings(businessPrompt),
+    resetSettings: () => promptStore.resetSettings(),
     async chat(request) {
       const status = await buildStatus()
       if (!status.ready) {
@@ -287,8 +413,15 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
         )
       }
 
-      const loadedPrompt = await promptPromise
-      const rawText = await runner.execute(buildPrompt(request, loadedPrompt), RESPONSE_SCHEMA)
+      const loadedPrompt = await promptStore.loadPrompt()
+      let rawText = ''
+
+      try {
+        rawText = await runner.execute(buildPrompt(request, loadedPrompt), RESPONSE_SCHEMA)
+      } catch (error) {
+        throw normalizeBridgeError(error)
+      }
+
       return normalizeResponsePayload(request, parseResponsePayload(rawText))
     },
   }

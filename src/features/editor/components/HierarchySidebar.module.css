@@ -142,6 +142,20 @@
   color: var(--color-text-soft);
 }
 
+.lockIndicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  border: 1px solid rgba(84, 95, 110, 0.12);
+  border-radius: 999px;
+  background: rgba(84, 95, 110, 0.08);
+  color: var(--color-text-soft);
+}
+
 .treeCount {
   color: var(--color-muted);
   font-size: 11px;

@@ -17,6 +17,7 @@ export interface TopicNode {
   childIds: string[]
   title: string
   note: string
+  aiLocked: boolean
   isCollapsed: boolean
   branchSide: BranchSide
   layout?: TopicLayout

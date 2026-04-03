@@ -47,6 +47,7 @@ export function HierarchySidebar({
     const topic = document.topics[topicId]
     const visibleChildren = topic.isCollapsed ? [] : topic.childIds
     const hasNote = topic.note.trim().length > 0
+    const isLocked = topic.aiLocked
     const isActive = activeTopicId === topicId
     const isSelected = selectedSet.has(topicId)
 
@@ -65,6 +66,11 @@ export function HierarchySidebar({
           <span className={styles.treeTitleLine}>
             <Icon name={depth === 0 ? 'tree' : 'document'} size={14} />
             <span className={styles.treeTitle}>{topic.title}</span>
+            {isLocked ? (
+              <span className={styles.lockIndicator} data-lock-indicator="true" aria-hidden="true">
+                <Icon name="lock" size={11} strokeWidth={1.9} />
+              </span>
+            ) : null}
             {hasNote ? (
               <span className={styles.noteIndicator} data-note-indicator="true" aria-hidden="true">
                 <Icon name="note" size={11} strokeWidth={1.9} />
