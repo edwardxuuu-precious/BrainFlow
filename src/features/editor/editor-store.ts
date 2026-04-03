@@ -4,6 +4,7 @@ import type {
   MindMapDocument,
   MindMapViewport,
   TopicMetadataPatch,
+  TopicRichTextDocument,
   TopicStylePatch,
 } from '../documents/types'
 import {
@@ -25,6 +26,7 @@ import {
   toggleHierarchyBranch,
   toggleCollapse,
   updateTopicNote,
+  updateTopicNoteRich,
   updateViewport,
   updateWorkspaceChrome,
   updateWorkspaceHierarchyCollapsed,
@@ -64,6 +66,7 @@ interface EditorState {
   addSibling: (topicId: string) => void
   renameTopic: (topicId: string, title: string) => void
   updateNote: (topicId: string, note: string) => void
+  updateNoteRich: (topicId: string, noteRich: TopicRichTextDocument | null) => void
   updateTopicMetadata: (topicId: string, patch: TopicMetadataPatch) => void
   updateTopicStyle: (topicId: string, patch: TopicStylePatch) => void
   updateTopicsStyle: (topicIds: string[], patch: TopicStylePatch) => void
@@ -564,6 +567,24 @@ export const useEditorStore = create<EditorState>((set) => ({
         : [topicId]
 
       return commitContentDocument(state, updateTopicNote(state.document, topicId, note), {
+        activeTopicId: topicId,
+        selectedTopicIds,
+        history: false,
+        expandActivePath: false,
+      })
+    }),
+
+  updateNoteRich: (topicId, noteRich) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const selectedTopicIds = state.selectedTopicIds.includes(topicId)
+        ? state.selectedTopicIds
+        : [topicId]
+
+      return commitContentDocument(state, updateTopicNoteRich(state.document, topicId, noteRich), {
         activeTopicId: topicId,
         selectedTopicIds,
         history: false,

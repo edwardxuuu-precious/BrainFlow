@@ -54,6 +54,37 @@ export interface TopicMetadata {
   attachments: TopicAttachmentRef[]
 }
 
+export type TopicRichTextVersion = 1
+
+export interface TopicRichTextTextRun {
+  text: string
+  bold?: boolean
+  italic?: boolean
+  underline?: boolean
+  link?: string
+}
+
+export interface TopicRichTextParagraphBlock {
+  type: 'paragraph'
+  children: TopicRichTextTextRun[]
+}
+
+export interface TopicRichTextListItem {
+  children: TopicRichTextTextRun[]
+}
+
+export interface TopicRichTextBulletListBlock {
+  type: 'bullet_list'
+  items: TopicRichTextListItem[]
+}
+
+export type TopicRichTextBlock = TopicRichTextParagraphBlock | TopicRichTextBulletListBlock
+
+export interface TopicRichTextDocument {
+  version: TopicRichTextVersion
+  blocks: TopicRichTextBlock[]
+}
+
 export type TopicStyleEmphasis = 'normal' | 'focus'
 export type TopicStyleVariant = 'default' | 'soft' | 'solid'
 
@@ -92,6 +123,7 @@ export interface TopicNode {
   childIds: string[]
   title: string
   note: string
+  noteRich: TopicRichTextDocument | null
   aiLocked: boolean
   isCollapsed: boolean
   branchSide: BranchSide

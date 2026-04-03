@@ -16,6 +16,12 @@ import {
   normalizeTopicMetadata,
   normalizeTopicStyle,
 } from '../documents/topic-defaults'
+import {
+  createPlainParagraphRichText,
+  extractPlainTextFromTopicRichText,
+  normalizeTopicRichText,
+} from '../documents/topic-rich-text'
+import type { TopicRichTextDocument } from '../documents/types'
 
 export type ResolvedBranchSide = 'left' | 'right' | 'center'
 
@@ -44,6 +50,7 @@ function createTopic(parentId: string): TopicNode {
     childIds: [],
     title: '新主题',
     note: '',
+    noteRich: null,
     aiLocked: false,
     isCollapsed: false,
     branchSide: 'auto',
@@ -192,13 +199,42 @@ export function renameTopic(doc: MindMapDocument, topicId: string, title: string
 
 export function updateTopicNote(doc: MindMapDocument, topicId: string, note: string): MindMapDocument {
   const topic = doc.topics[topicId]
+  const nextNoteRich = createPlainParagraphRichText(note)
 
-  if (!topic || topic.note === note) {
+  if (
+    !topic ||
+    (topic.note === note &&
+      JSON.stringify(normalizeTopicRichText(topic.noteRich)) === JSON.stringify(nextNoteRich))
+  ) {
     return doc
   }
 
   const nextDoc = cloneDocument(doc)
   nextDoc.topics[topicId].note = note
+  nextDoc.topics[topicId].noteRich = nextNoteRich
+  return touchDocument(nextDoc)
+}
+
+export function updateTopicNoteRich(
+  doc: MindMapDocument,
+  topicId: string,
+  noteRich: TopicRichTextDocument | null,
+): MindMapDocument {
+  const topic = doc.topics[topicId]
+  const normalizedNoteRich = normalizeTopicRichText(noteRich)
+  const nextNote = extractPlainTextFromTopicRichText(normalizedNoteRich)
+
+  if (
+    !topic ||
+    (topic.note === nextNote &&
+      JSON.stringify(normalizeTopicRichText(topic.noteRich)) === JSON.stringify(normalizedNoteRich))
+  ) {
+    return doc
+  }
+
+  const nextDoc = cloneDocument(doc)
+  nextDoc.topics[topicId].note = nextNote
+  nextDoc.topics[topicId].noteRich = normalizedNoteRich
   return touchDocument(nextDoc)
 }
 

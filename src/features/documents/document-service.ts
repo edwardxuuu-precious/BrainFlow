@@ -1,6 +1,10 @@
 import { createMindMapDocument } from './document-factory'
 import { defaultTheme, normalizeMindMapTheme } from './theme'
 import { normalizeTopicMetadata, normalizeTopicStyle } from './topic-defaults'
+import {
+  extractPlainTextFromTopicRichText,
+  normalizeTopicRichText,
+} from './topic-rich-text'
 import type {
   DocumentService,
   DocumentSummary,
@@ -144,8 +148,12 @@ function normalizeWorkspace(doc: MindMapDocument): MindMapWorkspaceState {
 }
 
 function normalizeTopic(topic: TopicNode): TopicNode {
+  const noteRich = normalizeTopicRichText(topic.noteRich)
+
   return {
     ...topic,
+    note: noteRich ? extractPlainTextFromTopicRichText(noteRich) : topic.note ?? '',
+    noteRich,
     aiLocked: topic.aiLocked ?? false,
     metadata: normalizeTopicMetadata(topic.metadata),
     style: normalizeTopicStyle(topic.style),

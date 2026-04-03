@@ -11,7 +11,10 @@ import {
   setTopicOffset,
   setTopicsAiLocked,
   toggleCollapse,
+  updateTopicNote,
+  updateTopicNoteRich,
 } from './tree-operations'
+import { createPlainParagraphRichText } from '../documents/topic-rich-text'
 
 describe('tree-operations', () => {
   it('adds child and sibling topics without mutating the original document', () => {
@@ -92,5 +95,24 @@ describe('tree-operations', () => {
     expect(document.topics[secondBranchId].aiLocked).toBe(false)
     expect(updated.topics[firstBranchId].aiLocked).toBe(true)
     expect(updated.topics[secondBranchId].aiLocked).toBe(true)
+  })
+
+  it('syncs noteRich when a plain note update is applied', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    const updated = updateTopicNote(document, branchId, '第一段\n\n- 列表项')
+
+    expect(updated.topics[branchId].note).toBe('第一段\n\n- 列表项')
+    expect(updated.topics[branchId].noteRich).not.toBeNull()
+  })
+
+  it('writes the plain-text snapshot when a rich note update is applied', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    const richNote = createPlainParagraphRichText('富文本备注')
+    const updated = updateTopicNoteRich(document, branchId, richNote)
+
+    expect(updated.topics[branchId].note).toBe('富文本备注')
+    expect(updated.topics[branchId].noteRich).toEqual(richNote)
   })
 })

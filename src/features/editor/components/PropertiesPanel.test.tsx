@@ -89,12 +89,13 @@ describe('PropertiesPanel', () => {
   })
 
   it('shows the selected topic heading and note field by default', () => {
-    const { container } = renderPanel()
+    renderPanel()
 
     expect(screen.getByRole('heading', { name: 'Focus topic' })).toBeInTheDocument()
-    const noteField = container.querySelector<HTMLTextAreaElement>('#topic-note')
+    const noteField = screen.getByRole('textbox', { name: '备注富文本编辑器' })
     expect(noteField).not.toBeNull()
-    expect(noteField).toHaveValue('Detailed note for the inspector.')
+    expect(noteField).toHaveTextContent('Detailed note for the inspector.')
+    expect(screen.getByRole('group', { name: '备注视图切换' })).toBeInTheDocument()
   })
 
   it('renders the inspector title input when editing is active', () => {

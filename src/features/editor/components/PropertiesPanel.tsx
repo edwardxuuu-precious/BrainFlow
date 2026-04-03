@@ -1,6 +1,6 @@
 import type { KeyboardEvent, ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { Button, SegmentedControl, TextArea } from '../../../components/ui'
+import { Button, SegmentedControl } from '../../../components/ui'
 import { createTopicAttachmentRef, createTopicLink } from '../../documents/topic-defaults'
 import type {
   BranchSide,
@@ -11,6 +11,7 @@ import type {
   TopicMarker,
   TopicMetadataPatch,
   TopicNode,
+  TopicRichTextDocument,
   TopicStylePatch,
   TopicTaskPriority,
   TopicTaskStatus,
@@ -22,6 +23,7 @@ import {
   TOPIC_TASK_PRIORITIES,
   TOPIC_TASK_STATUSES,
 } from '../../documents/types'
+import { TopicRichTextEditor } from './TopicRichTextEditor'
 import styles from './PropertiesPanel.module.css'
 
 interface PropertiesPanelProps {
@@ -42,7 +44,7 @@ interface PropertiesPanelProps {
   onAddChild: () => void
   onAddSibling: () => void
   onDelete: () => void
-  onNoteChange: (note: string) => void
+  onNoteChange: (noteRich: TopicRichTextDocument | null) => void
   onMetadataChange: (patch: TopicMetadataPatch) => void
   onStyleChange: (patch: TopicStylePatch) => void
   onApplyStyleToSelected?: (patch: TopicStylePatch) => void
@@ -446,16 +448,12 @@ export function PropertiesPanel({
       {topic && !isMultiSelection ? (
         <div className={styles.content}>
           <div className={styles.block}>
-            <label className={styles.label} htmlFor="topic-note">
-              备注
-            </label>
-            <TextArea
+            <span className={styles.label}>备注</span>
+            <TopicRichTextEditor
               id="topic-note"
-              value={topic.note}
-              className={styles.note}
-              rows={7}
-              placeholder="记录上下文、待办，或者补充说明。"
-              onChange={(event) => onNoteChange(event.target.value)}
+              value={topic.noteRich}
+              fallbackPlainText={topic.note}
+              onChange={onNoteChange}
             />
           </div>
 

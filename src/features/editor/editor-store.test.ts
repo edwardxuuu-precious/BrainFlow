@@ -130,6 +130,7 @@ describe('editor-store', () => {
       childIds: [],
       title: '深层节点',
       note: '',
+      noteRich: null,
       aiLocked: false,
       isCollapsed: false,
       branchSide: 'auto',

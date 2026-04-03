@@ -174,6 +174,7 @@ describe('documentService', () => {
       childIds: [],
       title: '子节点',
       note: '',
+      noteRich: null,
       aiLocked: false,
       isCollapsed: false,
       branchSide: 'auto',

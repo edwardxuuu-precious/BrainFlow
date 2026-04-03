@@ -188,7 +188,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const renameTopic = useEditorStore((state) => state.renameTopic)
   const addChild = useEditorStore((state) => state.addChild)
   const addSibling = useEditorStore((state) => state.addSibling)
-  const updateNote = useEditorStore((state) => state.updateNote)
+  const updateNoteRich = useEditorStore((state) => state.updateNoteRich)
   const updateTopicMetadata = useEditorStore((state) => state.updateTopicMetadata)
   const updateTopicStyle = useEditorStore((state) => state.updateTopicStyle)
   const updateTopicsStyle = useEditorStore((state) => state.updateTopicsStyle)
@@ -318,8 +318,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   // Resize handlers for right sidebar
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
-    document.body.style.cursor = 'ew-resize'
-    document.body.style.userSelect = 'none'
+    globalThis.document.body.style.cursor = 'ew-resize'
+    globalThis.document.body.style.userSelect = 'none'
     
     const handleMove = (moveEvent: MouseEvent) => {
       const newWidth = window.innerWidth - moveEvent.clientX
@@ -328,8 +328,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     }
     
     const handleUp = () => {
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
+      globalThis.document.body.style.cursor = ''
+      globalThis.document.body.style.userSelect = ''
       window.removeEventListener('mousemove', handleMove)
       window.removeEventListener('mouseup', handleUp)
     }
@@ -774,7 +774,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         onAddChild={() => activeTopicId && addChild(activeTopicId)}
         onAddSibling={() => activeTopicId && addSibling(activeTopicId)}
         onDelete={() => activeTopicId && removeTopic(activeTopicId)}
-        onNoteChange={(note) => activeTopicId && updateNote(activeTopicId, note)}
+        onNoteChange={(noteRich) => activeTopicId && updateNoteRich(activeTopicId, noteRich)}
         onMetadataChange={(patch) => activeTopicId && updateTopicMetadata(activeTopicId, patch)}
         onStyleChange={(patch) => activeTopicId && updateTopicStyle(activeTopicId, patch)}
         onApplyStyleToSelected={(patch) => updateTopicsStyle(selectedTopicIds, patch)}

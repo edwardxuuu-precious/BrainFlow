@@ -1,0 +1,99 @@
+.root {
+  display: grid;
+  gap: 10px;
+}
+
+.header {
+  display: grid;
+  gap: 10px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.command {
+  min-width: 38px;
+  justify-content: center;
+}
+
+.italic {
+  font-style: italic;
+}
+
+.underline {
+  text-decoration: underline;
+}
+
+.editor,
+.preview,
+.empty {
+  min-height: 176px;
+  padding: 14px;
+  border: 1px solid rgba(172, 179, 184, 0.2);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--color-text);
+  font-size: var(--font-size-body-sm);
+  line-height: 1.7;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.editor {
+  outline: none;
+  overflow-y: auto;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease;
+}
+
+.editor:focus {
+  border-color: color-mix(in srgb, var(--color-accent), white 50%);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent), white 88%);
+}
+
+.editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--color-text-soft);
+}
+
+.preview {
+  overflow-y: auto;
+}
+
+.empty {
+  color: var(--color-text-soft);
+  display: flex;
+  align-items: center;
+}
+
+.editor :global(p),
+.preview :global(p) {
+  margin: 0;
+}
+
+.editor :global(p + p),
+.preview :global(p + p),
+.editor :global(ul + p),
+.preview :global(ul + p),
+.editor :global(p + ul),
+.preview :global(p + ul),
+.editor :global(ul + ul),
+.preview :global(ul + ul) {
+  margin-top: 10px;
+}
+
+.editor :global(ul),
+.preview :global(ul) {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.editor :global(a),
+.preview :global(a) {
+  color: var(--color-accent);
+  text-decoration: underline;
+}

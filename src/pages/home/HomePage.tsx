@@ -46,6 +46,10 @@ export function HomePage({ service = documentService }: HomePageProps) {
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState('')
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deleteError, setDeleteError] = useState('')
   const [brandQuote] = useState(() => HOME_QUOTES[Math.floor(Math.random() * HOME_QUOTES.length)] ?? HOME_QUOTES[0])
   const deferredQuery = useDeferredValue(query)
 
@@ -124,9 +128,33 @@ export function HomePage({ service = documentService }: HomePageProps) {
     await refreshDocuments()
   }
 
-  const handleDelete = async (documentId: string) => {
-    await service.deleteDocument(documentId)
-    await refreshDocuments()
+  const handleDelete = (documentId: string) => {
+    setDeleteTargetId(documentId)
+    setDeleteConfirmText('')
+    setDeleteError('')
+    setDeleteDialogOpen(true)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (deleteConfirmText !== 'Delete it') {
+      setDeleteError('请输入 "Delete it" 以确认删除')
+      return
+    }
+    if (deleteTargetId) {
+      await service.deleteDocument(deleteTargetId)
+      await refreshDocuments()
+    }
+    setDeleteDialogOpen(false)
+    setDeleteTargetId(null)
+    setDeleteConfirmText('')
+    setDeleteError('')
+  }
+
+  const handleCancelDelete = () => {
+    setDeleteDialogOpen(false)
+    setDeleteTargetId(null)
+    setDeleteConfirmText('')
+    setDeleteError('')
   }
 
   return (
@@ -171,13 +199,6 @@ export function HomePage({ service = documentService }: HomePageProps) {
 
       <section className={styles.workspace}>
         <div className={styles.sectionHead}>
-          <div>
-            <p className={styles.sectionLabel}>最近文档</p>
-            <h2 className={styles.sectionTitle}>
-              {loading ? '正在读取本地文档…' : `共 ${documents.length} 份脑图`}
-            </h2>
-            <p className={styles.sectionHint}>双击标题可编辑，点击整行即可进入编辑器。</p>
-          </div>
           <SearchField
             aria-label="搜索文档"
             className={styles.searchField}
@@ -189,10 +210,10 @@ export function HomePage({ service = documentService }: HomePageProps) {
 
         <SurfacePanel frosted className={styles.list}>
           <div className={styles.tableHead}>
-            <span>名称</span>
-            <span>主题数</span>
-            <span>最后修改</span>
-            <span className={styles.actionHeading}>操作</span>
+            <span className={styles.colName}>名称</span>
+            <span className={styles.colMetric}>主题数</span>
+            <span className={styles.colDate}>最后修改</span>
+            <span className={styles.colActions}>操作</span>
           </div>
           {loading ? (
             <div className={styles.emptyState}>正在读取本地文档…</div>
@@ -314,6 +335,37 @@ export function HomePage({ service = documentService }: HomePageProps) {
           )}
         </SurfacePanel>
       </section>
+
+      {deleteDialogOpen && (
+        <div className={styles.dialogOverlay} onClick={handleCancelDelete}>
+          <div className={styles.dialog} onClick={(e) => e.stopPropagation()}>
+            <h3 className={styles.dialogTitle}>确认删除</h3>
+            <p className={styles.dialogText}>此操作不可撤销。请输入 "Delete it" 以确认删除。</p>
+            <input
+              type="text"
+              className={styles.dialogInput}
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              onPaste={(e) => e.preventDefault()}
+              placeholder="Delete it"
+              autoFocus
+            />
+            {deleteError && <p className={styles.dialogError}>{deleteError}</p>}
+            <div className={styles.dialogActions}>
+              <Button tone="secondary" onClick={handleCancelDelete}>
+                取消
+              </Button>
+              <Button
+                tone="danger"
+                onClick={() => void handleConfirmDelete()}
+                disabled={deleteConfirmText !== 'Delete it'}
+              >
+                确认删除
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <footer className={styles.footer}>
         <div className={styles.footerSection}>
