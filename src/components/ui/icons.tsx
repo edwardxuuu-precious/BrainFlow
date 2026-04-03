@@ -43,7 +43,7 @@ interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'children'> {
 const iconPaths: Record<IconName, string[]> = {
   add: ['M12 5v14', 'M5 12h14'],
   archive: ['M4 7h16l-1 12H5L4 7Z', 'M9 11h6', 'M9 4h6l1 3H8l1-3Z'],
-  attachment: ['M9 7a5 5 0 0 1 10 0v10a3 3 0 0 1-6 0V9a1 1 0 0 1 2 0v8a1 1 0 0 0 2 0V7a3 3 0 0 0-6 0v10a5 5 0 0 0 10 0V9'],
+  attachment: ['M16.5 6v9.5a4.5 4.5 0 1 1-9 0V5a2.5 2.5 0 0 1 5 0v10.5a1 1 0 1 1-2 0V6'],
   back: ['M15 18l-6-6 6-6', 'M9 12h10'],
   chat: ['M5 6h14v9H9l-4 4V6Z'],
   check: ['M5 13l4 4L19 7'],

@@ -61,9 +61,9 @@
 
 .field {
   width: 100%;
-  min-height: 44px;
+  min-height: 72px;
   max-height: 200px;
-  padding: 10px 14px;
+  padding: 12px 14px;
   border: 1px solid rgba(172, 179, 184, 0.18);
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.9);
