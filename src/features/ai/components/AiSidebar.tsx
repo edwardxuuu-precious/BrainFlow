@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type {
   AiExecutionError,
   AiMessage,
@@ -121,7 +121,12 @@ export function AiSidebar({
   const [hasEditedSettingsDraft, setHasEditedSettingsDraft] = useState(false)
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const [isStatusExpanded, setIsStatusExpanded] = useState(false)
-  const [composerHeight, setComposerHeight] = useState(180)
+  const [composerHeight, setComposerHeight] = useState(220)
+  
+  const handleResize = useCallback((newHeight: number) => {
+    const clamped = Math.max(140, Math.min(400, newHeight))
+    setComposerHeight(clamped)
+  }, [])
 
   const isReady = status?.ready ?? false
   const composerDisabled = !isReady
@@ -379,12 +384,7 @@ export function AiSidebar({
               />
             </div>
 
-            <ResizableSplitter
-              minSize={120}
-              maxSize={400}
-              defaultSize={composerHeight}
-              onResize={setComposerHeight}
-            />
+            <ResizableSplitter onResize={handleResize} />
 
             <div
               className={styles.composerWrapper}

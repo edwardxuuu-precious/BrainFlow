@@ -1,62 +1,61 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './ResizableSplitter.module.css'
 
 interface ResizableSplitterProps {
-  direction?: 'horizontal' | 'vertical'
-  minSize?: number
-  maxSize?: number
-  defaultSize?: number
-  onResize?: (size: number) => void
+  onResize: (delta: number) => void
 }
 
-export function ResizableSplitter({
-  direction = 'horizontal',
-  minSize = 150,
-  maxSize = 600,
-  defaultSize = 300,
-  onResize,
-}: ResizableSplitterProps) {
+export function ResizableSplitter({ onResize }: ResizableSplitterProps) {
   const [isDragging, setIsDragging] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
   const startYRef = useRef(0)
-  const startHeightRef = useRef(defaultSize)
+  const startHeightRef = useRef(0)
+  const deltaRef = useRef(0)
 
-  useEffect(() => {
+  const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!isDragging) return
+    const delta = startYRef.current - e.clientY
+    deltaRef.current = delta
+    // 实时更新，使用 requestAnimationFrame 优化性能
+    requestAnimationFrame(() => {
+      onResize(startHeightRef.current + delta)
+    })
+  }, [isDragging, onResize])
 
-    const handleMouseMove = (e: MouseEvent) => {
-      const deltaY = startYRef.current - e.clientY
-      const newHeight = Math.max(minSize, Math.min(maxSize, startHeightRef.current + deltaY))
-      onResize?.(newHeight)
-    }
-
-    const handleMouseUp = () => {
-      setIsDragging(false)
-    }
-
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-    document.body.style.cursor = direction === 'horizontal' ? 'ns-resize' : 'ew-resize'
-    document.body.style.userSelect = 'none'
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-    }
-  }, [isDragging, direction, minSize, maxSize, onResize])
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    document.removeEventListener('mousemove', handleMouseMove)
+    document.removeEventListener('mouseup', handleMouseUp)
+  }, [handleMouseMove])
 
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     startYRef.current = e.clientY
-    startHeightRef.current = containerRef.current?.parentElement?.clientHeight || defaultSize
+    startHeightRef.current = 0 // 相对位移模式
+    deltaRef.current = 0
     setIsDragging(true)
+    document.body.style.cursor = 'ns-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
   }
+
+  // 清理
+  useEffect(() => {
+    return () => {
+      if (isDragging) {
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+      }
+    }
+  }, [isDragging, handleMouseMove, handleMouseUp])
 
   return (
     <div
-      ref={containerRef}
       className={`${styles.splitter} ${isDragging ? styles.dragging : ''}`}
       onMouseDown={handleMouseDown}
     >
