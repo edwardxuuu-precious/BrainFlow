@@ -207,6 +207,7 @@ export function HierarchySidebar({
           <div className={styles.titleBlock}>
             <span className={styles.label}>目录</span>
             <h2 className={styles.title}>{document.title}</h2>
+            <p className={styles.subtitle}>在这里浏览主题层级，点击任意节点后会同步定位右侧内容与画布选区。</p>
           </div>
           {onCollapse ? (
             <IconButton
@@ -220,7 +221,6 @@ export function HierarchySidebar({
             />
           ) : null}
         </div>
-        <p className={styles.subtitle}>在这里浏览主题层级，点击任意节点后会同步定位右侧内容与画布选区。</p>
       </div>
 
       <nav className={styles.tree} aria-label="主题层级">

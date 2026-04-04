@@ -136,21 +136,18 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
         {(isLocked || topicType) && (
           <div className={styles.statusBar}>
             {isLocked ? (
-              <>
-                <span
-                  className={styles.statusIcon}
-                  onMouseEnter={() => setHoveredIcon('lock')}
-                  onMouseLeave={() => setHoveredIcon(null)}
-                  role="img"
-                  aria-label="AI 锁定节点"
-                >
-                  <Icon name="lock" size={11} strokeWidth={2} />
-                  {hoveredIcon === 'lock' ? (
-                    <span className={styles.statusTooltip}>AI 锁定：节点不会被 AI 修改</span>
-                  ) : null}
-                </span>
-                <span className={styles.lockedLabel}>已锁定</span>
-              </>
+              <span
+                className={styles.statusIcon}
+                onMouseEnter={() => setHoveredIcon('lock')}
+                onMouseLeave={() => setHoveredIcon(null)}
+                role="img"
+                aria-label="AI 锁定节点"
+              >
+                <Icon name="lock" size={11} strokeWidth={2} />
+                {hoveredIcon === 'lock' ? (
+                  <span className={styles.statusTooltip}>AI 锁定：节点不会被 AI 修改</span>
+                ) : null}
+              </span>
             ) : null}
             {topicType === 'milestone' ? (
               <span

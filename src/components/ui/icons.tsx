@@ -9,6 +9,8 @@ export type IconName =
   | 'check'
   | 'checkCircle'
   | 'calendar'
+  | 'circle'
+  | 'chevronDown'
   | 'chevronRight'
   | 'close'
   | 'copy'
@@ -68,6 +70,7 @@ const iconDefinitions: Record<IconName, IconDefinition> = {
   archive: { paths: ['M4 7h16l-1 12H5L4 7Z', 'M9 11h6', 'M9 4h6l1 3H8l1-3Z'] },
   attachment: { paths: ['M12 4v10a3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a5 5 0 0 0-10 0v10a7 7 0 0 0 7 7 7 7 0 0 0 7-7v-3'] },
   back: { paths: ['M15 18l-6-6 6-6', 'M9 12h10'] },
+  chevronDown: { paths: ['M6 9l6 6 6-6'] },
   chevronRight: { paths: ['M9 6l6 6-6 6'] },
   chat: {
     render: () => (
@@ -80,6 +83,7 @@ const iconDefinitions: Record<IconName, IconDefinition> = {
     ),
   },
   calendar: { paths: ['M7 4v3', 'M17 4v3', 'M4 8h16', 'M5 6h14v13H5z', 'M8 11h3', 'M13 11h3', 'M8 15h3'] },
+  circle: { paths: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z'] },
   check: { paths: ['M5 13l4 4L19 7'] },
   checkCircle: { paths: ['M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z', 'M9 12l2 2 4-4'] },
   close: { paths: ['M6 6l12 12', 'M18 6L6 18'] },
@@ -120,7 +124,14 @@ const iconDefinitions: Record<IconName, IconDefinition> = {
     ),
   },
   question: { paths: ['M9.1 9a3 3 0 1 1 5.8 1c0 2-3 2-3 4', 'M12 17h.01', 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z'] },
-  redo: { paths: ['M17 6v6h-6', 'M16.5 9a7.5 7.5 0 1 0-4.2 6.8'] },
+  redo: {
+    render: () => (
+      <>
+        <path d="M15.25 7.25h3.5v3.5" />
+        <path d="M18.75 10.75a6.75 6.75 0 1 1-2.55-5.27" />
+      </>
+    ),
+  },
   restore: { paths: ['M12 4v4l3-3', 'M12 8 9 5', 'M7 10a6 6 0 1 0 2-2'] },
   search: { paths: ['M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm7 13-4-4'] },
   send: { paths: ['M4 12 20 4 13 20 11 13 4 12', 'M11 13 20 4'] },
@@ -138,7 +149,14 @@ const iconDefinitions: Record<IconName, IconDefinition> = {
     ),
   },
   tree: { paths: ['M7 6h4v4H7z', 'M13 14h4v4h-4z', 'M7 14h4v4H7z', 'M11 8h3v3', 'M14 11v3', 'M14 11H9v3'] },
-  undo: { paths: ['M7 6v6h6', 'M7.5 9a7.5 7.5 0 1 1 4.2 6.8'] },
+  undo: {
+    render: () => (
+      <>
+        <path d="M8.75 7.25h-3.5v3.5" />
+        <path d="M5.25 10.75A6.75 6.75 0 1 0 7.8 5.48" />
+      </>
+    ),
+  },
   unlock: { paths: ['M7 11h10v9H7z', 'M9 11V8a3 3 0 1 1 5.5 1.5'] },
   warning: { paths: ['M12 9v4', 'M12 17h.01', 'M10.3 3.9 2 18a2 2 0 0 0 1.8 2.1h11.8a2 2 0 0 0 1.8-2.1l-2-14.1a2 2 0 0 0-1.8-1.9H12.1a2 2 0 0 0-1.8 1.9z'] },
 }

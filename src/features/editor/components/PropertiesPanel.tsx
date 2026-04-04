@@ -128,6 +128,20 @@ export function PropertiesPanel({
     aiLock: true,
   })
   const [showAiLockTooltip, setShowAiLockTooltip] = useState(false)
+  const [topicTypeDropdownOpen, setTopicTypeDropdownOpen] = useState(false)
+  const topicTypeDropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (topicTypeDropdownRef.current && !topicTypeDropdownRef.current.contains(event.target as Node)) {
+        setTopicTypeDropdownOpen(false)
+      }
+    }
+    if (topicTypeDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [topicTypeDropdownOpen])
 
   const toggleSection = (section: string) => {
     setCollapsedSections((prev) => ({ ...prev, [section]: !prev[section] }))
@@ -197,10 +211,10 @@ export function PropertiesPanel({
     <section id={id} className={classNames(styles.panel, className)} data-mode={mode}>
       <div className={styles.header}>
         <div className={styles.chrome}>
-          <div className={styles.placeholder}>
-            <span className={styles.label}>详情</span>
-            <h2 className={styles.heading}>节点详情</h2>
-            <p className={styles.empty}>查看并编辑当前选区的备注、元数据和节点操作。</p>
+          <div className={styles.modeIntro}>
+            <span className={styles.modeLabel}>详情</span>
+            <h2 className={styles.modeHeading}>节点详情</h2>
+            <p className={styles.modeDescription}>查看并编辑当前选区的备注、元数据和节点操作。</p>
           </div>
           {onCollapse ? (
             <IconButton
@@ -290,19 +304,88 @@ export function PropertiesPanel({
               {isRoot || isFirstLevel ? (
                 <p className={styles.topicType}>{isRoot ? '中心主题' : '一级分支'}</p>
               ) : (
-                <select
-                  className={styles.topicTypeSelect}
-                  value={topic.metadata?.type || 'normal'}
-                  onChange={(event) =>
-                    onMetadataChange({
-                      type: event.target.value as 'normal' | 'milestone' | 'task',
-                    })
-                  }
-                >
-                  <option value="normal">普通主题</option>
-                  <option value="milestone">Milestone</option>
-                  <option value="task">Task</option>
-                </select>
+                <div ref={topicTypeDropdownRef} className={styles.topicTypeDropdown}>
+                  <button
+                    type="button"
+                    className={styles.topicTypeTrigger}
+                    onClick={() => setTopicTypeDropdownOpen(!topicTypeDropdownOpen)}
+                  >
+                    <span className={styles.topicTypeValue}>
+                      <Icon
+                        name={
+                          topic.metadata?.type === 'milestone'
+                            ? 'star'
+                            : topic.metadata?.type === 'task'
+                              ? 'checkCircle'
+                              : 'circle'
+                        }
+                        size={14}
+                        strokeWidth={1.8}
+                      />
+                      {topic.metadata?.type === 'milestone'
+                        ? '里程碑'
+                        : topic.metadata?.type === 'task'
+                          ? '任务'
+                          : '普通主题'}
+                    </span>
+                    <Icon
+                      name="chevronDown"
+                      size={14}
+                      strokeWidth={1.8}
+                      className={classNames(
+                        styles.topicTypeIcon,
+                        topicTypeDropdownOpen && styles.topicTypeIconOpen,
+                      )}
+                    />
+                  </button>
+                  {topicTypeDropdownOpen && (
+                    <div className={styles.topicTypeMenu}>
+                      <button
+                        type="button"
+                        className={classNames(
+                          styles.topicTypeItem,
+                          (!topic.metadata?.type || topic.metadata?.type === 'normal') &&
+                            styles.topicTypeItemActive,
+                        )}
+                        onClick={() => {
+                          onMetadataChange({ type: 'normal' })
+                          setTopicTypeDropdownOpen(false)
+                        }}
+                      >
+                        <Icon name="circle" size={14} strokeWidth={1.8} />
+                        普通主题
+                      </button>
+                      <button
+                        type="button"
+                        className={classNames(
+                          styles.topicTypeItem,
+                          topic.metadata?.type === 'milestone' && styles.topicTypeItemActive,
+                        )}
+                        onClick={() => {
+                          onMetadataChange({ type: 'milestone' })
+                          setTopicTypeDropdownOpen(false)
+                        }}
+                      >
+                        <Icon name="star" size={14} strokeWidth={1.8} />
+                        里程碑
+                      </button>
+                      <button
+                        type="button"
+                        className={classNames(
+                          styles.topicTypeItem,
+                          topic.metadata?.type === 'task' && styles.topicTypeItemActive,
+                        )}
+                        onClick={() => {
+                          onMetadataChange({ type: 'task' })
+                          setTopicTypeDropdownOpen(false)
+                        }}
+                      >
+                        <Icon name="checkCircle" size={14} strokeWidth={1.8} />
+                        任务
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
               {isInspectorEditing ? (
                 <p className={styles.renameHint}>正在编辑标题，按 Enter 保存，Esc 取消。</p>
@@ -495,7 +578,7 @@ export function PropertiesPanel({
                 </div>
               ) : (
                 <Button
-                  tone="secondary"
+                  tone="primary"
                   size="sm"
                   className={styles.inlineButton}
                   onClick={() => onMetadataChange({ task: createDefaultTask() })}

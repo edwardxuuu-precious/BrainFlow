@@ -51,10 +51,10 @@ export function MarkersPanel({
     <section id={id} className={classNames(styles.panel, className)} data-mode={mode}>
       <div className={styles.header}>
         <div className={styles.chrome}>
-          <div className={styles.placeholder}>
-            <span className={styles.label}>标记</span>
-            <h2 className={styles.heading}>节点标记</h2>
-            <p className={styles.empty}>
+          <div className={styles.modeIntro}>
+            <span className={styles.modeLabel}>标记</span>
+            <h2 className={styles.modeHeading}>节点标记</h2>
+            <p className={styles.modeDescription}>
               {hasSelection
                 ? selectionCount === 1
                   ? '为当前选中的节点添加标记或贴纸。再次点击已选项会移除它。'
