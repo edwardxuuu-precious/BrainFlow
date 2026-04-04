@@ -7,7 +7,7 @@ export const API_RESTART_BASE_DELAY_MS = 1_000
 export const API_RESTART_MAX_DELAY_MS = 10_000
 
 type ChildRole = 'web' | 'api'
-type ChildScript = 'dev:web' | 'dev:server'
+type ChildScript = 'dev:web-only' | 'dev:server'
 
 interface ManagedChild {
   role: ChildRole
@@ -231,7 +231,7 @@ export class DevSupervisor {
   private startWeb(): void {
     let child: ManagedChild
     try {
-      child = this.spawnChild('web', 'dev:web')
+      child = this.spawnChild('web', 'dev:web-only')
     } catch (error) {
       this.error(`[web] failed to start: ${error instanceof Error ? error.message : String(error)}`)
       void this.shutdown(1)

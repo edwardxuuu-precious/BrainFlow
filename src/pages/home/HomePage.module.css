@@ -171,13 +171,14 @@
 }
 
 .list {
+  --doc-list-columns: minmax(0, 1fr) 88px 140px 220px;
   overflow: hidden;
 }
 
 .tableHead,
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) 100px 160px auto;
+  grid-template-columns: var(--doc-list-columns);
   gap: 18px;
   align-items: center;
 }
@@ -185,7 +186,7 @@
 /* Table header - 12px uppercase */
 .tableHead {
   padding: 16px 26px;
-  border-bottom: 0.5px solid rgba(193, 198, 215, 0.2);
+  border-bottom: 0.5px solid var(--divider);
   color: var(--on-surface-muted);
   font-size: var(--font-size-label);
   font-weight: 600;
@@ -203,7 +204,7 @@
 }
 
 .row + .row {
-  border-top: 0.5px solid rgba(193, 198, 215, 0.15);
+  border-top: 0.5px solid var(--divider);
 }
 
 .row:hover,
@@ -276,6 +277,8 @@
 
 .colName {
   justify-self: start;
+  text-align: left;
+  padding-left: 26px;
 }
 
 .colMetric {
@@ -289,8 +292,8 @@
 }
 
 .colActions {
-  justify-self: end;
-  text-align: right;
+  justify-self: start;
+  text-align: left;
 }
 
 .rowMetric {
@@ -304,12 +307,14 @@
   display: flex;
   justify-content: flex-end;
   justify-self: end;
+  flex-wrap: nowrap;
   gap: 8px;
   opacity: 0.82;
+  white-space: nowrap;
 }
 
 .deleteButton {
-  color: #c41e3a !important;
+  color: var(--error-600) !important;
 }
 
 .row:hover .rowActions,
@@ -340,7 +345,7 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 32px;
   padding: 24px 0 0;
-  border-top: 0.5px solid rgba(193, 198, 215, 0.18);
+  border-top: 0.5px solid var(--divider);
 }
 
 .footer > *:nth-child(1) {
@@ -416,7 +421,7 @@
   z-index: 100;
   display: grid;
   place-items: center;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(15, 23, 42, 0.5);
   backdrop-filter: blur(4px);
 }
 
@@ -425,7 +430,7 @@
   padding: 28px;
   border-radius: 16px;
   background: var(--surface-container-lowest);
-  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 24px 60px -20px rgba(15, 23, 42, 0.25);
 }
 
 .dialogTitle {
@@ -448,7 +453,7 @@
   height: 44px;
   padding: 0 14px;
   margin-bottom: 12px;
-  border: 1px solid rgba(193, 198, 215, 0.3);
+  border: 1px solid var(--outline);
   border-radius: 8px;
   background: var(--surface-container-lowest);
   color: var(--on-surface);
@@ -459,14 +464,14 @@
 }
 
 .dialogInput:focus {
-  border-color: rgba(0, 88, 188, 0.5);
-  box-shadow: 0 0 0 3px rgba(0, 88, 188, 0.1);
+  border-color: var(--primary-400);
+  box-shadow: 0 0 0 3px var(--primary-100);
 }
 
 .dialogError {
   margin: 0 0 16px;
   font-size: var(--font-size-body-sm);
-  color: #c41e3a;
+  color: var(--error-600);
 }
 
 .dialogActions {

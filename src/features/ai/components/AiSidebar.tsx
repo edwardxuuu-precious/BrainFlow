@@ -139,30 +139,36 @@ export function AiSidebar({
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const [isStatusExpanded, setIsStatusExpanded] = useState(false)
 
-
   const isReady = status?.ready ?? false
   const isServiceDisconnected = status === null
-  const needsVerification = status !== null && !isReady
+  const hasCliMissingIssue = status?.issues?.some((issue) => issue.code === 'cli_missing') ?? false
+  const needsVerification = status !== null && !isReady && !hasCliMissingIssue
   const shouldAutoExpandStatus =
     isCheckingStatus ||
     statusError !== null ||
     lastExecutionError !== null ||
-    needsVerification
+    (status !== null && !isReady)
   const statusDetailsId = `${id ?? 'ai-sidebar'}-status-details`
   const composerDisabled = !isReady
   const composerDisabledHint = isServiceDisconnected
-    ? '本机 Codex 服务未连接，请先运行 pnpm dev 或 pnpm dev:server。'
-    : '当前 Codex 需要重新验证，请运行 codex login --device-auth 后再试。'
+    ? '本机 Codex 服务未连接，请先运行 pnpm dev 或 pnpm dev:web。'
+    : hasCliMissingIssue
+      ? '当前 bridge 未解析到本机 Codex CLI，请确认安装后重新运行 pnpm dev 或 pnpm dev:server。'
+      : '当前 Codex 需要重新验证，请运行 codex login --device-auth 后再试。'
   const composerDisabledPlaceholder = isServiceDisconnected
     ? '当前无法发送，请先启动本机 Codex 服务。'
-    : '当前无法发送，请先完成 Codex 重新验证。'
+    : hasCliMissingIssue
+      ? '当前无法发送，请先让 bridge 识别本机 Codex CLI。'
+      : '当前无法发送，请先完成 Codex 重新验证。'
   const statusButtonActionLabel = isCheckingStatus
     ? '检查中'
     : isReady
       ? '检查状态'
       : isServiceDisconnected
         ? '重新检查服务'
-        : '重新验证'
+        : hasCliMissingIssue
+          ? '重新检查 CLI'
+          : '重新验证'
 
   const activeSession = useMemo(
     () => sessionList.find((session) => session.sessionId === activeSessionId) ?? null,
@@ -175,7 +181,6 @@ export function AiSidebar({
     }
   }, [shouldAutoExpandStatus])
 
-  // Determine status button state
   const getStatusButtonState = () => {
     if (isCheckingStatus) {
       return { label: '检查中', tone: 'secondary' as const, icon: 'loading' as const }
@@ -185,6 +190,9 @@ export function AiSidebar({
     }
     if (isServiceDisconnected) {
       return { label: '未连接服务', tone: 'secondary' as const, icon: 'error' as const }
+    }
+    if (hasCliMissingIssue) {
+      return { label: 'CLI 不可用', tone: 'secondary' as const, icon: 'error' as const }
     }
     return { label: '需要验证', tone: 'secondary' as const, icon: 'warning' as const }
   }
@@ -225,8 +233,7 @@ export function AiSidebar({
       <section id={id} className={classNames(styles.panel, className)} data-mode={mode}>
         <div className={styles.header}>
           {tabs ? <div className={styles.tabs}>{tabs}</div> : null}
-          
-          {/* Session Toolbar - Row 1: Dropdown + New Chat */}
+
           <div className={styles.toolbarRow1}>
             <div className={styles.dropdownWrapper}>
               <button
@@ -236,9 +243,7 @@ export function AiSidebar({
                 aria-expanded={isDropdownOpen}
                 aria-haspopup="listbox"
               >
-                <span className={styles.dropdownValue}>
-                  {activeSession?.title || '选择会话'}
-                </span>
+                <span className={styles.dropdownValue}>{activeSession?.title || '选择会话'}</span>
                 <svg
                   className={classNames(styles.dropdownIcon, isDropdownOpen && styles.dropdownIconOpen)}
                   width="12"
@@ -255,8 +260,8 @@ export function AiSidebar({
                   />
                 </svg>
               </button>
-              
-              {isDropdownOpen && sessionList?.length ? (
+
+              {isDropdownOpen && sessionList.length ? (
                 <div className={styles.dropdownMenu} role="listbox">
                   {sessionList.map((session) => (
                     <button
@@ -264,7 +269,7 @@ export function AiSidebar({
                       type="button"
                       className={classNames(
                         styles.dropdownItem,
-                        session.sessionId === activeSessionId && styles.dropdownItemActive
+                        session.sessionId === activeSessionId && styles.dropdownItemActive,
                       )}
                       role="option"
                       aria-selected={session.sessionId === activeSessionId}
@@ -280,7 +285,6 @@ export function AiSidebar({
             <IconButton label="新建聊天" icon="chat" tone="secondary" size="sm" onClick={onCreateSession} />
           </div>
 
-          {/* Actions + Status Row */}
           <div className={styles.actionsRow}>
             <Button
               tone={statusButtonState.tone}
@@ -295,7 +299,7 @@ export function AiSidebar({
                 styles.statusButton,
                 isReady && styles.statusButtonReady,
                 isServiceDisconnected && styles.statusButtonDisconnected,
-                needsVerification && styles.statusButtonError,
+                (needsVerification || hasCliMissingIssue) && styles.statusButtonError,
               )}
             >
               {statusButtonState.label}
@@ -322,20 +326,21 @@ export function AiSidebar({
             </div>
           </div>
 
-          {/* Expandable Status Details */}
           {isStatusExpanded ? (
             <div id={statusDetailsId} className={styles.statusDetails}>
               <div className={styles.statusDetailsHeader}>
                 <div className={styles.statusHeaderLeft}>
-                  <span className={classNames(
-                    styles.statusBadge,
-                    isReady
-                      ? styles.statusBadgeReady
-                      : isServiceDisconnected
-                        ? styles.statusBadgeDisconnected
-                        : styles.statusBadgeNeedAuth
-                  )}>
-                    {isReady ? '可用' : isServiceDisconnected ? '未连接服务' : '需要验证'}
+                  <span
+                    className={classNames(
+                      styles.statusBadge,
+                      isReady
+                        ? styles.statusBadgeReady
+                        : isServiceDisconnected || hasCliMissingIssue
+                          ? styles.statusBadgeDisconnected
+                          : styles.statusBadgeNeedAuth,
+                    )}
+                  >
+                    {isReady ? '可用' : isServiceDisconnected ? '未连接服务' : hasCliMissingIssue ? 'CLI 不可用' : '需要验证'}
                   </span>
                   <span className={styles.statusVersion}>Prompt {status?.systemPromptVersion ?? '未加载'}</span>
                 </div>
@@ -346,7 +351,12 @@ export function AiSidebar({
                   aria-label="收起状态详情"
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <path d="M3.5 3.5L10.5 10.5M10.5 3.5L3.5 10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    <path
+                      d="M3.5 3.5L10.5 10.5M10.5 3.5L3.5 10.5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                    />
                   </svg>
                 </button>
               </div>
@@ -363,19 +373,55 @@ export function AiSidebar({
                   <p className={styles.statusText}>
                     {isServiceDisconnected
                       ? '当前未连接到本机 Codex 服务，AI 发送能力已暂停。'
-                      : '当前 Codex 验证信息不可用，修复登录或订阅后才能继续发送。'}
+                      : hasCliMissingIssue
+                        ? '当前 bridge 没有解析到可用的本机 Codex CLI，修复命令解析后才能继续发送。'
+                        : '当前 Codex 验证信息不可用，修复登录或订阅后才能继续发送。'}
                   </p>
                   {isServiceDisconnected ? (
                     <ol className={styles.issueList}>
-                      <li>优先运行 <code>pnpm dev</code>，同时启动前端和本机 Codex bridge。</li>
-                      <li>如果前端已在运行，可单独执行 <code>pnpm dev:server</code> 恢复 <code>8787</code> 服务。</li>
-                      <li>如果当前是在预览 <code>dist</code>，请额外启动 <code>pnpm start:server</code>。</li>
-                      <li>访问 <code>http://127.0.0.1:8787/api/codex/status</code> 确认 bridge 已恢复可达。</li>
+                      <li>
+                        优先运行 <code>pnpm dev</code>，同时启动前端和本机 Codex bridge。
+                      </li>
+                      <li>
+                        如果你是从 VS Code 或命令面板启动开发环境，也可以直接运行 <code>pnpm dev:web</code>。
+                      </li>
+                      <li>
+                        如果前端已在运行，可单独执行 <code>pnpm dev:server</code> 恢复 <code>8787</code> 服务。
+                      </li>
+                      <li>
+                        仅在需要排查纯前端问题时，才使用 <code>pnpm dev:web-only</code>。
+                      </li>
+                      <li>
+                        如果当前是在预览 <code>dist</code>，请额外启动 <code>pnpm start:server</code>。
+                      </li>
+                      <li>
+                        访问 <code>http://127.0.0.1:8787/api/codex/status</code> 确认 bridge 已恢复可达。
+                      </li>
+                    </ol>
+                  ) : hasCliMissingIssue ? (
+                    <ol className={styles.issueList}>
+                      <li>
+                        确认本机已经安装并可执行 <code>codex</code> 命令。
+                      </li>
+                      <li>
+                        如果刚安装 CLI 或刚更新 PATH，请重新运行 <code>pnpm dev</code> 或{' '}
+                        <code>pnpm dev:web</code>，让 bridge 继承最新环境变量。
+                      </li>
+                      <li>
+                        如果前端已在运行，可单独执行 <code>pnpm dev:server</code> 重启 <code>8787</code> 服务。
+                      </li>
+                      <li>
+                        Windows 下如果是从 VS Code 启动开发环境，必要时重开 VS Code 或终端后再试。
+                      </li>
                     </ol>
                   ) : (
                     <ol className={styles.issueList}>
-                      <li>确认本机已经安装并可执行 <code>codex</code> 命令。</li>
-                      <li>运行 <code>codex login --device-auth</code>，并使用可用的 ChatGPT 订阅账号完成登录。</li>
+                      <li>
+                        确认本机已经安装并可执行 <code>codex</code> 命令。
+                      </li>
+                      <li>
+                        运行 <code>codex login --device-auth</code>，并使用可用的 ChatGPT 订阅账号完成登录。
+                      </li>
                       <li>完成后回到这里点击“重新验证”。</li>
                     </ol>
                   )}
@@ -388,9 +434,11 @@ export function AiSidebar({
                   ) : null}
                 </div>
               ) : (
-                <p className={styles.statusText}>已检测到本机 Codex CLI 与 ChatGPT 登录状态，可以直接基于当前脑图发起对话。</p>
+                <p className={styles.statusText}>
+                  已检测到本机 Codex CLI 与 ChatGPT 登录状态，可以直接基于当前脑图发起对话。
+                </p>
               )}
-              
+
               {lastExecutionError ? (
                 <div className={styles.executionIssue}>
                   <p className={styles.executionIssueTitle}>最近一次执行失败</p>
@@ -402,7 +450,7 @@ export function AiSidebar({
                   ) : null}
                 </div>
               ) : null}
-              {(statusError || lastExecutionError) ? (
+              {statusError || lastExecutionError ? (
                 <p className={styles.statusLogHint}>
                   完整日志请查看本地启动终端或 bridge 输出，本页不展示原始日志内容。
                 </p>
@@ -412,7 +460,6 @@ export function AiSidebar({
         </div>
 
         <div className={styles.body}>
-          {/* Context and Status Info */}
           <div className={styles.infoSection}>
             <AiContextTray
               selectedTopics={selectedTopics}
@@ -445,7 +492,6 @@ export function AiSidebar({
             ) : null}
           </div>
 
-          {/* Chat Area */}
           <div className={styles.chatArea}>
             <div className={styles.messagesWrapper}>
               <AiMessageList

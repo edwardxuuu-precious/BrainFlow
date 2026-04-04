@@ -52,12 +52,19 @@ pnpm dev
 
 ```bash
 pnpm dev
+pnpm dev:web
+pnpm dev:web-only
+pnpm dev:server
 pnpm build
 pnpm preview
 pnpm lint
 pnpm test
 pnpm test:e2e
 ```
+
+- `pnpm dev` / `pnpm dev:web`：默认开发入口，都会同时启动前端和本机 Codex bridge。
+- `pnpm dev:web-only`：仅启动前端，仅用于排查纯 UI 问题，不适合作为日常开发入口。
+- `pnpm dev:server`：仅启动本机 bridge，用于前端已在运行时单独恢复 `8787` 服务。
 
 ## 部署
 

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createCodexRunner } from './codex-runner.js'
 
 describe('createCodexRunner', () => {
-  it('returns a verification issue when codex is missing', async () => {
+  it('returns a cli_missing issue when codex cannot be resolved', async () => {
     const runCommand = vi
       .fn()
       .mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }))
@@ -15,6 +15,86 @@ describe('createCodexRunner', () => {
       ready: false,
       issues: [expect.objectContaining({ code: 'cli_missing' })],
     })
+  })
+
+  it('falls back to the Windows npm global codex path when PATH is missing', async () => {
+    const fallbackCommand = 'C:\\Users\\edwar\\AppData\\Roaming\\npm\\codex.cmd'
+    const runCommand = vi.fn().mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'codex') {
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      }
+
+      if (command === fallbackCommand && args[0] === '--version') {
+        return { stdout: 'codex-cli 0.118.0', stderr: '', exitCode: 0 }
+      }
+
+      if (command === fallbackCommand && args[0] === 'login') {
+        return { stdout: 'Logged in using ChatGPT', stderr: '', exitCode: 0 }
+      }
+
+      throw new Error(`Unexpected command: ${command} ${args.join(' ')}`)
+    })
+    const runner = createCodexRunner({
+      runCommand,
+      platform: 'win32',
+      env: {
+        APPDATA: 'C:\\Users\\edwar\\AppData\\Roaming',
+      },
+      readdir: vi.fn().mockRejectedValue(new Error('no vscode extensions')),
+    })
+
+    await expect(runner.getStatus()).resolves.toMatchObject({
+      cliInstalled: true,
+      loggedIn: true,
+      ready: true,
+      authProvider: 'ChatGPT',
+    })
+
+    expect(runCommand).toHaveBeenNthCalledWith(1, 'codex', ['--version'])
+    expect(runCommand).toHaveBeenNthCalledWith(2, fallbackCommand, ['--version'])
+    expect(runCommand).toHaveBeenNthCalledWith(3, fallbackCommand, ['login', 'status'])
+  })
+
+  it('falls back to the latest VS Code bundled codex executable on Windows', async () => {
+    const latestBundledCommand =
+      'C:\\Users\\edwar\\.vscode\\extensions\\openai.chatgpt-26.5401.11717-win32-x64\\bin\\windows-x86_64\\codex.exe'
+    const runCommand = vi.fn().mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'codex') {
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      }
+
+      if (command === latestBundledCommand && args[0] === '--version') {
+        return { stdout: 'codex-cli 0.118.0', stderr: '', exitCode: 0 }
+      }
+
+      if (command === latestBundledCommand && args[0] === 'login') {
+        return { stdout: 'Logged in using ChatGPT', stderr: '', exitCode: 0 }
+      }
+
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+    })
+    const readdir = vi.fn().mockResolvedValue([
+      'openai.chatgpt-25.100.1-win32-x64',
+      'openai.chatgpt-26.5401.11717-win32-x64',
+    ])
+    const runner = createCodexRunner({
+      runCommand,
+      readdir,
+      platform: 'win32',
+      env: {
+        USERPROFILE: 'C:\\Users\\edwar',
+      },
+    })
+
+    await expect(runner.getStatus()).resolves.toMatchObject({
+      cliInstalled: true,
+      loggedIn: true,
+      ready: true,
+      authProvider: 'ChatGPT',
+    })
+
+    expect(readdir).toHaveBeenCalledWith('C:\\Users\\edwar\\.vscode\\extensions')
+    expect(runCommand).toHaveBeenNthCalledWith(2, latestBundledCommand, ['--version'])
   })
 
   it('returns verification required when login provider is not ChatGPT', async () => {
@@ -34,13 +114,11 @@ describe('createCodexRunner', () => {
   })
 
   it('executes codex with the required safety flags in an empty temp directory', async () => {
-    const runCommand = vi
-      .fn()
-      .mockResolvedValue({
-        stdout: '',
-        stderr: '',
-        exitCode: 0,
-      })
+    const runCommand = vi.fn().mockResolvedValue({
+      stdout: 'codex-cli 0.118.0',
+      stderr: '',
+      exitCode: 0,
+    })
     const runStreamingCommand = vi.fn().mockImplementation(
       async (_command, _args, options?: { onStdoutLine?: (line: string) => void }) => {
         options?.onStdoutLine?.(
@@ -89,8 +167,69 @@ describe('createCodexRunner', () => {
     })
   })
 
+  it('uses the resolved fallback codex command when streaming execution', async () => {
+    const fallbackCommand = 'C:\\Users\\edwar\\AppData\\Roaming\\npm\\codex.cmd'
+    const runCommand = vi.fn().mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'codex') {
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      }
+
+      if (command === fallbackCommand && args[0] === '--version') {
+        return { stdout: 'codex-cli 0.118.0', stderr: '', exitCode: 0 }
+      }
+
+      throw new Error(`Unexpected command: ${command} ${args.join(' ')}`)
+    })
+    const runStreamingCommand = vi.fn().mockImplementation(
+      async (_command, _args, options?: { onStdoutLine?: (line: string) => void }) => {
+        options?.onStdoutLine?.(
+          JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'agent_message',
+              text: 'ok',
+            },
+          }),
+        )
+
+        return {
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+        }
+      },
+    )
+    const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
+    const rm = vi.fn().mockResolvedValue(undefined)
+    const runner = createCodexRunner({
+      runCommand,
+      runStreamingCommand,
+      mkdtemp,
+      rm,
+      platform: 'win32',
+      env: {
+        APPDATA: 'C:\\Users\\edwar\\AppData\\Roaming',
+      },
+      readdir: vi.fn().mockRejectedValue(new Error('no vscode extensions')),
+    })
+
+    await expect(runner.executeMessage('prompt text')).resolves.toBe('ok')
+
+    expect(runStreamingCommand).toHaveBeenCalledWith(
+      fallbackCommand,
+      expect.arrayContaining(['exec', '--sandbox', 'read-only', '--json']),
+      expect.objectContaining({
+        cwd: 'C:\\temp\\brainflow-codex-test',
+      }),
+    )
+  })
+
   it('forwards jsonl events while collecting the final assistant message', async () => {
-    const runCommand = vi.fn()
+    const runCommand = vi.fn().mockResolvedValue({
+      stdout: 'codex-cli 0.118.0',
+      stderr: '',
+      exitCode: 0,
+    })
     const runStreamingCommand = vi.fn().mockImplementation(
       async (_command, _args, options?: { onStdoutLine?: (line: string) => void }) => {
         options?.onStdoutLine?.(
@@ -119,8 +258,9 @@ describe('createCodexRunner', () => {
       },
     )
     const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
+    const writeFile = vi.fn().mockResolvedValue(undefined)
     const rm = vi.fn().mockResolvedValue(undefined)
-    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, rm })
+    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, writeFile, rm })
     const onEvent = vi.fn()
 
     const result = await runner.executeMessage('prompt text', { onEvent })
@@ -136,7 +276,11 @@ describe('createCodexRunner', () => {
   })
 
   it('maps invalid response schema failures to schema_invalid', async () => {
-    const runCommand = vi.fn()
+    const runCommand = vi.fn().mockResolvedValue({
+      stdout: 'codex-cli 0.118.0',
+      stderr: '',
+      exitCode: 0,
+    })
     const runStreamingCommand = vi.fn().mockImplementation(
       async (_command, _args, options?: { onStdoutLine?: (line: string) => void }) => {
         options?.onStdoutLine?.(
@@ -155,8 +299,9 @@ describe('createCodexRunner', () => {
       },
     )
     const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
+    const writeFile = vi.fn().mockResolvedValue(undefined)
     const rm = vi.fn().mockResolvedValue(undefined)
-    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, rm })
+    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, writeFile, rm })
 
     await expect(runner.execute('prompt text', { type: 'object' })).rejects.toMatchObject({
       issue: expect.objectContaining({

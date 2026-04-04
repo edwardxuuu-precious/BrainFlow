@@ -56,13 +56,14 @@
 
 /* Primary: Gradient fill (primary to primary-container), white text */
 .primary {
-  background: linear-gradient(145deg, var(--primary) 0%, var(--primary-container) 100%);
+  background: var(--primary-600);
   color: var(--on-primary);
-  box-shadow: 0 2px 8px rgba(0, 88, 188, 0.25);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
 }
 
 .primary:hover:not(:disabled) {
-  box-shadow: 0 4px 12px rgba(0, 88, 188, 0.35);
+  background: var(--primary-700);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
 }
 
 /* Secondary: surface-container-highest fill, on-surface text, no border */
@@ -82,18 +83,19 @@
 }
 
 .ghost:hover:not(:disabled) {
-  background: rgba(0, 88, 188, 0.08);
+  background: var(--primary-50);
 }
 
 /* Danger: Red gradient */
 .danger {
-  background: linear-gradient(145deg, #c41e3a 0%, #e63946 100%);
+  background: var(--error-600);
   color: white;
-  box-shadow: 0 2px 8px rgba(198, 30, 58, 0.25);
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.25);
 }
 
 .danger:hover:not(:disabled) {
-  box-shadow: 0 4px 12px rgba(198, 30, 58, 0.35);
+  background: var(--error-700);
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35);
 }
 
 /* Icon Only: square with 6px radius */

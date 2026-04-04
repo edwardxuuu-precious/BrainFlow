@@ -37,12 +37,12 @@ describe('DevSupervisor', () => {
   })
 
   it('builds Windows child commands through cmd.exe instead of pnpm.cmd', () => {
-    const spec = buildChildCommandSpec('win32', 'dev:web', 'C:\\repo', { TEST: '1' })
+    const spec = buildChildCommandSpec('win32', 'dev:web-only', 'C:\\repo', { TEST: '1' })
 
     expect(spec.command).toBe('cmd.exe')
-    expect(spec.args).toEqual(['/d', '/s', '/c', 'pnpm dev:web'])
+    expect(spec.args).toEqual(['/d', '/s', '/c', 'pnpm dev:web-only'])
     expect(spec.options.detached).toBe(false)
-    expect(spec.label).toBe('cmd.exe /d /s /c "pnpm dev:web"')
+    expect(spec.label).toBe('cmd.exe /d /s /c "pnpm dev:web-only"')
   })
 
   it('builds non-Windows child commands directly with pnpm', () => {

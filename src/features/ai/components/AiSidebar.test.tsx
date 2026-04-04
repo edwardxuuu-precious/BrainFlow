@@ -108,11 +108,38 @@ describe('AiSidebar', () => {
       screen.getByText('本机 Codex bridge 无响应，请确认本机 bridge 已启动，并检查 8787 端口服务。'),
     ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重新检查服务' })).toBeInTheDocument()
-    expect(screen.getByText('本机 Codex 服务未连接，请先运行 pnpm dev 或 pnpm dev:server。')).toBeInTheDocument()
+    expect(screen.getByText('本机 Codex 服务未连接，请先运行 pnpm dev 或 pnpm dev:web。')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('当前无法发送，请先启动本机 Codex 服务。')).toBeDisabled()
     expect(
       screen.getByText('完整日志请查看本地启动终端或 bridge 输出，本页不展示原始日志内容。'),
     ).toBeInTheDocument()
+  })
+
+  it('shows dedicated remediation when bridge cannot resolve the codex cli', () => {
+    renderSidebar({
+      status: {
+        ...readyStatus,
+        cliInstalled: false,
+        loggedIn: false,
+        ready: false,
+        authProvider: null,
+        issues: [
+          {
+            code: 'cli_missing',
+            message: 'bridge 未能从 PATH 或常见本机路径解析到 codex CLI。',
+          },
+        ],
+      },
+    })
+
+    expect(
+      screen.getByText('当前 bridge 没有解析到可用的本机 Codex CLI，修复命令解析后才能继续发送。'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新检查 CLI' })).toBeInTheDocument()
+    expect(
+      screen.getByText('当前 bridge 未解析到本机 Codex CLI，请确认安装后重新运行 pnpm dev 或 pnpm dev:server。'),
+    ).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('当前无法发送，请先让 bridge 识别本机 Codex CLI。')).toBeDisabled()
   })
 
   it('shows verification remediation when codex needs verification', () => {
@@ -146,7 +173,7 @@ describe('AiSidebar', () => {
     expect(screen.getByText('已重新检查，本机 Codex 当前可用。')).toBeInTheDocument()
     expect(screen.getByText('最近一次执行失败')).toBeInTheDocument()
     expect(screen.getByText(/这不是登录问题，重新验证不会解决/)).toBeInTheDocument()
-    expect(screen.getByText('本地 AI bridge 格式错误')).toBeInTheDocument()
+    expect(screen.getAllByText('本地 AI bridge 的输出 schema 与当前 Codex CLI 不兼容。')).toHaveLength(2)
   })
 
   it('allows toggling status details while checking without revalidating again', async () => {
@@ -192,5 +219,4 @@ describe('AiSidebar', () => {
 
     expect(props.onSaveSettings).toHaveBeenCalledWith('新的业务 Prompt')
   })
-
 })

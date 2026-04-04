@@ -660,7 +660,7 @@ test('shows service remediation when the local Codex bridge is unavailable', asy
     aiSidebar(page).getByText('当前未连接到本机 Codex 服务，AI 发送能力已暂停。'),
   ).toBeVisible()
   await expect(
-    aiSidebar(page).getByText('本机 Codex 服务未连接，请先运行 pnpm dev 或 pnpm dev:server。'),
+    aiSidebar(page).getByText('本机 Codex 服务未连接，请先运行 pnpm dev 或 pnpm dev:web。'),
   ).toBeVisible()
   await expect(page.getByRole('button', { name: '发送' })).toBeDisabled()
 })

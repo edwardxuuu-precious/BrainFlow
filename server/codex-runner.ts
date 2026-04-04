@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CodexBridgeIssue } from '../shared/ai-contract.js'
@@ -42,6 +42,9 @@ interface CodexRunnerDependencies {
   mkdtemp?: typeof mkdtemp
   writeFile?: typeof writeFile
   rm?: typeof rm
+  readdir?: typeof readdir
+  platform?: NodeJS.Platform
+  env?: NodeJS.ProcessEnv
 }
 
 interface CommandResult {
@@ -56,6 +59,9 @@ class CommandNotFoundError extends Error {
     this.name = 'CommandNotFoundError'
   }
 }
+
+const VSCODE_CODEX_EXTENSION_PREFIX = 'openai.chatgpt-'
+const VSCODE_CODEX_EXTENSION_SUFFIX = '-win32-x64'
 
 async function runCommand(
   command: string,
@@ -162,6 +168,21 @@ async function runStreamingCommand(
   })
 }
 
+function isCommandNotFoundError(error: unknown): boolean {
+  return (
+    error instanceof CommandNotFoundError ||
+    ('code' in Object(error) && (error as { code?: string }).code === 'ENOENT')
+  )
+}
+
+function buildCliMissingIssue(): CodexBridgeIssue {
+  return {
+    code: 'cli_missing',
+    message:
+      'bridge 未能从 PATH 或常见本机路径解析到 codex CLI。请确认本机已安装 Codex CLI，并在安装或更新 PATH 后重新运行 pnpm dev、pnpm dev:web 或 pnpm dev:server。',
+  }
+}
+
 function normalizeStatusIssues(output: string, authProvider: string | null): CodexBridgeIssue[] {
   const text = output.toLowerCase()
 
@@ -173,7 +194,8 @@ function normalizeStatusIssues(output: string, authProvider: string | null): Cod
     return [
       {
         code: 'verification_required',
-        message: '当前 Codex 需要使用 ChatGPT 订阅账号重新验证，请尽快重新运行 codex login --device-auth。',
+        message:
+          '当前 Codex 需要使用 ChatGPT 订阅账号重新验证，请尽快重新运行 codex login --device-auth。',
       },
     ]
   }
@@ -200,7 +222,12 @@ function parseAuthProvider(output: string): string | null {
   return match?.[1]?.trim() ?? null
 }
 
-function normalizeExecutionError(message: string): CodexBridgeIssue {
+function normalizeExecutionError(error: unknown): CodexBridgeIssue {
+  if (isCommandNotFoundError(error)) {
+    return buildCliMissingIssue()
+  }
+
+  const message = error instanceof Error ? error.message : String(error)
   const text = message.toLowerCase()
 
   if (
@@ -212,7 +239,8 @@ function normalizeExecutionError(message: string): CodexBridgeIssue {
   ) {
     return {
       code: 'schema_invalid',
-      message: '本地 AI bridge 的输出 schema 与当前 Codex CLI 不兼容。这不是登录问题，重新验证不会解决，请修复应用端格式后再试。',
+      message:
+        '本地 AI bridge 的输出 schema 与当前 Codex CLI 不兼容。这不是登录问题，重新验证不会解决，请修复应用端格式后再试。',
     }
   }
 
@@ -264,8 +292,117 @@ function extractFinalText(event: CodexJsonEvent): string | null {
   return null
 }
 
+function parseVsCodeCodexExtensionVersion(entryName: string): number[] | null {
+  if (
+    !entryName.startsWith(VSCODE_CODEX_EXTENSION_PREFIX) ||
+    !entryName.endsWith(VSCODE_CODEX_EXTENSION_SUFFIX)
+  ) {
+    return null
+  }
+
+  const versionText = entryName.slice(
+    VSCODE_CODEX_EXTENSION_PREFIX.length,
+    entryName.length - VSCODE_CODEX_EXTENSION_SUFFIX.length,
+  )
+
+  if (!/^\d+(?:\.\d+)*$/.test(versionText)) {
+    return null
+  }
+
+  return versionText.split('.').map((segment) => Number(segment))
+}
+
+function compareVsCodeCodexExtensionEntries(a: string, b: string): number {
+  const versionA = parseVsCodeCodexExtensionVersion(a)
+  const versionB = parseVsCodeCodexExtensionVersion(b)
+
+  if (versionA && versionB) {
+    const length = Math.max(versionA.length, versionB.length)
+    for (let index = 0; index < length; index += 1) {
+      const difference = (versionB[index] ?? 0) - (versionA[index] ?? 0)
+      if (difference !== 0) {
+        return difference
+      }
+    }
+  } else if (versionA) {
+    return -1
+  } else if (versionB) {
+    return 1
+  }
+
+  return b.localeCompare(a)
+}
+
+async function listWindowsCodexFallbackCommands(
+  readDirectory: typeof readdir,
+  env: NodeJS.ProcessEnv,
+): Promise<string[]> {
+  const commands = new Set<string>()
+
+  if (env.APPDATA) {
+    commands.add(join(env.APPDATA, 'npm', 'codex.cmd'))
+    commands.add(join(env.APPDATA, 'npm', 'codex'))
+  }
+
+  if (env.USERPROFILE) {
+    const vscodeExtensionRoot = join(env.USERPROFILE, '.vscode', 'extensions')
+
+    try {
+      const extensionEntries = await readDirectory(vscodeExtensionRoot)
+      const matchingEntries = extensionEntries
+        .filter((entryName) => parseVsCodeCodexExtensionVersion(entryName) !== null)
+        .sort(compareVsCodeCodexExtensionEntries)
+
+      for (const entryName of matchingEntries) {
+        commands.add(join(vscodeExtensionRoot, entryName, 'bin', 'windows-x86_64', 'codex.exe'))
+      }
+    } catch {
+      return Array.from(commands)
+    }
+  }
+
+  return Array.from(commands)
+}
+
+async function resolveCodexCommand(
+  executeCommand: typeof runCommand,
+  options: {
+    platform: NodeJS.Platform
+    env: NodeJS.ProcessEnv
+    readDirectory: typeof readdir
+  },
+): Promise<string> {
+  try {
+    await executeCommand('codex', ['--version'])
+    return 'codex'
+  } catch (error) {
+    if (!isCommandNotFoundError(error)) {
+      throw error
+    }
+  }
+
+  if (options.platform !== 'win32') {
+    throw new CommandNotFoundError('codex')
+  }
+
+  const fallbackCommands = await listWindowsCodexFallbackCommands(options.readDirectory, options.env)
+  for (const fallbackCommand of fallbackCommands) {
+    try {
+      await executeCommand(fallbackCommand, ['--version'])
+      return fallbackCommand
+    } catch (error) {
+      if (!isCommandNotFoundError(error)) {
+        throw error
+      }
+    }
+  }
+
+  throw new CommandNotFoundError('codex')
+}
+
 async function executeCodexJsonCommand(
   executeStreamingCommand: typeof runStreamingCommand,
+  codexCommand: string,
   prompt: string,
   options: {
     cwd: string
@@ -291,7 +428,7 @@ async function executeCodexJsonCommand(
 
   args.push(prompt)
 
-  const result = await executeStreamingCommand('codex', args, {
+  const result = await executeStreamingCommand(codexCommand, args, {
     cwd: options.cwd,
     onStdoutLine: (line) => {
       const event = parseJsonEvent(line)
@@ -334,82 +471,96 @@ export function createCodexRunner(dependencies?: CodexRunnerDependencies): Codex
   const makeTempDirectory = dependencies?.mkdtemp ?? mkdtemp
   const writeTempFile = dependencies?.writeFile ?? writeFile
   const removeDirectory = dependencies?.rm ?? rm
+  const readDirectory = dependencies?.readdir ?? readdir
+  const platform = dependencies?.platform ?? process.platform
+  const env = dependencies?.env ?? process.env
 
   return {
     async getStatus() {
       try {
-        await executeCommand('codex', ['--version'])
+        const codexCommand = await resolveCodexCommand(executeCommand, {
+          platform,
+          env,
+          readDirectory,
+        })
+        const status = await executeCommand(codexCommand, ['login', 'status'])
+        const output = `${status.stdout}\n${status.stderr}`.trim()
+        const authProvider = parseAuthProvider(output)
+        const issues = normalizeStatusIssues(output, authProvider)
+
+        return {
+          cliInstalled: true,
+          loggedIn: authProvider === 'ChatGPT',
+          authProvider,
+          ready: status.exitCode === 0 && authProvider === 'ChatGPT' && issues.length === 0,
+          issues,
+        }
       } catch (error) {
-        if (
-          error instanceof CommandNotFoundError ||
-          ('code' in Object(error) && (error as { code?: string }).code === 'ENOENT')
-        ) {
+        if (isCommandNotFoundError(error)) {
           return {
             cliInstalled: false,
             loggedIn: false,
             authProvider: null,
             ready: false,
-            issues: [
-              {
-                code: 'cli_missing',
-                message: '未检测到本机 codex CLI，请先安装或修复 codex 命令。',
-              },
-            ],
+            issues: [buildCliMissingIssue()],
           }
         }
 
         throw error
       }
-
-      const status = await executeCommand('codex', ['login', 'status'])
-      const output = `${status.stdout}\n${status.stderr}`.trim()
-      const authProvider = parseAuthProvider(output)
-      const issues = normalizeStatusIssues(output, authProvider)
-
-      return {
-        cliInstalled: true,
-        loggedIn: authProvider === 'ChatGPT',
-        authProvider,
-        ready: status.exitCode === 0 && authProvider === 'ChatGPT' && issues.length === 0,
-        issues,
-      }
     },
 
     async execute(prompt, schema) {
-      const workingDirectory = await makeTempDirectory(join(tmpdir(), 'brainflow-codex-'))
-      const schemaPath = join(workingDirectory, 'output-schema.json')
+      let workingDirectory: string | null = null
 
       try {
+        const codexCommand = await resolveCodexCommand(executeCommand, {
+          platform,
+          env,
+          readDirectory,
+        })
+        workingDirectory = await makeTempDirectory(join(tmpdir(), 'brainflow-codex-'))
+        const schemaPath = join(workingDirectory, 'output-schema.json')
         await writeTempFile(schemaPath, JSON.stringify(schema), 'utf8')
-        return await executeCodexJsonCommand(executeStreamingCommand, prompt, {
+        return await executeCodexJsonCommand(executeStreamingCommand, codexCommand, prompt, {
           cwd: workingDirectory,
           schemaPath,
         })
       } catch (error) {
-        const issue = normalizeExecutionError(error instanceof Error ? error.message : String(error))
+        const issue = normalizeExecutionError(error)
         throw Object.assign(new Error(issue.message), {
           issue,
         })
       } finally {
-        await removeDirectory(workingDirectory, { recursive: true, force: true })
+        if (workingDirectory) {
+          await removeDirectory(workingDirectory, { recursive: true, force: true })
+        }
       }
     },
 
     async executeMessage(prompt, options) {
-      const workingDirectory = await makeTempDirectory(join(tmpdir(), 'brainflow-codex-'))
+      let workingDirectory: string | null = null
 
       try {
-        return await executeCodexJsonCommand(executeStreamingCommand, prompt, {
+        const codexCommand = await resolveCodexCommand(executeCommand, {
+          platform,
+          env,
+          readDirectory,
+        })
+        workingDirectory = await makeTempDirectory(join(tmpdir(), 'brainflow-codex-'))
+        return await executeCodexJsonCommand(executeStreamingCommand, codexCommand, prompt, {
           cwd: workingDirectory,
           onEvent: options?.onEvent,
         })
       } catch (error) {
-        const issue = normalizeExecutionError(error instanceof Error ? error.message : String(error))
+        const issue = normalizeExecutionError(error)
         throw Object.assign(new Error(issue.message), {
           issue,
         })
       } finally {
-        await removeDirectory(workingDirectory, { recursive: true, force: true })
+        if (workingDirectory) {
+          await removeDirectory(workingDirectory, { recursive: true, force: true })
+        }
       }
     },
   }
