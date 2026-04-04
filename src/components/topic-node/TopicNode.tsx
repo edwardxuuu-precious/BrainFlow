@@ -149,6 +149,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                 ) : null}
               </span>
             ) : null}
+            {isLocked ? <span className={styles.lockedLabel}>已锁定</span> : null}
             {topicType === 'milestone' ? (
               <span
                 className={classNames(styles.statusIcon, styles.milestoneIcon)}
