@@ -65,11 +65,11 @@ export function MarkersPanel({
           {onCollapse ? (
             <IconButton
               label="隐藏右侧栏"
-              icon="back"
-              tone="secondary"
+              icon="chevronRight"
+              tone="ghost"
               size="sm"
-              aria-controls={id}
               className={styles.collapseButton}
+              aria-controls={id}
               onClick={onCollapse}
             />
           ) : null}

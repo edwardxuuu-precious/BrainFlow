@@ -1,6 +1,13 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
-import type { AiChatRequest, AiRunStage, AiStreamEvent, CodexApiError } from '../shared/ai-contract.js'
+import type {
+  AiChatRequest,
+  AiRunStage,
+  AiStreamEvent,
+  CodexApiError,
+  MarkdownImportRequest,
+  MarkdownImportStreamEvent,
+} from '../shared/ai-contract.js'
 import {
   createCodexBridge,
   CodexBridgeError,
@@ -31,6 +38,33 @@ function validateChatRequest(payload: unknown): AiChatRequest {
   }
 
   return request as AiChatRequest
+}
+
+function validateImportRequest(payload: unknown): MarkdownImportRequest {
+  if (!payload || typeof payload !== 'object') {
+    throw new CodexBridgeError('invalid_request', '无效的 Markdown 导入请求体。')
+  }
+
+  const request = payload as Partial<MarkdownImportRequest>
+  if (
+    typeof request.documentId !== 'string' ||
+    typeof request.documentTitle !== 'string' ||
+    typeof request.fileName !== 'string' ||
+    typeof request.markdown !== 'string' ||
+    typeof request.baseDocumentUpdatedAt !== 'number'
+  ) {
+    throw new CodexBridgeError('invalid_request', 'Markdown 导入请求缺少必要字段。')
+  }
+
+  if (!request.context || typeof request.context !== 'object') {
+    throw new CodexBridgeError('invalid_request', 'Markdown 导入请求缺少脑图上下文。')
+  }
+
+  if (!Array.isArray(request.preprocessedTree)) {
+    throw new CodexBridgeError('invalid_request', 'Markdown 导入请求缺少预处理结构。')
+  }
+
+  return request as MarkdownImportRequest
 }
 
 function validateSettingsPayload(payload: unknown): { businessPrompt: string } {
@@ -112,6 +146,21 @@ function emitErrorEvent(
   })
 }
 
+function emitImportErrorEvent(
+  emit: (event: MarkdownImportStreamEvent) => void,
+  error: unknown,
+  stage?: 'parsing_markdown' | 'analyzing_import' | 'resolving_conflicts' | 'building_preview',
+): void {
+  const apiError = toApiError(error)
+  emit({
+    type: 'error',
+    stage,
+    code: apiError.code,
+    message: apiError.message,
+    issues: apiError.issues,
+  })
+}
+
 function createNdjsonResponse(
   handler: (emit: (event: AiStreamEvent) => void) => Promise<void>,
 ): Response {
@@ -121,6 +170,42 @@ function createNdjsonResponse(
     new ReadableStream({
       async start(controller) {
         const emit = (event: AiStreamEvent) => {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
+        }
+
+        try {
+          await handler(emit)
+        } catch (error) {
+          const apiError = toApiError(error)
+          emit({
+            type: 'error',
+            code: apiError.code,
+            message: apiError.message,
+            issues: apiError.issues,
+          })
+        } finally {
+          controller.close()
+        }
+      },
+    }),
+    {
+      headers: {
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Cache-Control': 'no-store',
+      },
+    },
+  )
+}
+
+function createImportNdjsonResponse(
+  handler: (emit: (event: MarkdownImportStreamEvent) => void) => Promise<void>,
+): Response {
+  const encoder = new TextEncoder()
+
+  return new Response(
+    new ReadableStream({
+      async start(controller) {
+        const emit = (event: MarkdownImportStreamEvent) => {
           controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
         }
 
@@ -269,6 +354,43 @@ export function createApp(options?: CreateAppOptions) {
         })
       } catch (error) {
         emitErrorEvent(emit, error, 'planning_changes')
+      }
+    })
+  })
+
+  app.post('/api/codex/import/preview', async (c) => {
+    const request = validateImportRequest(await c.req.json().catch(() => null))
+
+    return createImportNdjsonResponse(async (emit) => {
+      emit({
+        type: 'status',
+        stage: 'parsing_markdown',
+        message: '正在检查 Markdown 预处理结果…',
+      })
+      emit({
+        type: 'status',
+        stage: 'analyzing_import',
+        message: '正在结合整张脑图进行语义识别与去重…',
+      })
+
+      try {
+        const result = await bridge.previewMarkdownImport(request)
+        emit({
+          type: 'status',
+          stage: 'resolving_conflicts',
+          message: '正在整理冲突与风险分级…',
+        })
+        emit({
+          type: 'status',
+          stage: 'building_preview',
+          message: '正在生成可审阅的导入预览…',
+        })
+        emit({
+          type: 'result',
+          data: result,
+        })
+      } catch (error) {
+        emitImportErrorEvent(emit, error, 'building_preview')
       }
     })
   })

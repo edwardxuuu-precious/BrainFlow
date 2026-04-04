@@ -204,19 +204,23 @@ export function HierarchySidebar({
     <aside id={id} className={classNames(styles.sidebar, className)} data-mode={mode}>
       <div className={styles.header}>
         <div className={styles.chrome}>
+          <div className={styles.titleBlock}>
+            <span className={styles.label}>目录</span>
+            <h2 className={styles.title}>{document.title}</h2>
+          </div>
           {onCollapse ? (
             <IconButton
-              label="隐藏左侧栏"
-              icon="back"
-              tone="secondary"
+              label="隐藏右侧栏"
+              icon="chevronRight"
+              tone="ghost"
               size="sm"
               className={styles.collapseButton}
+              aria-controls={id}
               onClick={onCollapse}
             />
           ) : null}
-          <h2 className={styles.title}>{document.title}</h2>
         </div>
-        <p className={styles.subtitle}>轻量导航负责定位主题，不承载额外编辑逻辑。</p>
+        <p className={styles.subtitle}>在这里浏览主题层级，点击任意节点后会同步定位右侧内容与画布选区。</p>
       </div>
 
       <nav className={styles.tree} aria-label="主题层级">

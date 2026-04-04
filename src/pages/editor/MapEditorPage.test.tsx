@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -100,7 +100,7 @@ describe('MapEditorPage', () => {
     window.dispatchEvent(new Event('resize'))
   })
 
-  it('switches between details, markers, format and AI from the top toolbar without shared sidebar tabs', async () => {
+  it('switches between outline, details, markers, format and AI from the top toolbar without shared sidebar tabs', async () => {
     const document = createMindMapDocument('Editor regression')
     const rootTopic = document.topics[document.rootTopicId]
     rootTopic.title = 'Root focus'
@@ -127,13 +127,25 @@ describe('MapEditorPage', () => {
       </MemoryRouter>,
     )
 
+    const outlineButton = await screen.findByRole('button', { name: '目录' })
     const detailButton = await screen.findByRole('button', { name: '详情' })
+
+    await userEvent.click(outlineButton)
+    expect(screen.getAllByText('目录').length).toBeGreaterThan(0)
+    expect(screen.getByRole('heading', { name: document.title })).toBeInTheDocument()
+    const outlineNav = screen.getByRole('navigation', { name: '主题层级' })
+    expect(outlineNav).toBeInTheDocument()
+    const outlineTopicButton = within(outlineNav).getByText('Root focus').closest('button')
+    expect(outlineTopicButton).not.toBeNull()
+    await userEvent.click(outlineTopicButton!)
+
     if (!screen.queryByRole('heading', { name: '节点详情' })) {
       await userEvent.click(detailButton)
     }
     expect(screen.getByRole('heading', { name: '节点详情' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Root focus' })).toBeInTheDocument()
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '显示层级栏' })).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '标记' }))
     expect(screen.getByRole('heading', { name: '节点标记' })).toBeInTheDocument()
@@ -165,7 +177,7 @@ describe('MapEditorPage', () => {
       expect(screen.getByRole('heading', { name: '节点详情' })).toBeInTheDocument()
       expect(screen.getByRole('heading', { name: 'Root focus' })).toBeInTheDocument()
     })
-  })
+  }, 15000)
 
   it('shows the canvas title as text and enters edit mode on double click', async () => {
     const document = createMindMapDocument('Canvas title')

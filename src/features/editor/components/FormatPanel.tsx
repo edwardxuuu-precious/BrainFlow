@@ -186,11 +186,11 @@ export function FormatPanel({
           {onCollapse ? (
             <IconButton
               label="隐藏右侧栏"
-              icon="back"
-              tone="secondary"
+              icon="chevronRight"
+              tone="ghost"
               size="sm"
-              aria-controls={id}
               className={baseStyles.collapseButton}
+              aria-controls={id}
               onClick={onCollapse}
             />
           ) : null}

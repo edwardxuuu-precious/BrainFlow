@@ -112,12 +112,12 @@ export function PropertiesPanel({
   onNoteChange,
   onMetadataChange,
   onToggleAiLock,
+  onCollapse,
   id,
   className,
   mode = 'docked',
   onLockSelected,
   onUnlockSelected,
-  onCollapse,
 }: PropertiesPanelProps) {
   const titleInputRef = useRef<HTMLInputElement>(null)
   const skipBlurActionRef = useRef(false)
@@ -205,11 +205,11 @@ export function PropertiesPanel({
           {onCollapse ? (
             <IconButton
               label="隐藏右侧栏"
-              icon="back"
-              tone="secondary"
+              icon="chevronRight"
+              tone="ghost"
               size="sm"
-              aria-controls={id}
               className={styles.collapseButton}
+              aria-controls={id}
               onClick={onCollapse}
             />
           ) : null}

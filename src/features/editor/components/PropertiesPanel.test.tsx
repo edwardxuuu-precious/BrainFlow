@@ -38,7 +38,6 @@ function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>
         onToggleAiLock={vi.fn()}
         onLockSelected={vi.fn()}
         onUnlockSelected={vi.fn()}
-        onCollapse={vi.fn()}
         {...overrides}
       />,
     ),
@@ -46,18 +45,12 @@ function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>
 }
 
 describe('PropertiesPanel', () => {
-  it('renders the detail chrome and the collapse control', async () => {
-    const onCollapse = vi.fn()
-    renderPanel({ onCollapse })
+  it('renders the detail chrome', () => {
+    renderPanel()
 
-    const collapseButton = screen.getByRole('button', { name: '隐藏右侧栏' })
-    expect(collapseButton).toHaveAttribute('aria-controls', 'inspector-sidebar')
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
     expect(screen.getByText('详情')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '节点详情' })).toBeInTheDocument()
-
-    await userEvent.click(collapseButton)
-    expect(onCollapse).toHaveBeenCalledTimes(1)
   })
 
   it('shows the selected topic heading and note field by default', async () => {

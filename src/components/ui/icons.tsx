@@ -109,7 +109,16 @@ const iconDefinitions: Record<IconName, IconDefinition> = {
       </>
     ),
   },
-  palette: { paths: ['M12 2a10 10 0 1 0 0 20c1.5 0 2-1 2-2v-2c0-1-.5-2-2-2h-2c-.5 0-1-.5-1-1V8c0-3 3-6 3-6z', 'M6 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4z', 'M17 12a2 2 0 1 0 0 4 2 2 0 0 0 0-4z'] },
+  palette: {
+    render: () => (
+      <>
+        <path d="M12 2a10 10 0 1 0 0 20c1.5 0 2-1 2-2v-2c0-1-.5-2-2-2h-2c-.5 0-1-.5-1-1V8c0-3 3-6 3-6z" />
+        <circle cx="7" cy="9.5" r="1.5" fill="currentColor" stroke="none" fillOpacity="0.86" />
+        <circle cx="10.5" cy="6.5" r="1.25" fill="currentColor" stroke="none" fillOpacity="0.72" />
+        <circle cx="16.5" cy="13.5" r="1.5" fill="currentColor" stroke="none" fillOpacity="0.86" />
+      </>
+    ),
+  },
   question: { paths: ['M9.1 9a3 3 0 1 1 5.8 1c0 2-3 2-3 4', 'M12 17h.01', 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z'] },
   redo: { paths: ['M17 6v6h-6', 'M16.5 9a7.5 7.5 0 1 0-4.2 6.8'] },
   restore: { paths: ['M12 4v4l3-3', 'M12 8 9 5', 'M7 10a6 6 0 1 0 2-2'] },
@@ -120,7 +129,14 @@ const iconDefinitions: Record<IconName, IconDefinition> = {
   sparkles: { paths: ['M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3'] },
   star: { paths: ['M12 2l3 6h6l-5 4 2 6-6-4-6 4 2-6-5-4h6l3-6z'] },
   storage: { paths: ['M5 6c0-1.1 3.1-2 7-2s7 .9 7 2-3.1 2-7 2-7-.9-7-2Z', 'M5 6v6c0 1.1 3.1 2 7 2s7-.9 7-2V6', 'M5 12v6c0 1.1 3.1 2 7 2s7-.9 7-2v-6'] },
-  tag: { paths: ['M12.5 2.5h-7a2 2 0 0 0-2 2v7l7.5 7.5 7.5-7.5v-7a2 2 0 0 0-2-2z'] },
+  tag: {
+    render: () => (
+      <>
+        <path d="M12.5 2.5h-7a2 2 0 0 0-2 2v7l7.5 7.5 7.5-7.5v-7a2 2 0 0 0-2-2z" />
+        <circle cx="7.75" cy="7.25" r="1.15" fill="currentColor" stroke="none" fillOpacity="0.86" />
+      </>
+    ),
+  },
   tree: { paths: ['M7 6h4v4H7z', 'M13 14h4v4h-4z', 'M7 14h4v4H7z', 'M11 8h3v3', 'M14 11v3', 'M14 11H9v3'] },
   undo: { paths: ['M7 6v6h6', 'M7.5 9a7.5 7.5 0 1 1 4.2 6.8'] },
   unlock: { paths: ['M7 11h10v9H7z', 'M9 11V8a3 3 0 1 1 5.5 1.5'] },

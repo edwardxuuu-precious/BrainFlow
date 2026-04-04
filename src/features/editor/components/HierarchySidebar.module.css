@@ -8,7 +8,7 @@
 }
 
 .sidebar[data-mode='docked'] {
-  border-right: 1px solid var(--divider);
+  border-left: 1px solid var(--divider);
 }
 
 /* Header */
@@ -21,9 +21,26 @@
 
 .chrome {
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 12px;
+}
+
+.titleBlock {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.label {
+  font-size: var(--font-size-label);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--on-surface-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .collapseButton {

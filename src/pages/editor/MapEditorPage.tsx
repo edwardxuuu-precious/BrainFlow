@@ -5,7 +5,15 @@ import {
   type ReactFlowInstance,
   useNodesState,
 } from '@xyflow/react'
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type ChangeEvent,
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopicNode } from '../../components/topic-node/TopicNode'
 import { Icon, IconButton, ToolbarGroup } from '../../components/ui'
@@ -26,7 +34,8 @@ import type {
 import { FormatPanel } from '../../features/editor/components/FormatPanel'
 import { HierarchySidebar } from '../../features/editor/components/HierarchySidebar'
 import { MarkersPanel } from '../../features/editor/components/MarkersPanel'
-
+import { MarkdownImportDialog } from '../../features/import/components/MarkdownImportDialog'
+import { useMarkdownImportStore } from '../../features/import/markdown-import-store'
 import { PropertiesPanel } from '../../features/editor/components/PropertiesPanel'
 import { SidebarRail } from '../../features/editor/components/SidebarRail'
 import { getEditorSnapshot, useEditorStore } from '../../features/editor/editor-store'
@@ -43,7 +52,6 @@ interface MapEditorPageProps {
 const SAVE_DEBOUNCE_MS = 320
 const DESKTOP_BREAKPOINT = 1200
 const TABLET_BREAKPOINT = 780
-const HIERARCHY_SIDEBAR_ID = 'editor-hierarchy-sidebar'
 const RIGHT_SIDEBAR_ID = 'editor-right-sidebar'
 const nodeTypes = { topic: TopicNode }
 
@@ -59,7 +67,7 @@ interface RenameDraft {
 }
 
 type ViewportMode = 'desktop' | 'tablet' | 'mobile'
-type RightPanelMode = 'details' | 'markers' | 'format' | 'ai'
+type RightPanelMode = 'outline' | 'details' | 'markers' | 'format' | 'ai'
 type MarkerSubtab = 'markers' | 'stickers'
 type FormatSubtab = 'topic' | 'canvas'
 
@@ -153,6 +161,7 @@ function collectSubtreeIds(document: MindMapDocument, topicId: string) {
 export function MapEditorPage({ service = documentService }: MapEditorPageProps) {
   const navigate = useNavigate()
   const { documentId } = useParams()
+  const markdownImportInputRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const reactFlowRef = useRef<ReactFlowInstance<MindMapFlowNode> | null>(null)
   const initializedViewportRef = useRef<string | null>(null)
@@ -255,6 +264,24 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const aiSaveSettings = useAiStore((state) => state.saveSettings)
   const aiResetSettings = useAiStore((state) => state.resetSettings)
   const aiUndoLastAppliedChange = useAiStore((state) => state.undoLastAppliedChange)
+  const markdownImportOpen = useMarkdownImportStore((state) => state.open)
+  const markdownImportClose = useMarkdownImportStore((state) => state.close)
+  const markdownImportPreviewFile = useMarkdownImportStore((state) => state.previewFile)
+  const markdownImportToggleConflictApproval = useMarkdownImportStore(
+    (state) => state.toggleConflictApproval,
+  )
+  const markdownImportApplyPreview = useMarkdownImportStore((state) => state.applyPreview)
+  const markdownImportIsOpen = useMarkdownImportStore((state) => state.isOpen)
+  const markdownImportFileName = useMarkdownImportStore((state) => state.sourceFileName)
+  const markdownImportPreprocessedTree = useMarkdownImportStore((state) => state.preprocessedTree)
+  const markdownImportPreview = useMarkdownImportStore((state) => state.preview)
+  const markdownImportApprovedConflictIds = useMarkdownImportStore(
+    (state) => state.approvedConflictIds,
+  )
+  const markdownImportStatusText = useMarkdownImportStore((state) => state.statusText)
+  const markdownImportError = useMarkdownImportStore((state) => state.error)
+  const markdownImportIsPreviewing = useMarkdownImportStore((state) => state.isPreviewing)
+  const markdownImportIsApplying = useMarkdownImportStore((state) => state.isApplying)
 
   useEditorShortcuts()
 
@@ -286,14 +313,12 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     const visiblePath = new Set(getTopicAncestorIds(document, activeTopicId))
     return hierarchyCollapsedTopicIds.filter((topicId) => !visiblePath.has(topicId))
   }, [activeTopicId, document])
-  const leftSidebarOpen = chrome?.leftSidebarOpen ?? true
   const rightSidebarOpen = chrome?.rightSidebarOpen ?? true
   const isDesktop = viewportMode === 'desktop'
   const isTablet = viewportMode === 'tablet'
   const isMobile = viewportMode === 'mobile'
-  const isLeftDrawerOpen = isTablet && leftSidebarOpen && !rightSidebarOpen
-  const isRightDrawerOpen = isTablet && rightSidebarOpen && !leftSidebarOpen
-  const isAnyDrawerOpen = isLeftDrawerOpen || isRightDrawerOpen
+  const isRightDrawerOpen = isTablet && rightSidebarOpen
+  const isAnyDrawerOpen = isRightDrawerOpen
   const isInspectorEditing =
     editingSurface === 'inspector' && editingTopicId === activeTopicId && !!activeTopicId
   const draftTitle =
@@ -569,10 +594,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         return
       }
 
-      if (isLeftDrawerOpen) {
-        setSidebarOpen('left', false)
-      }
-
       if (isRightDrawerOpen) {
         setSidebarOpen('right', false)
       }
@@ -580,7 +601,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isAnyDrawerOpen, isLeftDrawerOpen, isRightDrawerOpen, isTablet, setSidebarOpen])
+  }, [isAnyDrawerOpen, isRightDrawerOpen, isTablet, setSidebarOpen])
 
   if (!document || !layout) {
     return (
@@ -618,6 +639,41 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     }
   }
 
+  const handleOpenMarkdownImport = () => {
+    markdownImportOpen()
+    markdownImportInputRef.current?.click()
+  }
+
+  const handleMarkdownFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+
+    if (!file || !document) {
+      return
+    }
+
+    await markdownImportPreviewFile(
+      document,
+      {
+        activeTopicId,
+        selectedTopicIds,
+      },
+      file,
+    )
+  }
+
+  const handleApplyMarkdownImport = async () => {
+    const result = markdownImportApplyPreview(document)
+    if (!result) {
+      return
+    }
+
+    useEditorStore
+      .getState()
+      .applyExternalDocument(result.document, result.selectedTopicId ?? activeTopicId)
+    await reactFlowRef.current?.fitView({ padding: 0.24, duration: 180 })
+  }
+
   const handleRenameCommit = () => {
     if (!activeTopicId) {
       stopEditing()
@@ -648,23 +704,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     setIsEditingDocumentTitle(false)
   }
 
-  const openLeftSidebar = () => {
-    if (isTablet) {
-      setSidebarOpen('right', false)
-    }
-
-    setSidebarOpen('left', true)
-  }
-
-  const closeLeftSidebar = () => {
-    setSidebarOpen('left', false)
-  }
-
   const openRightSidebar = () => {
-    if (isTablet) {
-      setSidebarOpen('left', false)
-    }
-
     setSidebarOpen('right', true)
   }
 
@@ -673,10 +713,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   }
 
   const openSidebarMode = (mode: RightPanelMode) => {
-    if (isTablet) {
-      setSidebarOpen('left', false)
-    }
-
     setRightPanelMode(mode)
     setSidebarOpen('right', true)
   }
@@ -754,9 +790,21 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const renderRightSidebar = (
     mode: 'docked' | 'drawer',
     className: string,
-    onCollapse?: () => void,
   ) =>
-    rightPanelMode === 'ai' ? (
+    rightPanelMode === 'outline' ? (
+      <HierarchySidebar
+        id={RIGHT_SIDEBAR_ID}
+        document={document}
+        activeTopicId={activeTopicId}
+        selectedTopicIds={selectedTopicIds}
+        collapsedTopicIds={visibleHierarchyCollapsedTopicIds}
+        className={className}
+        mode={mode}
+        onSelect={handleHierarchySelect}
+        onToggleBranch={toggleHierarchyBranch}
+        onPrimaryAction={() => addChild(activeTopicId ?? document.rootTopicId)}
+      />
+    ) : rightPanelMode === 'ai' ? (
       <AiSidebar
         id={RIGHT_SIDEBAR_ID}
         className={className}
@@ -812,7 +860,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
           void aiDeleteArchivedSession(docId, sessionId)
         }
         resolveTopicTitle={(topicId) => document.topics[topicId]?.title ?? '已删除节点'}
-        onCollapse={onCollapse}
       />
     ) : rightPanelMode === 'markers' ? (
       <MarkersPanel
@@ -824,7 +871,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         onSubtabChange={setMarkerSubtab}
         onToggleMarker={handleToggleMarker}
         onToggleSticker={handleToggleSticker}
-        onCollapse={onCollapse}
       />
     ) : rightPanelMode === 'format' ? (
       <FormatPanel
@@ -842,7 +888,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         onBranchSideChange={(side) => activeTopicId && setBranchSide(activeTopicId, side)}
         onUpdateTheme={updateDocumentTheme}
         onApplyThemePreset={applyDocumentTheme}
-        onCollapse={onCollapse}
       />
     ) : (
       <PropertiesPanel
@@ -858,7 +903,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         draftTitle={draftTitle}
         isInspectorEditing={isInspectorEditing}
         topicOptions={topicOptions}
-        onCollapse={onCollapse}
         onRenameChange={(value) =>
           setRenameDraft({
             topicId: activeTopicId,
@@ -934,6 +978,13 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         </div>
 
         <ToolbarGroup className={styles.topbarRight}>
+          <input
+            ref={markdownImportInputRef}
+            type="file"
+            accept=".md,text/markdown"
+            hidden
+            onChange={(event) => void handleMarkdownFileSelected(event)}
+          />
           <IconButton
             label="撤销"
             icon="undo"
@@ -950,6 +1001,15 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             onClick={redo}
             disabled={future.length === 0}
           />
+          <button
+            type="button"
+            className={styles.topbarToolButton}
+            data-active={rightSidebarOpen && rightPanelMode === 'outline'}
+            onClick={() => handleTopbarModeClick('outline')}
+          >
+            <Icon name="tree" size={16} strokeWidth={1.9} />
+            <span>目录</span>
+          </button>
           <button
             type="button"
             className={styles.topbarToolButton}
@@ -986,6 +1046,9 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             <Icon name="chat" size={16} strokeWidth={1.9} />
             <span>AI</span>
           </button>
+          <button type="button" className={styles.exportButton} onClick={handleOpenMarkdownImport}>
+            导入 Markdown
+          </button>
           <button type="button" className={styles.exportButton} onClick={() => exportDocumentAsJson(document)}>
             导出 JSON
           </button>
@@ -996,68 +1059,13 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
       </header>
 
       <section className={styles.workspace} data-viewport-mode={viewportMode}>
-        {isDesktop ? (
-          leftSidebarOpen ? (
-            <HierarchySidebar
-              id={HIERARCHY_SIDEBAR_ID}
-              document={document}
-              activeTopicId={activeTopicId}
-              selectedTopicIds={selectedTopicIds}
-              collapsedTopicIds={visibleHierarchyCollapsedTopicIds}
-              className={styles.leftSidebar}
-              onSelect={handleHierarchySelect}
-              onToggleBranch={toggleHierarchyBranch}
-              onPrimaryAction={() => addChild(activeTopicId ?? document.rootTopicId)}
-              onCollapse={closeLeftSidebar}
-            />
-          ) : (
-            <SidebarRail
-              side="left"
-              controlsId={HIERARCHY_SIDEBAR_ID}
-              expanded={false}
-              label="显示层级栏"
-              className={styles.leftRail}
-              onToggle={openLeftSidebar}
-            />
-          )
-        ) : null}
-
-        {isTablet ? (
-          <>
-            <SidebarRail
-              side="left"
-              controlsId={HIERARCHY_SIDEBAR_ID}
-              expanded={isLeftDrawerOpen}
-              label="显示层级栏"
-              className={styles.leftRail}
-              onToggle={isLeftDrawerOpen ? closeLeftSidebar : openLeftSidebar}
-            />
-            {isAnyDrawerOpen ? (
-              <button
-                type="button"
-                aria-label="关闭侧边栏遮罩"
-                className={styles.drawerBackdrop}
-                onClick={isLeftDrawerOpen ? closeLeftSidebar : closeRightSidebar}
-              />
-            ) : null}
-            {isLeftDrawerOpen ? (
-              <div className={`${styles.drawerShell} ${styles.leftDrawer}`} data-side="left">
-                <HierarchySidebar
-                  id={HIERARCHY_SIDEBAR_ID}
-                  document={document}
-                  activeTopicId={activeTopicId}
-                  selectedTopicIds={selectedTopicIds}
-                  collapsedTopicIds={visibleHierarchyCollapsedTopicIds}
-                  className={styles.drawerPanel}
-                  mode="drawer"
-                  onSelect={handleHierarchySelect}
-                  onToggleBranch={toggleHierarchyBranch}
-                  onPrimaryAction={() => addChild(activeTopicId ?? document.rootTopicId)}
-                  onCollapse={closeLeftSidebar}
-                />
-              </div>
-            ) : null}
-          </>
+        {isTablet && isAnyDrawerOpen ? (
+          <button
+            type="button"
+            aria-label="关闭侧边栏遮罩"
+            className={styles.drawerBackdrop}
+            onClick={closeRightSidebar}
+          />
         ) : null}
 
         <div className={styles.canvasColumn}>
@@ -1212,7 +1220,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
                 onMouseDown={handleResizeStart}
                 title="拖拽调整宽度"
               />
-              {renderRightSidebar('docked', styles.rightSidebar, closeRightSidebar)}
+              {renderRightSidebar('docked', styles.rightSidebar)}
             </div>
           ) : (
             <SidebarRail
@@ -1230,7 +1238,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
           <>
             {isRightDrawerOpen ? (
               <div className={`${styles.drawerShell} ${styles.rightDrawer}`} data-side="right">
-                {renderRightSidebar('drawer', styles.drawerPanel, closeRightSidebar)}
+                {renderRightSidebar('drawer', styles.drawerPanel)}
               </div>
             ) : null}
             <SidebarRail
@@ -1245,9 +1253,23 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         ) : null}
 
         {isMobile && rightSidebarOpen
-          ? renderRightSidebar('drawer', styles.mobileInspector, closeRightSidebar)
+          ? renderRightSidebar('drawer', styles.mobileInspector)
           : null}
       </section>
+      <MarkdownImportDialog
+        open={markdownImportIsOpen}
+        fileName={markdownImportFileName}
+        preprocessedTree={markdownImportPreprocessedTree}
+        preview={markdownImportPreview}
+        approvedConflictIds={markdownImportApprovedConflictIds}
+        statusText={markdownImportStatusText}
+        error={markdownImportError}
+        isPreviewing={markdownImportIsPreviewing}
+        isApplying={markdownImportIsApplying}
+        onClose={markdownImportClose}
+        onToggleConflict={markdownImportToggleConflictApproval}
+        onApply={() => void handleApplyMarkdownImport()}
+      />
     </main>
   )
 }

@@ -164,10 +164,12 @@
 
 .infoTooltip {
   position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
+  top: 50%;
+  right: calc(100% + 8px);
+  left: auto;
+  transform: translateY(-50%);
   z-index: 100;
-  width: 280px;
+  width: 220px;
   padding: 10px 14px;
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.85);
@@ -186,10 +188,13 @@
 .infoTooltip::before {
   content: '';
   position: absolute;
-  bottom: 100%;
-  left: 7px;
+  left: 100%;
+  right: auto;
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
   border: 6px solid transparent;
-  border-bottom-color: rgba(0, 0, 0, 0.85);
+  border-left-color: rgba(0, 0, 0, 0.85);
 }
 
 .heading {
