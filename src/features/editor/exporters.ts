@@ -1,4 +1,3 @@
-import { toPng } from 'html-to-image'
 import type { MindMapDocument } from '../documents/types'
 
 function sanitizeFileName(name: string): string {
@@ -32,6 +31,8 @@ export async function exportCanvasAsPng(
   doc: MindMapDocument,
   prepare?: () => Promise<void>,
 ): Promise<void> {
+  const { toPng } = await import('html-to-image')
+
   if (prepare) {
     await prepare()
   }
