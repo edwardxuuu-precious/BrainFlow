@@ -55,8 +55,8 @@
   display: inline-flex;
   align-items: center;
   padding: 3px 10px;
-  background: rgba(0, 88, 188, 0.1);
-  color: var(--primary);
+  background: var(--primary-100);
+  color: var(--primary-700);
   font-size: var(--font-size-label);
   font-weight: 500;
   border-radius: 999px;
@@ -85,13 +85,13 @@
 /* Expanded Content */
 .content {
   padding: 0 16px 16px;
-  border-top: 0.5px solid rgba(193, 198, 215, 0.2);
+  border-top: 0.5px solid var(--divider);
 }
 
 /* Full Document Option */
 .option {
   padding: 16px 0;
-  border-bottom: 0.5px solid rgba(193, 198, 215, 0.2);
+  border-bottom: 0.5px solid var(--divider);
 }
 
 .optionButton {
@@ -140,7 +140,7 @@
 /* Selected Topics Section */
 .selectedSection {
   padding: 16px 0;
-  border-bottom: 0.5px solid rgba(193, 198, 215, 0.2);
+  border-bottom: 0.5px solid var(--divider);
 }
 
 .sectionLabel {
@@ -200,7 +200,7 @@
 /* Add Section */
 .addSection {
   padding: 16px 0;
-  border-bottom: 0.5px solid rgba(193, 198, 215, 0.2);
+  border-bottom: 0.5px solid var(--divider);
 }
 
 .addButtons {
@@ -300,7 +300,7 @@
 }
 
 .searchResult:not(:last-child) {
-  border-bottom: 0.5px solid rgba(193, 198, 215, 0.2);
+  border-bottom: 0.5px solid var(--divider);
 }
 
 .noResults {
