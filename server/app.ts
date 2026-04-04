@@ -1,12 +1,12 @@
-import { Hono } from 'hono'
+﻿import { Hono } from 'hono'
 import type { Context } from 'hono'
 import type {
   AiChatRequest,
   AiRunStage,
   AiStreamEvent,
   CodexApiError,
-  MarkdownImportRequest,
-  MarkdownImportStreamEvent,
+  TextImportRequest,
+  TextImportStreamEvent,
 } from '../shared/ai-contract.js'
 import {
   createCodexBridge,
@@ -40,31 +40,32 @@ function validateChatRequest(payload: unknown): AiChatRequest {
   return request as AiChatRequest
 }
 
-function validateImportRequest(payload: unknown): MarkdownImportRequest {
+function validateImportRequest(payload: unknown): TextImportRequest {
   if (!payload || typeof payload !== 'object') {
-    throw new CodexBridgeError('invalid_request', '无效的 Markdown 导入请求体。')
+    throw new CodexBridgeError('invalid_request', '无效的智能导入请求体。')
   }
 
-  const request = payload as Partial<MarkdownImportRequest>
+  const request = payload as Partial<TextImportRequest>
   if (
     typeof request.documentId !== 'string' ||
     typeof request.documentTitle !== 'string' ||
-    typeof request.fileName !== 'string' ||
-    typeof request.markdown !== 'string' ||
+    typeof request.sourceName !== 'string' ||
+    (request.sourceType !== 'file' && request.sourceType !== 'paste') ||
+    typeof request.rawText !== 'string' ||
     typeof request.baseDocumentUpdatedAt !== 'number'
   ) {
-    throw new CodexBridgeError('invalid_request', 'Markdown 导入请求缺少必要字段。')
+    throw new CodexBridgeError('invalid_request', '智能导入请求缺少必要字段。')
   }
 
   if (!request.context || typeof request.context !== 'object') {
-    throw new CodexBridgeError('invalid_request', 'Markdown 导入请求缺少脑图上下文。')
+    throw new CodexBridgeError('invalid_request', '智能导入请求缺少脑图上下文。')
   }
 
-  if (!Array.isArray(request.preprocessedTree)) {
-    throw new CodexBridgeError('invalid_request', 'Markdown 导入请求缺少预处理结构。')
+  if (!Array.isArray(request.preprocessedHints)) {
+    throw new CodexBridgeError('invalid_request', '智能导入请求缺少预处理线索。')
   }
 
-  return request as MarkdownImportRequest
+  return request as TextImportRequest
 }
 
 function validateSettingsPayload(payload: unknown): { businessPrompt: string } {
@@ -110,12 +111,14 @@ function toApiError(error: unknown): CodexApiError {
       code: error.code,
       message: error.message,
       issues: error.issues,
+      rawMessage: error.rawMessage,
     }
   }
 
   return {
     code: 'request_failed',
-    message: error instanceof Error ? error.message : 'Codex 请求失败。',
+      message: error instanceof Error ? error.message : 'Codex 请求失败。',
+      rawMessage: error instanceof Error ? error.message : undefined,
   }
 }
 
@@ -143,13 +146,14 @@ function emitErrorEvent(
     code: apiError.code,
     message: apiError.message,
     issues: apiError.issues,
+    rawMessage: apiError.rawMessage,
   })
 }
 
 function emitImportErrorEvent(
-  emit: (event: MarkdownImportStreamEvent) => void,
+  emit: (event: TextImportStreamEvent) => void,
   error: unknown,
-  stage?: 'parsing_markdown' | 'analyzing_import' | 'resolving_conflicts' | 'building_preview',
+  stage?: 'extracting_input' | 'analyzing_source' | 'resolving_conflicts' | 'building_preview',
 ): void {
   const apiError = toApiError(error)
   emit({
@@ -158,6 +162,7 @@ function emitImportErrorEvent(
     code: apiError.code,
     message: apiError.message,
     issues: apiError.issues,
+    rawMessage: apiError.rawMessage,
   })
 }
 
@@ -182,6 +187,7 @@ function createNdjsonResponse(
             code: apiError.code,
             message: apiError.message,
             issues: apiError.issues,
+            rawMessage: apiError.rawMessage,
           })
         } finally {
           controller.close()
@@ -198,14 +204,14 @@ function createNdjsonResponse(
 }
 
 function createImportNdjsonResponse(
-  handler: (emit: (event: MarkdownImportStreamEvent) => void) => Promise<void>,
+  handler: (emit: (event: TextImportStreamEvent) => void) => Promise<void>,
 ): Response {
   const encoder = new TextEncoder()
 
   return new Response(
     new ReadableStream({
       async start(controller) {
-        const emit = (event: MarkdownImportStreamEvent) => {
+        const emit = (event: TextImportStreamEvent) => {
           controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
         }
 
@@ -218,6 +224,7 @@ function createImportNdjsonResponse(
             code: apiError.code,
             message: apiError.message,
             issues: apiError.issues,
+            rawMessage: apiError.rawMessage,
           })
         } finally {
           controller.close()
@@ -364,17 +371,25 @@ export function createApp(options?: CreateAppOptions) {
     return createImportNdjsonResponse(async (emit) => {
       emit({
         type: 'status',
-        stage: 'parsing_markdown',
-        message: '正在检查 Markdown 预处理结果…',
+        stage: 'extracting_input',
+        message: '正在提取文本线索并准备导入上下文…',
       })
       emit({
         type: 'status',
-        stage: 'analyzing_import',
-        message: '正在结合整张脑图进行语义识别与去重…',
+        stage: 'analyzing_source',
+        message: '正在结合整张脑图进行语义整理、匹配与去重…',
       })
 
       try {
-        const result = await bridge.previewMarkdownImport(request)
+        const result = await bridge.previewTextImport(request, {
+          onStatus: (message) => {
+            emit({
+              type: 'status',
+              stage: 'building_preview',
+              message,
+            })
+          },
+        })
         emit({
           type: 'status',
           stage: 'resolving_conflicts',

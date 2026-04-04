@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   AiImportOperation,
   AiCanvasOperation,
   AiCanvasProposal,
@@ -10,10 +10,10 @@ import type {
   CodexBridgeIssue,
   CodexSettings,
   CodexStatus,
-  MarkdownImportConflict,
-  MarkdownImportPreviewNode,
-  MarkdownImportRequest,
-  MarkdownImportResponse,
+  TextImportConflict,
+  TextImportPreviewItem,
+  TextImportRequest,
+  TextImportResponse,
 } from '../shared/ai-contract.js'
 import {
   createCodexRunner,
@@ -73,19 +73,20 @@ interface RawImportConflict {
   targetTopicIds?: string[] | null
 }
 
-interface RawImportPreviewNode {
+interface RawImportPreviewItem {
   id?: string | null
+  parentId?: string | null
+  order?: number | null
   title?: string | null
   note?: string | null
   relation?: string | null
   matchedTopicId?: string | null
   reason?: string | null
-  children?: RawImportPreviewNode[] | null
 }
 
 interface RawImportPayload {
   summary?: string | null
-  previewTree?: RawImportPreviewNode[] | null
+  previewNodes?: RawImportPreviewItem[] | null
   operations?: RawImportOperation[] | null
   conflicts?: RawImportConflict[] | null
   warnings?: string[] | null
@@ -103,22 +104,26 @@ export interface CodexChatStreamOptions {
 export class CodexBridgeError extends Error {
   code: CodexBridgeIssue['code'] | 'invalid_request'
   issues?: CodexBridgeIssue[]
+  rawMessage?: string
 
   constructor(
     code: CodexBridgeIssue['code'] | 'invalid_request',
     message: string,
     issues?: CodexBridgeIssue[],
+    rawMessage?: string,
   ) {
     super(message)
     this.name = 'CodexBridgeError'
     this.code = code
     this.issues = issues
+    this.rawMessage = rawMessage
   }
 }
 
 const METADATA_PATCH_SCHEMA = {
   type: ['object', 'null'],
   additionalProperties: false,
+  required: ['labels', 'markers', 'task', 'links', 'attachments'],
   properties: {
     labels: {
       type: ['array', 'null'],
@@ -178,6 +183,7 @@ const METADATA_PATCH_SCHEMA = {
 const STYLE_PATCH_SCHEMA = {
   type: ['object', 'null'],
   additionalProperties: false,
+  required: ['emphasis', 'variant', 'background', 'textColor', 'branchColor'],
   properties: {
     emphasis: { type: ['string', 'null'], enum: ['normal', 'focus', null] },
     variant: { type: ['string', 'null'], enum: ['default', 'soft', 'solid', null] },
@@ -213,7 +219,7 @@ const OPERATION_SCHEMA = {
     anchor: { type: ['string', 'null'] },
     target: { type: ['string', 'null'] },
     newParent: { type: ['string', 'null'] },
-    targetIndex: { type: ['integer', 'null'], minimum: 0 },
+    targetIndex: { type: ['integer', 'null'] },
     title: { type: ['string', 'null'] },
     note: { type: ['string', 'null'] },
     resultRef: { type: ['string', 'null'] },
@@ -292,26 +298,24 @@ const IMPORT_OPERATION_SCHEMA = {
 const IMPORT_RESPONSE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['summary', 'previewTree', 'operations', 'conflicts', 'warnings'],
+  required: ['summary', 'previewNodes', 'operations', 'conflicts', 'warnings'],
   properties: {
     summary: { type: ['string', 'null'] },
-    previewTree: {
+    previewNodes: {
       type: ['array', 'null'],
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['id', 'title', 'note', 'relation', 'matchedTopicId', 'reason', 'children'],
+        required: ['id', 'parentId', 'order', 'title', 'note', 'relation', 'matchedTopicId', 'reason'],
         properties: {
           id: { type: ['string', 'null'] },
+          parentId: { type: ['string', 'null'] },
+          order: { type: ['integer', 'null'] },
           title: { type: ['string', 'null'] },
           note: { type: ['string', 'null'] },
           relation: { type: ['string', 'null'], enum: ['new', 'merge', 'conflict', null] },
           matchedTopicId: { type: ['string', 'null'] },
           reason: { type: ['string', 'null'] },
-          children: {
-            type: ['array', 'null'],
-            items: { type: 'object' },
-          },
         },
       },
     },
@@ -728,25 +732,64 @@ function normalizeImportOperation(operation: RawImportOperation): AiImportOperat
   }
 }
 
-function normalizeImportPreviewNode(value: RawImportPreviewNode): MarkdownImportPreviewNode {
+function normalizeImportPreviewItem(value: RawImportPreviewItem): TextImportPreviewItem {
   const title = normalizeText(value.title)
   const relation = normalizeText(value.relation)
-  if (!title || (relation !== 'new' && relation !== 'merge' && relation !== 'conflict')) {
+  const order = typeof value.order === 'number' && Number.isInteger(value.order) ? value.order : null
+  if (
+    !title ||
+    order === null ||
+    (relation !== 'new' && relation !== 'merge' && relation !== 'conflict')
+  ) {
     throw new CodexBridgeError('request_failed', 'Codex 返回了无效的导入预览节点。')
   }
 
   return {
     id: normalizeText(value.id) ?? createImportOperationId(),
+    parentId: normalizeText(value.parentId) ?? null,
+    order,
     title,
-    note: normalizeText(value.note),
+    note: normalizeNote(value.note) ?? null,
     relation,
     matchedTopicId: normalizeText(value.matchedTopicId) ?? null,
-    reason: normalizeText(value.reason),
-    children: (value.children ?? []).map(normalizeImportPreviewNode),
+    reason: normalizeText(value.reason) ?? null,
   }
 }
 
-function normalizeImportConflict(value: RawImportConflict): MarkdownImportConflict {
+function validateImportPreviewItems(items: TextImportPreviewItem[]): TextImportPreviewItem[] {
+  const ids = new Set<string>()
+
+  for (const item of items) {
+    if (ids.has(item.id)) {
+      throw new CodexBridgeError('request_failed', `Codex 返回了重复的导入预览节点 id: ${item.id}`)
+    }
+    ids.add(item.id)
+  }
+
+  for (const item of items) {
+    if (item.parentId && !ids.has(item.parentId)) {
+      throw new CodexBridgeError(
+        'request_failed',
+        `Codex 返回了无效的导入预览父节点引用: ${item.parentId}`,
+      )
+    }
+    if (item.parentId === item.id) {
+      throw new CodexBridgeError('request_failed', `Codex 返回了自引用的导入预览节点: ${item.id}`)
+    }
+  }
+
+  return [...items].sort((left, right) => {
+    if (left.parentId !== right.parentId) {
+      return (left.parentId ?? '').localeCompare(right.parentId ?? '')
+    }
+    if (left.order !== right.order) {
+      return left.order - right.order
+    }
+    return left.id.localeCompare(right.id)
+  })
+}
+
+function normalizeImportConflict(value: RawImportConflict): TextImportConflict {
   const id = normalizeText(value.id)
   const title = normalizeText(value.title)
   const description = normalizeText(value.description)
@@ -777,7 +820,7 @@ function normalizeImportConflict(value: RawImportConflict): MarkdownImportConfli
     id,
     title,
     description,
-    kind: kind as MarkdownImportConflict['kind'],
+    kind: kind as TextImportConflict['kind'],
     operationIds: normalizeStringArray(value.operationIds) ?? [],
     targetTopicIds: normalizeStringArray(value.targetTopicIds) ?? [],
   }
@@ -815,13 +858,17 @@ function normalizePlanPayload(
 }
 
 function normalizeImportPayload(
-  request: MarkdownImportRequest,
+  request: TextImportRequest,
   rawPayload: RawImportPayload,
-): MarkdownImportResponse {
+): TextImportResponse {
+  const previewNodes = validateImportPreviewItems(
+    (rawPayload.previewNodes ?? []).map(normalizeImportPreviewItem),
+  )
+
   return {
-    summary: normalizeText(rawPayload.summary) ?? 'Markdown 导入预览已生成。',
+    summary: normalizeText(rawPayload.summary) ?? '智能导入预览已生成。',
     baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
-    previewTree: (rawPayload.previewTree ?? []).map(normalizeImportPreviewNode),
+    previewNodes,
     operations: (rawPayload.operations ?? []).map(normalizeImportOperation),
     conflicts: (rawPayload.conflicts ?? []).map(normalizeImportConflict),
     warnings: (rawPayload.warnings ?? [])
@@ -865,14 +912,20 @@ function normalizeBridgeError(error: unknown): CodexBridgeError {
     typeof error === 'object' && error && 'issue' in error
       ? (error as { issue?: CodexBridgeIssue }).issue
       : undefined
+  const rawMessage =
+    typeof error === 'object' && error && 'rawMessage' in error
+      ? normalizeText((error as { rawMessage?: string | null }).rawMessage)
+      : undefined
 
   if (issue) {
-    return new CodexBridgeError(issue.code, issue.message, [issue])
+    return new CodexBridgeError(issue.code, issue.message, [issue], rawMessage)
   }
 
   return new CodexBridgeError(
     'request_failed',
     error instanceof Error ? error.message : 'Codex 请求失败。',
+    undefined,
+    error instanceof Error ? error.message : undefined,
   )
 }
 
@@ -946,29 +999,56 @@ function buildPlanningPrompt(
   ].join('\n')
 }
 
-function buildMarkdownImportPrompt(
-  request: MarkdownImportRequest,
+function buildTextImportPrompt(
+  request: TextImportRequest,
   prompt: LoadedSystemPrompt,
+  mode: 'primary' | 'repair' = 'primary',
 ): string {
   return [
     prompt.fullPrompt,
     '',
-    'Markdown import goal:',
+    'Text import goal:',
     '- Return valid JSON only.',
-    '- Deeply analyze the markdown source and the full current mind map before proposing changes.',
-    '- Preserve all markdown information. Do not omit content just because you also summarized it.',
-    '- Headings should usually become mind-map nodes. Lists should usually become child nodes when the relationship is explicit.',
-    '- Paragraphs, quotes, code blocks, and tables must remain fully preserved in note text on the relevant node, even if you also create structured child nodes from them.',
+    '- Deeply analyze the source text and the full current mind map before proposing changes.',
+    '- First decide whether the input looks like markdown, plain text, meeting notes, checklist, rough notes, or mixed material.',
+    '- Preserve all source information. Do not omit content just because you also summarized it.',
+    '- Use the preprocessing hints only as clues, not as a rigid schema.',
+    '- When structure is clear, headings and lists may become mind-map nodes.',
+    '- Paragraphs, quotes, code blocks, tables, and ambiguous long-form content must remain fully preserved in note text on the relevant node, even if you also create structured child nodes from them.',
     '- Treat the selected anchor topic as the preferred insertion point, but use the full graph to deduplicate or merge safely.',
     '- Use low risk only for clearly safe additions or merges. Use high risk for rename, move, delete, overwrite, ambiguous merge, locked-node conflicts, or any structural change that may surprise the user.',
     '- Locked nodes have aiLocked=true. You may read them. You may create_child under a locked node or create_sibling around a locked node, but you must not update_topic, move_topic, or delete_topic on a locked node.',
     '- Every high-risk operation should reference a conflictId, and every conflict should explain the user-facing reason clearly.',
-    '- previewTree should describe the intended imported structure after semantic matching, with relation=new|merge|conflict.',
+    '- previewNodes must be a flat array. Do not output nested children objects.',
+    '- Every preview node must include: id, parentId, order, title, note, relation, matchedTopicId, reason.',
+    '- parentId must be null for top-level preview nodes or the id of another preview node.',
+    '- order must be a stable integer among siblings, starting from 0 when possible.',
     '- operations must use existing topic references as topic:<realTopicId>. If you need temporary references for newly created nodes, use resultRef and then ref:<resultRef>.',
+    mode === 'repair'
+      ? '- This is a repair attempt because the previous output was not schema-compatible or structurally valid. Be extra conservative and produce only flat previewNodes plus valid operations/conflicts.'
+      : '- Prefer a complete, stable import preview on the first attempt.',
     '',
     'Current import context:',
     JSON.stringify(request, null, 2),
   ].join('\n')
+}
+
+function isRetryableImportError(error: CodexBridgeError): boolean {
+  if (error.code === 'schema_invalid') {
+    return true
+  }
+
+  const text = `${error.message}\n${error.rawMessage ?? ''}`.toLowerCase()
+  return (
+    text.includes('schema') ||
+    text.includes('导入预览') ||
+    text.includes('导入预览节点') ||
+    text.includes('preview') ||
+    text.includes('parent') ||
+    text.includes('conflict') ||
+    text.includes('duplicate') ||
+    text.includes('invalid')
+  )
 }
 
 function extractAssistantDelta(event: CodexJsonEvent): string | null {
@@ -1006,7 +1086,14 @@ export interface CodexBridge {
     options?: CodexChatStreamOptions,
   ): Promise<CodexChatStreamResult>
   planChanges(request: AiChatRequest, assistantMessage: string): Promise<AiChatResponse>
-  previewMarkdownImport(request: MarkdownImportRequest): Promise<MarkdownImportResponse>
+  previewTextImport(
+    request: TextImportRequest,
+    options?: { onStatus?: (message: string) => void },
+  ): Promise<TextImportResponse>
+  previewMarkdownImport(
+    request: TextImportRequest,
+    options?: { onStatus?: (message: string) => void },
+  ): Promise<TextImportResponse>
 }
 
 interface CreateCodexBridgeOptions {
@@ -1148,7 +1235,7 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
       }
     },
 
-    async previewMarkdownImport(request) {
+    async previewTextImport(request, options) {
       const status = await buildStatus()
       if (!status.ready) {
         throw new CodexBridgeError(
@@ -1160,15 +1247,43 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
 
       const loadedPrompt = await promptStore.loadPrompt()
 
-      try {
+      const executeImportAttempt = async (
+        mode: 'primary' | 'repair',
+      ): Promise<TextImportResponse> => {
         const rawText = await runner.execute(
-          buildMarkdownImportPrompt(request, loadedPrompt),
+          buildTextImportPrompt(request, loadedPrompt, mode),
           IMPORT_RESPONSE_SCHEMA,
         )
         return normalizeImportPayload(request, parseImportPayload(rawText))
-      } catch (error) {
-        throw normalizeBridgeError(error)
       }
+
+      try {
+        return await executeImportAttempt('primary')
+      } catch (error) {
+        const normalizedError = normalizeBridgeError(error)
+
+        if (!isRetryableImportError(normalizedError)) {
+          throw normalizedError
+        }
+
+        options?.onStatus?.('正在修正导入结构…')
+
+        try {
+          return await executeImportAttempt('repair')
+        } catch (repairError) {
+          const normalizedRepairError = normalizeBridgeError(repairError)
+          throw new CodexBridgeError(
+            normalizedRepairError.code,
+            'Codex 导入结构修正失败',
+            normalizedRepairError.issues,
+            normalizedRepairError.rawMessage ?? normalizedRepairError.message,
+          )
+        }
+      }
+    },
+
+    async previewMarkdownImport(request, options) {
+      return this.previewTextImport(request, options)
     },
   }
 }

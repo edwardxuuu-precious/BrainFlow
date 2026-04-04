@@ -182,7 +182,10 @@ export interface AiChatResponse {
   warnings?: string[]
 }
 
-export type MarkdownImportBlockType =
+export type TextImportSourceType = 'file' | 'paste'
+
+export type TextImportHintKind =
+  | 'heading'
   | 'paragraph'
   | 'bullet_list'
   | 'ordered_list'
@@ -191,39 +194,36 @@ export type MarkdownImportBlockType =
   | 'code_block'
   | 'table'
 
-export interface MarkdownImportPreprocessedBlock {
-  type: MarkdownImportBlockType
+export interface TextImportPreprocessHint {
+  id: string
+  kind: TextImportHintKind
   text: string
   raw: string
+  level: number
+  lineStart: number
+  lineEnd: number
+  sourcePath: string[]
   language?: string | null
   items?: string[]
   checked?: boolean[]
   rows?: string[][]
 }
 
-export interface MarkdownImportPreprocessedNode {
-  id: string
-  title: string
-  level: number
-  sourcePath: string[]
-  blocks: MarkdownImportPreprocessedBlock[]
-  children: MarkdownImportPreprocessedNode[]
-}
-
-export interface MarkdownImportRequest {
+export interface TextImportRequest {
   documentId: string
   documentTitle: string
   baseDocumentUpdatedAt: number
   context: AiSelectionContext
   anchorTopicId: string | null
-  fileName: string
-  markdown: string
-  preprocessedTree: MarkdownImportPreprocessedNode[]
+  sourceName: string
+  sourceType: TextImportSourceType
+  rawText: string
+  preprocessedHints: TextImportPreprocessHint[]
 }
 
 export type AiImportOperationRisk = 'low' | 'high'
 
-export interface MarkdownImportConflict {
+export interface TextImportConflict {
   id: string
   title: string
   description: string
@@ -243,14 +243,19 @@ export interface MarkdownImportConflict {
   targetTopicIds: string[]
 }
 
-export interface MarkdownImportPreviewNode {
+export interface TextImportPreviewItem {
   id: string
+  parentId: string | null
+  order: number
   title: string
-  note?: string
+  note: string | null
   relation: 'new' | 'merge' | 'conflict'
-  matchedTopicId?: string | null
-  reason?: string
-  children: MarkdownImportPreviewNode[]
+  matchedTopicId: string | null
+  reason: string | null
+}
+
+export interface TextImportPreviewNode extends TextImportPreviewItem {
+  children: TextImportPreviewNode[]
 }
 
 export type AiImportOperation = AiCanvasOperation & {
@@ -260,14 +265,19 @@ export type AiImportOperation = AiCanvasOperation & {
   reason?: string
 }
 
-export interface MarkdownImportResponse {
+export interface TextImportResponse {
   summary: string
   baseDocumentUpdatedAt: number
-  previewTree: MarkdownImportPreviewNode[]
+  previewNodes: TextImportPreviewItem[]
   operations: AiImportOperation[]
-  conflicts: MarkdownImportConflict[]
+  conflicts: TextImportConflict[]
   warnings?: string[]
 }
+
+export type MarkdownImportRequest = TextImportRequest
+export type MarkdownImportConflict = TextImportConflict
+export type MarkdownImportPreviewNode = TextImportPreviewItem
+export type MarkdownImportResponse = TextImportResponse
 
 export type CodexBridgeIssueCode =
   | 'cli_missing'
@@ -303,12 +313,15 @@ export interface CodexApiError {
   code: CodexBridgeIssueCode | 'invalid_request'
   message: string
   issues?: CodexBridgeIssue[]
+  rawMessage?: string
 }
 
 export type AiRunStage =
   | 'idle'
   | 'checking_status'
   | 'building_context'
+  | 'extracting_input'
+  | 'analyzing_source'
   | 'parsing_markdown'
   | 'analyzing_import'
   | 'resolving_conflicts'
@@ -352,22 +365,26 @@ export type AiStreamEvent =
       code?: CodexApiError['code']
       message: string
       issues?: CodexBridgeIssue[]
+      rawMessage?: string
     }
 
-export type MarkdownImportStreamEvent =
+export type TextImportStreamEvent =
   | {
       type: 'status'
-      stage: 'parsing_markdown' | 'analyzing_import' | 'resolving_conflicts' | 'building_preview'
+      stage: 'extracting_input' | 'analyzing_source' | 'resolving_conflicts' | 'building_preview'
       message: string
     }
   | {
       type: 'result'
-      data: MarkdownImportResponse
+      data: TextImportResponse
     }
   | {
       type: 'error'
-      stage?: 'parsing_markdown' | 'analyzing_import' | 'resolving_conflicts' | 'building_preview'
+      stage?: 'extracting_input' | 'analyzing_source' | 'resolving_conflicts' | 'building_preview'
       code?: CodexApiError['code']
       message: string
       issues?: CodexBridgeIssue[]
+      rawMessage?: string
     }
+
+export type MarkdownImportStreamEvent = TextImportStreamEvent

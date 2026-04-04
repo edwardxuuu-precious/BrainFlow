@@ -1,4 +1,4 @@
-import {
+﻿import {
   ReactFlow,
   SelectionMode,
   type NodeMouseHandler,
@@ -34,8 +34,8 @@ import type {
 import { FormatPanel } from '../../features/editor/components/FormatPanel'
 import { HierarchySidebar } from '../../features/editor/components/HierarchySidebar'
 import { MarkersPanel } from '../../features/editor/components/MarkersPanel'
-import { MarkdownImportDialog } from '../../features/import/components/MarkdownImportDialog'
-import { useMarkdownImportStore } from '../../features/import/markdown-import-store'
+import { TextImportDialog } from '../../features/import/components/TextImportDialog'
+import { useTextImportStore } from '../../features/import/text-import-store'
 import { PropertiesPanel } from '../../features/editor/components/PropertiesPanel'
 import { SidebarRail } from '../../features/editor/components/SidebarRail'
 import { getEditorSnapshot, useEditorStore } from '../../features/editor/editor-store'
@@ -161,7 +161,7 @@ function collectSubtreeIds(document: MindMapDocument, topicId: string) {
 export function MapEditorPage({ service = documentService }: MapEditorPageProps) {
   const navigate = useNavigate()
   const { documentId } = useParams()
-  const markdownImportInputRef = useRef<HTMLInputElement>(null)
+  const textImportInputRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const reactFlowRef = useRef<ReactFlowInstance<MindMapFlowNode> | null>(null)
   const initializedViewportRef = useRef<string | null>(null)
@@ -264,24 +264,32 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const aiSaveSettings = useAiStore((state) => state.saveSettings)
   const aiResetSettings = useAiStore((state) => state.resetSettings)
   const aiUndoLastAppliedChange = useAiStore((state) => state.undoLastAppliedChange)
-  const markdownImportOpen = useMarkdownImportStore((state) => state.open)
-  const markdownImportClose = useMarkdownImportStore((state) => state.close)
-  const markdownImportPreviewFile = useMarkdownImportStore((state) => state.previewFile)
-  const markdownImportToggleConflictApproval = useMarkdownImportStore(
+  const textImportOpen = useTextImportStore((state) => state.open)
+  const textImportClose = useTextImportStore((state) => state.close)
+  const textImportPreviewFile = useTextImportStore((state) => state.previewFile)
+  const textImportPreviewText = useTextImportStore((state) => state.previewText)
+  const textImportSetDraftSourceName = useTextImportStore((state) => state.setDraftSourceName)
+  const textImportSetDraftText = useTextImportStore((state) => state.setDraftText)
+  const textImportToggleConflictApproval = useTextImportStore(
     (state) => state.toggleConflictApproval,
   )
-  const markdownImportApplyPreview = useMarkdownImportStore((state) => state.applyPreview)
-  const markdownImportIsOpen = useMarkdownImportStore((state) => state.isOpen)
-  const markdownImportFileName = useMarkdownImportStore((state) => state.sourceFileName)
-  const markdownImportPreprocessedTree = useMarkdownImportStore((state) => state.preprocessedTree)
-  const markdownImportPreview = useMarkdownImportStore((state) => state.preview)
-  const markdownImportApprovedConflictIds = useMarkdownImportStore(
+  const textImportApplyPreview = useTextImportStore((state) => state.applyPreview)
+  const textImportIsOpen = useTextImportStore((state) => state.isOpen)
+  const textImportSourceName = useTextImportStore((state) => state.sourceName)
+  const textImportSourceType = useTextImportStore((state) => state.sourceType)
+  const textImportRawText = useTextImportStore((state) => state.rawText)
+  const textImportDraftSourceName = useTextImportStore((state) => state.draftSourceName)
+  const textImportDraftText = useTextImportStore((state) => state.draftText)
+  const textImportPreprocessedHints = useTextImportStore((state) => state.preprocessedHints)
+  const textImportPreview = useTextImportStore((state) => state.preview)
+  const textImportPreviewTree = useTextImportStore((state) => state.previewTree)
+  const textImportApprovedConflictIds = useTextImportStore(
     (state) => state.approvedConflictIds,
   )
-  const markdownImportStatusText = useMarkdownImportStore((state) => state.statusText)
-  const markdownImportError = useMarkdownImportStore((state) => state.error)
-  const markdownImportIsPreviewing = useMarkdownImportStore((state) => state.isPreviewing)
-  const markdownImportIsApplying = useMarkdownImportStore((state) => state.isApplying)
+  const textImportStatusText = useTextImportStore((state) => state.statusText)
+  const textImportError = useTextImportStore((state) => state.error)
+  const textImportIsPreviewing = useTextImportStore((state) => state.isPreviewing)
+  const textImportIsApplying = useTextImportStore((state) => state.isApplying)
 
   useEditorShortcuts()
 
@@ -606,7 +614,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   if (!document || !layout) {
     return (
       <main className={styles.page}>
-        <div className={styles.loading}>正在载入脑图…</div>
+        <div className={styles.loading}>正在加载脑图…</div>
       </main>
     )
   }
@@ -639,12 +647,11 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     }
   }
 
-  const handleOpenMarkdownImport = () => {
-    markdownImportOpen()
-    markdownImportInputRef.current?.click()
+  const handleOpenTextImport = () => {
+    textImportOpen()
   }
 
-  const handleMarkdownFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+  const handleTextImportFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
 
@@ -652,7 +659,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
       return
     }
 
-    await markdownImportPreviewFile(
+    await textImportPreviewFile(
       document,
       {
         activeTopicId,
@@ -662,8 +669,19 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     )
   }
 
-  const handleApplyMarkdownImport = async () => {
-    const result = markdownImportApplyPreview(document)
+  const handleGenerateTextImportPreview = async () => {
+    if (!document) {
+      return
+    }
+
+    await textImportPreviewText(document, {
+      activeTopicId,
+      selectedTopicIds,
+    })
+  }
+
+  const handleApplyTextImport = async () => {
+    const result = textImportApplyPreview(document)
     if (!result) {
       return
     }
@@ -978,13 +996,12 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         </div>
 
         <ToolbarGroup className={styles.topbarRight}>
-          <input
-            ref={markdownImportInputRef}
-            type="file"
-            accept=".md,text/markdown"
-            hidden
-            onChange={(event) => void handleMarkdownFileSelected(event)}
-          />
+            <input
+              ref={textImportInputRef}
+              type="file"
+              hidden
+              onChange={(event) => void handleTextImportFileSelected(event)}
+            />
           <IconButton
             label="撤销"
             icon="undo"
@@ -1046,10 +1063,14 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             <Icon name="chat" size={16} strokeWidth={1.9} />
             <span>AI</span>
           </button>
-          <button type="button" className={styles.exportButton} onClick={handleOpenMarkdownImport}>
-            导入 Markdown
+          <button
+            type="button"
+            className={styles.exportButtonPrimary}
+            onClick={handleOpenTextImport}
+          >
+            智能导入
           </button>
-          <button type="button" className={styles.exportButton} onClick={() => exportDocumentAsJson(document)}>
+          <button type="button" className={styles.exportButtonPrimary} onClick={() => exportDocumentAsJson(document)}>
             导出 JSON
           </button>
           <button type="button" className={styles.exportButtonPrimary} onClick={() => void handleExportPng()}>
@@ -1091,6 +1112,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
               zoomOnScroll
               zoomOnDoubleClick={false}
               deleteKeyCode={null}
+              proOptions={{ hideAttribution: true }}
               onInit={(instance) => {
                 reactFlowRef.current = instance
                 setReactFlowInstance(instance)
@@ -1202,9 +1224,9 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
               fitView={false}
             />
             <div className={styles.canvasControls}>
-              <IconButton label="放大" icon="add" tone="secondary" onClick={() => void handleZoomIn()} />
-              <IconButton label="缩小" icon="minus" tone="secondary" onClick={() => void handleZoomOut()} />
-              <IconButton label="适应视图" icon="fitView" tone="secondary" onClick={() => void handleFitView()} />
+              <IconButton label="放大" icon="add" tone="ghost" onClick={() => void handleZoomIn()} />
+              <IconButton label="缩小" icon="minus" tone="ghost" onClick={() => void handleZoomOut()} />
+              <IconButton label="适应视图" icon="fitView" tone="ghost" onClick={() => void handleFitView()} />
             </div>
           </div>
         </div>
@@ -1256,20 +1278,30 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
           ? renderRightSidebar('drawer', styles.mobileInspector)
           : null}
       </section>
-      <MarkdownImportDialog
-        open={markdownImportIsOpen}
-        fileName={markdownImportFileName}
-        preprocessedTree={markdownImportPreprocessedTree}
-        preview={markdownImportPreview}
-        approvedConflictIds={markdownImportApprovedConflictIds}
-        statusText={markdownImportStatusText}
-        error={markdownImportError}
-        isPreviewing={markdownImportIsPreviewing}
-        isApplying={markdownImportIsApplying}
-        onClose={markdownImportClose}
-        onToggleConflict={markdownImportToggleConflictApproval}
-        onApply={() => void handleApplyMarkdownImport()}
+        <TextImportDialog
+          open={textImportIsOpen}
+          sourceName={textImportSourceName}
+          sourceType={textImportSourceType}
+          rawText={textImportRawText}
+          draftSourceName={textImportDraftSourceName}
+          draftText={textImportDraftText}
+          preprocessedHints={textImportPreprocessedHints}
+          preview={textImportPreview}
+          previewTree={textImportPreviewTree}
+          approvedConflictIds={textImportApprovedConflictIds}
+          statusText={textImportStatusText}
+          error={textImportError}
+        isPreviewing={textImportIsPreviewing}
+        isApplying={textImportIsApplying}
+        onClose={textImportClose}
+        onChooseFile={() => textImportInputRef.current?.click()}
+        onDraftSourceNameChange={textImportSetDraftSourceName}
+        onDraftTextChange={textImportSetDraftText}
+        onGenerateFromText={() => void handleGenerateTextImportPreview()}
+        onToggleConflict={textImportToggleConflictApproval}
+        onApply={() => void handleApplyTextImport()}
       />
     </main>
   )
 }
+

@@ -281,6 +281,26 @@ function parseJsonEvent(line: string): CodexJsonEvent | null {
   }
 }
 
+function extractRawExecutionMessage(error: unknown): string | undefined {
+  if (!error) {
+    return undefined
+  }
+
+  if (error instanceof Error) {
+    return error.message
+  }
+
+  if (typeof error === 'string') {
+    return error
+  }
+
+  if (typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message
+  }
+
+  return undefined
+}
+
 function extractEventError(event: CodexJsonEvent): string | null {
   if (event.type === 'error' && typeof event.message === 'string') {
     return event.message
@@ -538,6 +558,7 @@ export function createCodexRunner(dependencies?: CodexRunnerDependencies): Codex
         const issue = normalizeExecutionError(error)
         throw Object.assign(new Error(issue.message), {
           issue,
+          rawMessage: extractRawExecutionMessage(error),
         })
       } finally {
         if (workingDirectory) {
@@ -564,6 +585,7 @@ export function createCodexRunner(dependencies?: CodexRunnerDependencies): Codex
         const issue = normalizeExecutionError(error)
         throw Object.assign(new Error(issue.message), {
           issue,
+          rawMessage: extractRawExecutionMessage(error),
         })
       } finally {
         if (workingDirectory) {
