@@ -20,7 +20,7 @@ import {
 } from '../documents/topic-defaults'
 import { getMindMapThemePreset, updateMindMapTheme } from '../documents/theme'
 import {
-  createPlainParagraphRichText,
+  createTopicRichTextFromPlainText,
   extractPlainTextFromTopicRichText,
   normalizeTopicRichText,
 } from '../documents/topic-rich-text'
@@ -202,7 +202,7 @@ export function renameTopic(doc: MindMapDocument, topicId: string, title: string
 
 export function updateTopicNote(doc: MindMapDocument, topicId: string, note: string): MindMapDocument {
   const topic = doc.topics[topicId]
-  const nextNoteRich = createPlainParagraphRichText(note)
+  const nextNoteRich = createTopicRichTextFromPlainText(note)
 
   if (
     !topic ||

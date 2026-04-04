@@ -1,6 +1,10 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { type CSSProperties, useEffect, useRef, useState } from 'react'
-import { topicMarkerLabels, topicStickerGlyphs, topicStickerLabels } from '../../features/documents/topic-decorations'
+import {
+  topicMarkerLabels,
+  topicStickerGlyphs,
+  topicStickerLabels,
+} from '../../features/documents/topic-decorations'
 import { useEditorStore } from '../../features/editor/editor-store'
 import type { MindMapFlowNode } from '../../features/editor/layout'
 import { Icon } from '../ui'
@@ -103,30 +107,49 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
       }
       onDoubleClick={() => startEditing(id, 'canvas')}
     >
-      <Handle id={targetHandleId('left')} type="target" position={Position.Left} className={styles.handle} />
-      <Handle id={targetHandleId('right')} type="target" position={Position.Right} className={styles.handle} />
-      <Handle id={sourceHandleId('left')} type="source" position={Position.Left} className={styles.handle} />
-      <Handle id={sourceHandleId('right')} type="source" position={Position.Right} className={styles.handle} />
+      <Handle
+        id={targetHandleId('left')}
+        type="target"
+        position={Position.Left}
+        className={styles.handle}
+      />
+      <Handle
+        id={targetHandleId('right')}
+        type="target"
+        position={Position.Right}
+        className={styles.handle}
+      />
+      <Handle
+        id={sourceHandleId('left')}
+        type="source"
+        position={Position.Left}
+        className={styles.handle}
+      />
+      <Handle
+        id={sourceHandleId('right')}
+        type="source"
+        position={Position.Right}
+        className={styles.handle}
+      />
 
       <div className={styles.content}>
-        {/* Status Icons Bar */}
         {(isLocked || topicType) && (
           <div className={styles.statusBar}>
-            {isLocked && (
+            {isLocked ? (
               <span
                 className={styles.statusIcon}
                 onMouseEnter={() => setHoveredIcon('lock')}
                 onMouseLeave={() => setHoveredIcon(null)}
                 role="img"
-                aria-label="AI 锁定"
+                aria-label="AI 锁定节点"
               >
                 <Icon name="lock" size={11} strokeWidth={2} />
-                {hoveredIcon === 'lock' && (
+                {hoveredIcon === 'lock' ? (
                   <span className={styles.statusTooltip}>AI 锁定：节点不会被 AI 修改</span>
-                )}
+                ) : null}
               </span>
-            )}
-            {topicType === 'milestone' && (
+            ) : null}
+            {topicType === 'milestone' ? (
               <span
                 className={classNames(styles.statusIcon, styles.milestoneIcon)}
                 onMouseEnter={() => setHoveredIcon('milestone')}
@@ -135,12 +158,12 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                 aria-label="里程碑"
               >
                 <Icon name="star" size={11} strokeWidth={2} />
-                {hoveredIcon === 'milestone' && (
+                {hoveredIcon === 'milestone' ? (
                   <span className={styles.statusTooltip}>里程碑节点</span>
-                )}
+                ) : null}
               </span>
-            )}
-            {topicType === 'task' && (
+            ) : null}
+            {topicType === 'task' ? (
               <span
                 className={classNames(styles.statusIcon, styles.taskIcon)}
                 onMouseEnter={() => setHoveredIcon('task')}
@@ -149,13 +172,14 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                 aria-label="任务"
               >
                 <Icon name="checkCircle" size={11} strokeWidth={2} />
-                {hoveredIcon === 'task' && (
+                {hoveredIcon === 'task' ? (
                   <span className={styles.statusTooltip}>任务节点</span>
-                )}
+                ) : null}
               </span>
-            )}
+            ) : null}
           </div>
         )}
+
         {isEditing ? (
           <input
             ref={inputRef}
@@ -193,6 +217,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                 </span>
               ) : null}
             </div>
+
             {showMetaRow ? (
               <div className={styles.metaRow}>
                 {labels.length > 0 ? (
@@ -207,6 +232,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                     ) : null}
                   </div>
                 ) : null}
+
                 <div className={styles.badgeGroup}>
                   {markers.map((marker) => (
                     <span
@@ -222,6 +248,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                   {extraMarkerCount > 0 ? (
                     <span className={styles.metaCount}>+{extraMarkerCount}</span>
                   ) : null}
+
                   {stickers.map((sticker) => (
                     <span
                       key={sticker}
@@ -236,6 +263,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                   {extraStickerCount > 0 ? (
                     <span className={styles.metaCount}>+{extraStickerCount}</span>
                   ) : null}
+
                   {task ? (
                     <span
                       className={classNames(styles.metaBadge, styles.taskBadge)}
@@ -244,12 +272,19 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                       aria-label={`任务：${task.status}`}
                     >
                       <Icon
-                        name={task.status === 'done' ? 'check' : task.status === 'in_progress' ? 'calendar' : 'history'}
+                        name={
+                          task.status === 'done'
+                            ? 'check'
+                            : task.status === 'in_progress'
+                              ? 'calendar'
+                              : 'history'
+                        }
                         size={11}
                         strokeWidth={2}
                       />
                     </span>
                   ) : null}
+
                   {hasLinks ? (
                     <span
                       className={classNames(styles.metaBadge, styles.linkBadge)}
@@ -260,6 +295,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                       <Icon name="link" size={11} strokeWidth={2} />
                     </span>
                   ) : null}
+
                   {hasAttachments ? (
                     <span
                       className={classNames(styles.metaBadge, styles.attachmentBadge)}

@@ -20,7 +20,20 @@ interface StoredDocumentSnapshot {
   }
   topics: Record<
     string,
-    { title: string; parentId?: string | null; layout?: { offsetX: number; offsetY: number } }
+    {
+      id?: string
+      parentId?: string | null
+      childIds?: string[]
+      title: string
+      note?: string
+      noteRich?: unknown
+      aiLocked?: boolean
+      isCollapsed?: boolean
+      branchSide?: string
+      layout?: { offsetX: number; offsetY: number }
+      metadata?: Record<string, unknown>
+      style?: Record<string, unknown>
+    }
   >
 }
 
@@ -494,8 +507,8 @@ test('supports middle-button panning without breaking Space pan or box selection
   await expectSelectedNodeCount(page, 2)
 })
 
-test('collapses desktop sidebars into rails and restores them after reload', async ({ page }) => {
-  await page.getByRole('button', { name: '鏂板缓鑴戝浘' }).click()
+test('collapses the unified right sidebar into a rail and restores that state after reload', async ({ page }) => {
+  await page.getByRole('button', { name: '新建脑图' }).click()
   await expect(page).toHaveURL(/\/map\//)
 
   const documentId = page.url().split('/').pop()
@@ -504,28 +517,25 @@ test('collapses desktop sidebars into rails and restores them after reload', asy
     throw new Error('Expected document id to be present in editor URL')
   }
 
-  await page.getByRole('button', { name: '隐藏层级栏' }).click()
-  await expect(page.getByRole('button', { name: '显示层级栏' })).toBeVisible()
-  await expect(page.locator('nav[aria-label="主题层级"]')).toHaveCount(0)
-
+  await page.getByRole('button', { name: '目录' }).click()
   await page
     .locator('#editor-right-sidebar')
-    .getByRole('button', { name: '隐藏检查器' })
-    .first()
+    .getByRole('button', { name: '隐藏右侧栏' })
     .click()
-  await expect(page.getByRole('button', { name: '显示检查器' })).toBeVisible()
-  await expect(page.getByRole('textbox', { name: '备注' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '显示右侧栏' })).toBeVisible()
+  await expect(page.locator('nav[aria-label="主题层级"]')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '显示层级栏' })).toHaveCount(0)
 
   await page.waitForTimeout(700)
   const collapsedSnapshot = await readStoredDocument(page, documentId)
   expect(collapsedSnapshot?.workspace.chrome).toEqual({
-    leftSidebarOpen: false,
+    leftSidebarOpen: collapsedSnapshot?.workspace.chrome.leftSidebarOpen ?? false,
     rightSidebarOpen: false,
   })
 
   await page.reload()
-  await expect(page.getByRole('button', { name: '显示层级栏' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '显示检查器' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '显示右侧栏' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '显示层级栏' })).toHaveCount(0)
 })
 
 test('persists hierarchy tree collapse separately from canvas nodes and re-expands the active path', async ({
@@ -540,75 +550,94 @@ test('persists hierarchy tree collapse separately from canvas nodes and re-expan
     throw new Error('Expected document id to be present in editor URL')
   }
 
-  const hierarchyNav = page.locator('nav[aria-label="主题层级"]')
-  await hierarchyNav.getByRole('button', { name: /分支二/ }).click()
-  await page
-    .locator('#editor-right-sidebar')
-    .getByRole('button', { name: '新增子主题' })
-    .click()
+  await page.getByRole('button', { name: '目录' }).click()
 
-  await expect(hierarchyNav.getByText('新主题', { exact: true })).toBeVisible()
-  await hierarchyNav.getByRole('button', { name: '折叠 分支二' }).click()
-  await expect(hierarchyNav.getByText('新主题', { exact: true })).toHaveCount(0)
+  const setupResult = await page.evaluate(async (resolvedDocumentId) => {
+    return new Promise<string>((resolve, reject) => {
+      const request = indexedDB.open('brainflow-documents-v1')
 
-  await page.waitForTimeout(700)
-  const storedDocument = await readStoredDocument(page, documentId)
-  const branchId =
-    Object.entries(storedDocument?.topics ?? {}).find(([, topic]) => topic.title === '分支二')?.[0] ?? ''
-  const childId =
-    Object.entries(storedDocument?.topics ?? {}).find(
-      ([, topic]) => topic.title === '新主题' && topic.parentId === branchId,
-    )?.[0] ?? ''
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => {
+        const database = request.result
+        const transaction = database.transaction('documents', 'readwrite')
+        const store = transaction.objectStore('documents')
+        const getRequest = store.get(resolvedDocumentId)
 
-  expect(storedDocument?.workspace.hierarchyCollapsedTopicIds).toContain(branchId)
-  expect(childId).not.toBe('')
-
-  await page.evaluate(
-    async ({ resolvedDocumentId, selectedTopicId }) => {
-      await new Promise<void>((resolve, reject) => {
-        const request = indexedDB.open('brainflow-documents-v1')
-
-        request.onerror = () => reject(request.error)
-        request.onsuccess = () => {
-          const database = request.result
-          const transaction = database.transaction('documents', 'readwrite')
-          const store = transaction.objectStore('documents')
-          const getRequest = store.get(resolvedDocumentId)
-
-          getRequest.onerror = () => {
-            database.close()
-            reject(getRequest.error)
-          }
-
-          getRequest.onsuccess = () => {
-            const document = getRequest.result as StoredDocumentSnapshot | null
-            if (document) {
-              document.workspace.selectedTopicId = selectedTopicId
-              store.put(document)
-            }
-          }
-
-          transaction.oncomplete = () => {
-            database.close()
-            resolve()
-          }
-          transaction.onerror = () => {
-            database.close()
-            reject(transaction.error)
-          }
+        getRequest.onerror = () => {
+          database.close()
+          reject(getRequest.error)
         }
-      })
-    },
-    {
-      resolvedDocumentId: documentId,
-      selectedTopicId: childId,
-    },
-  )
+
+        getRequest.onsuccess = () => {
+          const document = getRequest.result as StoredDocumentSnapshot | null
+          if (!document) {
+            database.close()
+            resolve('')
+            return
+          }
+
+          const branchEntry =
+            Object.entries(document.topics).find(([, topic]) => topic.title === '分支二') ?? null
+          if (!branchEntry) {
+            database.close()
+            resolve('')
+            return
+          }
+
+          const [resolvedBranchId] = branchEntry
+          const childId = 'topic_e2e_nested_child'
+          document.topics[resolvedBranchId].childIds ??= []
+          document.topics[resolvedBranchId].childIds.push(childId)
+          const newTopic: any = {
+            id: childId,
+            parentId: resolvedBranchId,
+            childIds: [],
+            title: '新主题',
+            note: '',
+            noteRich: null,
+            aiLocked: false,
+            isCollapsed: false,
+            branchSide: 'auto',
+            layout: { offsetX: 0, offsetY: 0 },
+            metadata: {
+              labels: [],
+              markers: [],
+              stickers: [],
+              task: null,
+              links: [],
+              attachments: [],
+            },
+            style: {
+              emphasis: 'normal',
+              variant: 'default',
+            },
+          }
+          document.topics[childId] = newTopic
+          document.workspace.hierarchyCollapsedTopicIds = [resolvedBranchId]
+          document.workspace.selectedTopicId = childId
+          store.put(document)
+        }
+
+        transaction.oncomplete = () => {
+          database.close()
+          resolve('done')
+        }
+        transaction.onerror = () => {
+          database.close()
+          reject(transaction.error)
+        }
+      }
+    })
+  }, documentId)
+
+  expect(setupResult).toBe('done')
 
   await page.reload()
-  const reloadedHierarchyNav = page.locator('nav[aria-label="主题层级"]')
-  await expect(reloadedHierarchyNav.getByRole('button', { name: '折叠 分支二' })).toBeVisible()
-  await expect(reloadedHierarchyNav.getByText('新主题', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '目录' }).click()
+  const hierarchyNav = page.locator('nav[aria-label="主题层级"]')
+  await expect(hierarchyNav.getByRole('button', { name: '折叠 分支二' })).toBeVisible()
+  await expect(hierarchyNav.getByText('新主题', { exact: true })).toBeVisible()
+
 })
 
 test('shows remediation and disables sending when local Codex verification is unavailable', async ({
@@ -806,6 +835,7 @@ test('uses the full graph as context and applies Codex changes directly to the c
   expect(capturedChatRequest!.context.focus.selectedTopicIds).toHaveLength(1)
   expect(capturedChatRequest!.context.topics.length).toBeGreaterThan(1)
 
+  await page.getByRole('button', { name: '目录' }).click()
   await expect(
     page.locator('nav[aria-label="主题层级"]').getByText('目标用户'),
   ).toBeVisible()

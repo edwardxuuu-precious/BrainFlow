@@ -6,7 +6,6 @@ import { createMindMapDocument } from '../../documents/document-factory'
 import { HierarchySidebar } from './HierarchySidebar'
 
 const COPY = {
-  collapse: '隐藏层级栏',
   noteDescription: '已添加详细内容',
 } as const
 
@@ -31,20 +30,15 @@ function renderSidebar(overrides?: Partial<ComponentProps<typeof HierarchySideba
 }
 
 describe('HierarchySidebar', () => {
-  it('renders the integrated sidebar structure and collapse control', async () => {
-    const onCollapse = vi.fn()
+  it('renders the integrated sidebar structure', () => {
     const { document } = renderSidebar({
       id: 'hierarchy-sidebar',
-      onCollapse,
     })
 
     expect(screen.getByRole('complementary')).toHaveAttribute('id', 'hierarchy-sidebar')
+    expect(screen.getByText('目录')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: document.title })).toBeInTheDocument()
     expect(screen.getByRole('navigation')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: COPY.collapse })).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('button', { name: COPY.collapse }))
-    expect(onCollapse).toHaveBeenCalledTimes(1)
   })
 
   it('shows a note marker and accessible description for noted topics', () => {

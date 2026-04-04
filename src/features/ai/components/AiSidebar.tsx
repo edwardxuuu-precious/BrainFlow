@@ -73,7 +73,6 @@ interface AiSidebarProps {
   onRestoreArchivedSession: (documentId: string, sessionId: string) => void
   onDeleteArchivedSession: (documentId: string, sessionId: string) => void
   resolveTopicTitle?: (topicId: string) => string
-  onCollapse?: () => void
   id?: string
   className?: string
   mode?: 'docked' | 'drawer'
@@ -128,7 +127,6 @@ export function AiSidebar({
   onDeleteSession,
   onRestoreArchivedSession,
   onDeleteArchivedSession,
-  onCollapse,
   id,
   className,
   mode = 'docked',
@@ -317,17 +315,6 @@ export function AiSidebar({
               <h2 className={styles.modeHeading}>智能协作</h2>
               <p className={styles.modeDescription}>基于当前脑图上下文发起对话、检查状态并应用结果。</p>
             </div>
-            {onCollapse ? (
-              <IconButton
-                label="隐藏右侧栏"
-                icon="back"
-                tone="secondary"
-                size="sm"
-                aria-controls={id}
-                className={styles.collapseButton}
-                onClick={onCollapse}
-              />
-            ) : null}
           </div>
 
           <div className={styles.toolbarRow1}>

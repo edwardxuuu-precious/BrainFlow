@@ -6,6 +6,8 @@ import type {
   AiChatResponse,
   CodexSettings,
   CodexStatus,
+  MarkdownImportRequest,
+  MarkdownImportResponse,
 } from '../shared/ai-contract.js'
 import { createApp } from './app.js'
 import { CodexBridgeError } from './codex-bridge.js'
@@ -91,6 +93,33 @@ const baseRequest: AiChatRequest = {
   },
 }
 
+const baseImportRequest: MarkdownImportRequest = {
+  documentId: 'doc_1',
+  documentTitle: '测试脑图',
+  baseDocumentUpdatedAt: 1,
+  context: baseRequest.context,
+  anchorTopicId: 'topic_1',
+  fileName: 'plan.md',
+  markdown: '# Plan\n\n- Item',
+  preprocessedTree: [
+    {
+      id: 'md_1',
+      title: 'Plan',
+      level: 1,
+      sourcePath: ['Plan'],
+      blocks: [
+        {
+          type: 'bullet_list',
+          text: 'Item',
+          raw: '- Item',
+          items: ['Item'],
+        },
+      ],
+      children: [],
+    },
+  ],
+}
+
 function createBridge(overrides?: Record<string, unknown>) {
   return {
     getStatus: vi.fn().mockResolvedValue(status),
@@ -100,6 +129,7 @@ function createBridge(overrides?: Record<string, unknown>) {
     resetSettings: vi.fn().mockResolvedValue(settings),
     streamChat: vi.fn(),
     planChanges: vi.fn(),
+    previewMarkdownImport: vi.fn(),
     ...overrides,
   }
 }
@@ -252,5 +282,53 @@ describe('codex app', () => {
     expect(payload).toContain('"stage":"planning_changes"')
     expect(payload).toContain('"type":"error"')
     expect(payload).toContain('第二阶段结构化落图失败')
+  })
+  it('streams markdown import preview stages and the final import result', async () => {
+    const result: MarkdownImportResponse = {
+      summary: '已生成导入预览',
+      baseDocumentUpdatedAt: 1,
+      previewTree: [
+        {
+          id: 'preview_1',
+          title: 'Plan',
+          relation: 'new',
+          matchedTopicId: null,
+          children: [],
+        },
+      ],
+      operations: [
+        {
+          id: 'import_1',
+          type: 'create_child',
+          parent: 'topic:topic_1',
+          title: 'Plan',
+          risk: 'low',
+        },
+      ],
+      conflicts: [],
+      warnings: [],
+    }
+    const bridge = createBridge({
+      previewMarkdownImport: vi.fn().mockResolvedValue(result),
+    })
+    const app = createApp({ bridge })
+
+    const response = await app.request('/api/codex/import/preview', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(baseImportRequest),
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('application/x-ndjson')
+    const payload = await response.text()
+    expect(payload).toContain('"stage":"parsing_markdown"')
+    expect(payload).toContain('"stage":"analyzing_import"')
+    expect(payload).toContain('"stage":"resolving_conflicts"')
+    expect(payload).toContain('"stage":"building_preview"')
+    expect(payload).toContain('"type":"result"')
+    expect(bridge.previewMarkdownImport).toHaveBeenCalledWith(baseImportRequest)
   })
 })

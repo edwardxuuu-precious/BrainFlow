@@ -182,6 +182,93 @@ export interface AiChatResponse {
   warnings?: string[]
 }
 
+export type MarkdownImportBlockType =
+  | 'paragraph'
+  | 'bullet_list'
+  | 'ordered_list'
+  | 'task_list'
+  | 'blockquote'
+  | 'code_block'
+  | 'table'
+
+export interface MarkdownImportPreprocessedBlock {
+  type: MarkdownImportBlockType
+  text: string
+  raw: string
+  language?: string | null
+  items?: string[]
+  checked?: boolean[]
+  rows?: string[][]
+}
+
+export interface MarkdownImportPreprocessedNode {
+  id: string
+  title: string
+  level: number
+  sourcePath: string[]
+  blocks: MarkdownImportPreprocessedBlock[]
+  children: MarkdownImportPreprocessedNode[]
+}
+
+export interface MarkdownImportRequest {
+  documentId: string
+  documentTitle: string
+  baseDocumentUpdatedAt: number
+  context: AiSelectionContext
+  anchorTopicId: string | null
+  fileName: string
+  markdown: string
+  preprocessedTree: MarkdownImportPreprocessedNode[]
+}
+
+export type AiImportOperationRisk = 'low' | 'high'
+
+export interface MarkdownImportConflict {
+  id: string
+  title: string
+  description: string
+  kind:
+    | 'rename'
+    | 'move'
+    | 'delete'
+    | 'merge'
+    | 'locked'
+    | 'ambiguous_parent'
+    | 'duplicate'
+    | 'content_overlap'
+    | 'code_block'
+    | 'table'
+    | 'other'
+  operationIds: string[]
+  targetTopicIds: string[]
+}
+
+export interface MarkdownImportPreviewNode {
+  id: string
+  title: string
+  note?: string
+  relation: 'new' | 'merge' | 'conflict'
+  matchedTopicId?: string | null
+  reason?: string
+  children: MarkdownImportPreviewNode[]
+}
+
+export type AiImportOperation = AiCanvasOperation & {
+  id: string
+  risk: AiImportOperationRisk
+  conflictId?: string
+  reason?: string
+}
+
+export interface MarkdownImportResponse {
+  summary: string
+  baseDocumentUpdatedAt: number
+  previewTree: MarkdownImportPreviewNode[]
+  operations: AiImportOperation[]
+  conflicts: MarkdownImportConflict[]
+  warnings?: string[]
+}
+
 export type CodexBridgeIssueCode =
   | 'cli_missing'
   | 'login_required'
@@ -222,6 +309,10 @@ export type AiRunStage =
   | 'idle'
   | 'checking_status'
   | 'building_context'
+  | 'parsing_markdown'
+  | 'analyzing_import'
+  | 'resolving_conflicts'
+  | 'building_preview'
   | 'starting_codex'
   | 'waiting_first_token'
   | 'streaming'
@@ -258,6 +349,24 @@ export type AiStreamEvent =
   | {
       type: 'error'
       stage?: Exclude<AiRunStage, 'idle' | 'completed'>
+      code?: CodexApiError['code']
+      message: string
+      issues?: CodexBridgeIssue[]
+    }
+
+export type MarkdownImportStreamEvent =
+  | {
+      type: 'status'
+      stage: 'parsing_markdown' | 'analyzing_import' | 'resolving_conflicts' | 'building_preview'
+      message: string
+    }
+  | {
+      type: 'result'
+      data: MarkdownImportResponse
+    }
+  | {
+      type: 'error'
+      stage?: 'parsing_markdown' | 'analyzing_import' | 'resolving_conflicts' | 'building_preview'
       code?: CodexApiError['code']
       message: string
       issues?: CodexBridgeIssue[]

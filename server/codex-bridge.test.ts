@@ -1,7 +1,11 @@
 // @vitest-environment node
 
 import { describe, expect, it, vi } from 'vitest'
-import type { AiChatRequest, CodexStatus } from '../shared/ai-contract.js'
+import type {
+  AiChatRequest,
+  CodexStatus,
+  MarkdownImportRequest,
+} from '../shared/ai-contract.js'
 import { CodexBridgeError, createCodexBridge } from './codex-bridge.js'
 
 const readyStatus: CodexStatus = {
@@ -58,6 +62,26 @@ const baseRequest: AiChatRequest = {
     },
   },
   baseDocumentUpdatedAt: 1,
+}
+
+const baseImportRequest: MarkdownImportRequest = {
+  documentId: 'doc_1',
+  documentTitle: '测试脑图',
+  baseDocumentUpdatedAt: 1,
+  context: baseRequest.context,
+  anchorTopicId: 'root',
+  fileName: 'plan.md',
+  markdown: '# Plan',
+  preprocessedTree: [
+    {
+      id: 'md_1',
+      title: 'Plan',
+      level: 1,
+      sourcePath: ['Plan'],
+      blocks: [],
+      children: [],
+    },
+  ],
 }
 
 function createPromptStore(overrides?: Record<string, unknown>) {
@@ -254,5 +278,66 @@ describe('createCodexBridge', () => {
       code: 'schema_invalid',
       message: '本地 AI bridge 的输出 schema 与当前 Codex CLI 不兼容。',
     } satisfies Partial<CodexBridgeError>)
+  })
+  it('normalizes markdown import preview payloads', async () => {
+    const execute = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        summary: '已生成导入预览',
+        previewTree: [
+          {
+            id: 'preview_1',
+            title: 'Plan',
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            note: null,
+            children: [],
+          },
+        ],
+        operations: [
+          {
+            id: 'import_1',
+            risk: 'low',
+            conflictId: null,
+            reason: null,
+            type: 'create_child',
+            parent: 'topic:root',
+            anchor: null,
+            target: null,
+            newParent: null,
+            targetIndex: null,
+            title: 'Plan',
+            note: null,
+            resultRef: null,
+            parentTopicId: null,
+            targetTopicId: null,
+            topicId: null,
+            targetParentId: null,
+            metadata: null,
+            style: null,
+          },
+        ],
+        conflicts: [],
+        warnings: [],
+      }),
+    )
+
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockResolvedValue(readyStatus),
+        execute,
+        executeMessage: vi.fn(),
+      },
+      promptStore: createPromptStore(),
+    })
+
+    await expect(bridge.previewMarkdownImport(baseImportRequest)).resolves.toMatchObject({
+      summary: '已生成导入预览',
+      baseDocumentUpdatedAt: 1,
+      previewTree: [expect.objectContaining({ title: 'Plan', relation: 'new' })],
+      operations: [expect.objectContaining({ id: 'import_1', risk: 'low', type: 'create_child' })],
+      conflicts: [],
+      warnings: [],
+    })
   })
 })

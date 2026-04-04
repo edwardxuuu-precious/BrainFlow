@@ -1,0 +1,211 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(13, 17, 23, 0.42);
+  backdrop-filter: blur(12px);
+}
+
+.dialog {
+  width: min(1120px, 100%);
+  max-height: min(88vh, 920px);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 24px;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--document-muted);
+}
+
+.title {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.1;
+}
+
+.metaGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metaCard {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--document-panel) 78%, white 22%);
+}
+
+.metaLabel {
+  font-size: 12px;
+  color: var(--document-muted);
+}
+
+.status,
+.error,
+.summary {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+}
+
+.status {
+  background: color-mix(in srgb, var(--document-panel) 82%, white 18%);
+}
+
+.summary {
+  background: color-mix(in srgb, var(--document-accent) 12%, var(--document-panel) 88%);
+}
+
+.error {
+  background: rgba(194, 59, 59, 0.14);
+  color: #9c1d1d;
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1.2fr 0.9fr;
+  gap: 16px;
+}
+
+.section {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--document-panel) 86%, white 14%);
+  overflow: auto;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 16px;
+}
+
+.empty {
+  margin: 0;
+  color: var(--document-muted);
+}
+
+.treeList {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.treeItem {
+  display: grid;
+  gap: 10px;
+}
+
+.treeCard {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--document-panel) 72%, white 28%);
+}
+
+.treeCard[data-relation='new'] {
+  border-color: rgba(32, 128, 92, 0.26);
+}
+
+.treeCard[data-relation='merge'] {
+  border-color: rgba(54, 96, 214, 0.24);
+}
+
+.treeCard[data-relation='conflict'] {
+  border-color: rgba(197, 111, 26, 0.3);
+}
+
+.treeTitleRow,
+.conflictHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.treeBadge,
+.conflictKind {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--document-accent) 14%, white 86%);
+  font-size: 12px;
+}
+
+.treeReason,
+.treeNote,
+.conflictDescription,
+.warningItem {
+  margin: 0;
+  color: var(--document-muted);
+  white-space: pre-wrap;
+}
+
+.conflictList,
+.warningList {
+  display: grid;
+  gap: 12px;
+}
+
+.conflictItem {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--document-panel) 70%, white 30%);
+}
+
+.conflictItem input {
+  margin-top: 4px;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+@media (max-width: 980px) {
+  .overlay {
+    padding: 16px;
+  }
+
+  .dialog {
+    max-height: 92vh;
+  }
+
+  .metaGrid,
+  .content {
+    grid-template-columns: 1fr;
+  }
+}

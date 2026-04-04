@@ -170,10 +170,10 @@ export function FormatPanel({
     <section id={id} className={classNames(baseStyles.panel, className)} data-mode={mode}>
       <div className={baseStyles.header}>
         <div className={baseStyles.chrome}>
-          <div className={baseStyles.placeholder}>
-            <span className={baseStyles.label}>格式</span>
-            <h2 className={baseStyles.heading}>样式与画布</h2>
-            <p className={baseStyles.empty}>
+          <div className={baseStyles.modeIntro}>
+            <span className={baseStyles.modeLabel}>格式</span>
+            <h2 className={baseStyles.modeHeading}>样式与画布</h2>
+            <p className={baseStyles.modeDescription}>
               {activeSubtab === 'topic'
                 ? hasSelection
                   ? isMultiSelection
@@ -186,11 +186,11 @@ export function FormatPanel({
           {onCollapse ? (
             <IconButton
               label="隐藏右侧栏"
-              icon="back"
-              tone="secondary"
+              icon="chevronRight"
+              tone="ghost"
               size="sm"
-              aria-controls={id}
               className={baseStyles.collapseButton}
+              aria-controls={id}
               onClick={onCollapse}
             />
           ) : null}
