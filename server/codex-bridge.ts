@@ -738,18 +738,69 @@ interface CreateCodexBridgeOptions {
   promptStore?: SystemPromptStore
 }
 
+const STATUS_PROMPT_FALLBACK_SUMMARY = '系统 Prompt 加载失败'
+const STATUS_PROMPT_FALLBACK_VERSION = 'unavailable'
+
+function createStatusRequestFailedIssue(message: string): CodexBridgeIssue {
+  return {
+    code: 'request_failed',
+    message,
+  }
+}
+
 export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBridge {
   const runner = options?.runner ?? createCodexRunner()
   const promptStore = options?.promptStore ?? createSystemPromptStore()
 
   const buildStatus = async (): Promise<CodexStatus> => {
-    const [runnerStatus, loadedPrompt] = await Promise.all([
+    const [runnerStatusResult, loadedPromptResult] = await Promise.allSettled([
       runner.getStatus(),
       promptStore.loadPrompt(),
     ])
 
+    const runnerStatus =
+      runnerStatusResult.status === 'fulfilled'
+        ? runnerStatusResult.value
+        : {
+            cliInstalled: false,
+            loggedIn: false,
+            authProvider: null,
+            ready: false,
+            issues: [
+              createStatusRequestFailedIssue(
+                runnerStatusResult.reason instanceof Error
+                  ? `本机 Codex 状态检查失败：${runnerStatusResult.reason.message}`
+                  : '本机 Codex 状态检查失败，请查看 bridge 日志后重试。',
+              ),
+            ],
+          }
+
+    const promptIssue =
+      loadedPromptResult.status === 'rejected'
+        ? createStatusRequestFailedIssue(
+            loadedPromptResult.reason instanceof Error
+              ? `系统 Prompt 加载失败：${loadedPromptResult.reason.message}`
+              : '系统 Prompt 加载失败，请查看 bridge 日志后重试。',
+          )
+        : null
+
+    const issues = promptIssue
+      ? [...runnerStatus.issues, promptIssue]
+      : runnerStatus.issues
+
+    const loadedPrompt =
+      loadedPromptResult.status === 'fulfilled'
+        ? loadedPromptResult.value
+        : {
+            summary: STATUS_PROMPT_FALLBACK_SUMMARY,
+            version: STATUS_PROMPT_FALLBACK_VERSION,
+            fullPrompt: '',
+          }
+
     return {
       ...runnerStatus,
+      ready: runnerStatus.ready && promptIssue === null,
+      issues,
       systemPromptSummary: loadedPrompt.summary,
       systemPromptVersion: loadedPrompt.version,
       systemPrompt: loadedPrompt.fullPrompt,

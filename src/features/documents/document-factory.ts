@@ -63,7 +63,7 @@ export function createMindMapDocument(title = '未命名脑图'): MindMapDocumen
     workspace: {
       selectedTopicId: rootId,
       chrome: {
-        leftSidebarOpen: true,
+        leftSidebarOpen: false,
         rightSidebarOpen: true,
       },
       hierarchyCollapsedTopicIds: [],

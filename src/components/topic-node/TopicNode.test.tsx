@@ -50,7 +50,7 @@ describe('TopicNode', () => {
     useEditorStore.getState().setDocument(document)
     renderTopicNode(createTopicNodeProps(branchId, document))
 
-    expect(screen.getByLabelText('已添加备注')).toBeInTheDocument()
+    expect(screen.getByLabelText('已添加详细内容')).toBeInTheDocument()
     expect(screen.getByText('分支一').closest('[data-selected]')).toHaveAttribute(
       'data-selected',
       'false',
@@ -112,5 +112,18 @@ describe('TopicNode', () => {
 
     expect(screen.getByLabelText('AI 锁定节点')).toBeInTheDocument()
     expect(screen.getByText('分支一').closest('[data-selected]')).toHaveAttribute('data-selected', 'true')
+  })
+
+  it('shows sticker badges and overflow count in the node meta row', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    document.topics[branchId].metadata.stickers = ['smile', 'rocket', 'heart']
+
+    useEditorStore.getState().setDocument(document)
+    renderTopicNode(createTopicNodeProps(branchId, document))
+
+    expect(screen.getByLabelText('贴纸：开心')).toBeInTheDocument()
+    expect(screen.getByLabelText('贴纸：冲刺')).toBeInTheDocument()
+    expect(screen.getByText('+1')).toBeInTheDocument()
   })
 })

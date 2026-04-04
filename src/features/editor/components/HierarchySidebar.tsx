@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import { Icon, IconButton } from '../../../components/ui'
+import { topicStickerGlyphs } from '../../documents/topic-decorations'
 import type { MindMapDocument } from '../../documents/types'
 import styles from './HierarchySidebar.module.css'
 
@@ -62,8 +63,9 @@ export function HierarchySidebar({
     const hasAttachments = topic.metadata.attachments.length > 0
     const task = topic.metadata.task
     const markers = topic.metadata.markers.slice(0, 2)
+    const stickers = (topic.metadata.stickers ?? []).slice(0, 2)
     const description = [
-      hasNote ? '已添加备注' : '',
+      hasNote ? '已添加详细内容' : '',
       isLocked ? 'AI 已锁定' : '',
       task ? `任务：${task.status}` : '',
       hasLinks ? '包含链接' : '',
@@ -130,6 +132,16 @@ export function HierarchySidebar({
                   <Icon name={markerIconMap[marker]} size={11} strokeWidth={1.9} />
                 </span>
               ))}
+              {stickers.map((sticker) => (
+                <span
+                  key={sticker}
+                  className={classNames(styles.metaIndicator, styles.stickerIndicator)}
+                  data-sticker-indicator={sticker}
+                  aria-hidden="true"
+                >
+                  {topicStickerGlyphs[sticker]}
+                </span>
+              ))}
               {task ? (
                 <span
                   className={styles.metaIndicator}
@@ -191,24 +203,20 @@ export function HierarchySidebar({
   return (
     <aside id={id} className={classNames(styles.sidebar, className)} data-mode={mode}>
       <div className={styles.header}>
-        <div className={styles.headerTop}>
-          <span className={styles.badge}>HIERARCHY</span>
+        <div className={styles.chrome}>
           {onCollapse ? (
             <IconButton
-              label="隐藏层级栏"
+              label="隐藏左侧栏"
               icon="back"
-              tone="ghost"
+              tone="secondary"
               size="sm"
               className={styles.collapseButton}
               onClick={onCollapse}
             />
           ) : null}
-        </div>
-
-        <div className={styles.headerContent}>
           <h2 className={styles.title}>{document.title}</h2>
-          <p className={styles.subtitle}>轻量导航负责定位主题，不承载额外编辑逻辑。</p>
         </div>
+        <p className={styles.subtitle}>轻量导航负责定位主题，不承载额外编辑逻辑。</p>
       </div>
 
       <nav className={styles.tree} aria-label="主题层级">

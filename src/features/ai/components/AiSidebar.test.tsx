@@ -39,6 +39,7 @@ function renderSidebar(overrides?: Partial<ComponentProps<typeof AiSidebar>>) {
     archivedSessions: [],
     status: readyStatus,
     statusError: null,
+    statusFailureKind: null,
     statusFeedback: null,
     settings,
     settingsError: null,
@@ -48,7 +49,7 @@ function renderSidebar(overrides?: Partial<ComponentProps<typeof AiSidebar>>) {
       {
         id: 'msg_1',
         role: 'assistant',
-        content: '这里是一条 AI 回答。',
+        content: '这里是一条 AI 回复。',
         createdAt: 1,
       } satisfies AiMessage,
     ],
@@ -88,7 +89,7 @@ describe('AiSidebar', () => {
   it('renders focus chips and messages, and can check codex status', async () => {
     const props = renderSidebar()
 
-    expect(screen.getByText('这里是一条 AI 回答。')).toBeInTheDocument()
+    expect(screen.getByText('这里是一条 AI 回复。')).toBeInTheDocument()
     expect(screen.getByText('中心主题')).toBeInTheDocument()
     expect(screen.getByText('整张脑图')).toBeInTheDocument()
 
@@ -96,23 +97,45 @@ describe('AiSidebar', () => {
     expect(props.onRevalidate).toHaveBeenCalledTimes(1)
   })
 
-  it('auto expands service remediation and shows service-specific composer copy', () => {
+  it('shows service remediation when the local bridge is unavailable', () => {
     renderSidebar({
       selectedTopics: [],
       status: null,
+      statusFailureKind: 'bridge_unavailable',
       statusError: '本机 Codex bridge 无响应，请确认本机 bridge 已启动，并检查 8787 端口服务。',
     })
 
     expect(screen.getByText('当前未连接到本机 Codex 服务，AI 发送能力已暂停。')).toBeInTheDocument()
-    expect(
-      screen.getByText('本机 Codex bridge 无响应，请确认本机 bridge 已启动，并检查 8787 端口服务。'),
-    ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重新检查服务' })).toBeInTheDocument()
     expect(screen.getByText('本机 Codex 服务未连接，请先运行 pnpm dev 或 pnpm dev:web。')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('当前无法发送，请先启动本机 Codex 服务。')).toBeDisabled()
-    expect(
-      screen.getByText('完整日志请查看本地启动终端或 bridge 输出，本页不展示原始日志内容。'),
-    ).toBeInTheDocument()
+  })
+
+  it('shows dedicated remediation when bridge status checks fail internally', () => {
+    renderSidebar({
+      status: null,
+      statusFailureKind: 'bridge_internal_error',
+      statusError: '本机 Codex bridge 在线，但状态检查失败，请查看 bridge 日志后重试。',
+    })
+
+    expect(screen.getByText('本机 Codex bridge 在线，但状态检查失败；修复 bridge 内部错误后才能继续发送。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新检查状态' })).toBeInTheDocument()
+    expect(screen.getByText('本机 Codex bridge 在线，但状态检查失败，请查看 bridge 日志并重新检查状态。')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('当前无法发送，请先修复状态检查失败的问题。')).toBeDisabled()
+  })
+
+  it('treats request_failed issues as internal status failures even with a 200 status payload', () => {
+    renderSidebar({
+      status: {
+        ...readyStatus,
+        ready: false,
+        issues: [{ code: 'request_failed', message: '系统 Prompt 加载失败：ENOENT' }],
+      },
+    })
+
+    expect(screen.getAllByText('状态检查失败')).toHaveLength(2)
+    expect(screen.getByText('系统 Prompt 加载失败：ENOENT')).toBeInTheDocument()
+    expect(screen.queryByText('当前 Codex 验证信息不可用，修复登录或订阅后才能继续发送。')).not.toBeInTheDocument()
   })
 
   it('shows dedicated remediation when bridge cannot resolve the codex cli', () => {
@@ -132,13 +155,9 @@ describe('AiSidebar', () => {
       },
     })
 
-    expect(
-      screen.getByText('当前 bridge 没有解析到可用的本机 Codex CLI，修复命令解析后才能继续发送。'),
-    ).toBeInTheDocument()
+    expect(screen.getByText('当前 bridge 没有解析到可用的本机 Codex CLI，修复命令解析后才能继续发送。')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重新检查 CLI' })).toBeInTheDocument()
-    expect(
-      screen.getByText('当前 bridge 未解析到本机 Codex CLI，请确认安装后重新运行 pnpm dev 或 pnpm dev:server。'),
-    ).toBeInTheDocument()
+    expect(screen.getByText('当前 bridge 未解析到本机 Codex CLI，请确认安装后重新运行 pnpm dev 或 pnpm dev:server。')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('当前无法发送，请先让 bridge 识别本机 Codex CLI。')).toBeDisabled()
   })
 
@@ -172,7 +191,7 @@ describe('AiSidebar', () => {
 
     expect(screen.getByText('已重新检查，本机 Codex 当前可用。')).toBeInTheDocument()
     expect(screen.getByText('最近一次执行失败')).toBeInTheDocument()
-    expect(screen.getByText(/这不是登录问题，重新验证不会解决/)).toBeInTheDocument()
+    expect(screen.getByText(/这是应用端格式问题，不是登录问题/)).toBeInTheDocument()
     expect(screen.getAllByText('本地 AI bridge 的输出 schema 与当前 Codex CLI 不兼容。')).toHaveLength(2)
   })
 
@@ -181,9 +200,7 @@ describe('AiSidebar', () => {
       isCheckingStatus: true,
     })
 
-    expect(
-      screen.getByText('已检测到本机 Codex CLI 与 ChatGPT 登录状态，可以直接基于当前脑图发起对话。'),
-    ).toBeInTheDocument()
+    expect(screen.getByText('已检测到本机 Codex CLI 与 ChatGPT 登录状态，可以直接基于当前脑图发起对话。')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '检查中' }))
 

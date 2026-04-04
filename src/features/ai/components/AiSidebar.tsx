@@ -1,5 +1,4 @@
-import type { ReactNode } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AiExecutionError,
   AiMessage,
@@ -41,6 +40,7 @@ interface AiSidebarProps {
   archivedSessions: AiSessionSummary[]
   status: CodexStatus | null
   statusError: string | null
+  statusFailureKind?: 'bridge_unavailable' | 'bridge_internal_error' | null
   statusFeedback: AiStatusFeedback | null
   settings: CodexSettings | null
   settingsError: string | null
@@ -77,7 +77,6 @@ interface AiSidebarProps {
   id?: string
   className?: string
   mode?: 'docked' | 'drawer'
-  tabs?: ReactNode
 }
 
 function classNames(...values: Array<string | false | null | undefined>) {
@@ -97,6 +96,7 @@ export function AiSidebar({
   archivedSessions,
   status,
   statusError,
+  statusFailureKind = null,
   statusFeedback,
   settings,
   settingsError,
@@ -128,21 +128,31 @@ export function AiSidebar({
   onDeleteSession,
   onRestoreArchivedSession,
   onDeleteArchivedSession,
+  onCollapse,
   id,
   className,
   mode = 'docked',
-  tabs,
 }: AiSidebarProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [settingsDraft, setSettingsDraft] = useState('')
   const [hasEditedSettingsDraft, setHasEditedSettingsDraft] = useState(false)
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const [isStatusExpanded, setIsStatusExpanded] = useState(false)
+  const [openMenuSessionId, setOpenMenuSessionId] = useState<string | null>(null)
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState('')
+  const menuRef = useRef<HTMLDivElement>(null)
+  const editInputRef = useRef<HTMLInputElement>(null)
 
+  const statusIssues = status?.issues ?? []
   const isReady = status?.ready ?? false
-  const isServiceDisconnected = status === null
-  const hasCliMissingIssue = status?.issues?.some((issue) => issue.code === 'cli_missing') ?? false
-  const needsVerification = status !== null && !isReady && !hasCliMissingIssue
+  const hasRequestFailedIssue = statusIssues.some((issue) => issue.code === 'request_failed')
+  const hasInternalStatusFailure =
+    statusFailureKind === 'bridge_internal_error' || hasRequestFailedIssue
+  const isServiceDisconnected = status === null && statusFailureKind !== 'bridge_internal_error'
+  const hasCliMissingIssue = statusIssues.some((issue) => issue.code === 'cli_missing')
+  const needsVerification =
+    status !== null && !isReady && !hasCliMissingIssue && !hasInternalStatusFailure
   const shouldAutoExpandStatus =
     isCheckingStatus ||
     statusError !== null ||
@@ -152,23 +162,29 @@ export function AiSidebar({
   const composerDisabled = !isReady
   const composerDisabledHint = isServiceDisconnected
     ? '本机 Codex 服务未连接，请先运行 pnpm dev 或 pnpm dev:web。'
-    : hasCliMissingIssue
-      ? '当前 bridge 未解析到本机 Codex CLI，请确认安装后重新运行 pnpm dev 或 pnpm dev:server。'
-      : '当前 Codex 需要重新验证，请运行 codex login --device-auth 后再试。'
+    : hasInternalStatusFailure
+      ? '本机 Codex bridge 在线，但状态检查失败，请查看 bridge 日志并重新检查状态。'
+      : hasCliMissingIssue
+        ? '当前 bridge 未解析到本机 Codex CLI，请确认安装后重新运行 pnpm dev 或 pnpm dev:server。'
+        : '当前 Codex 需要重新验证，请运行 codex login --device-auth 后再试。'
   const composerDisabledPlaceholder = isServiceDisconnected
     ? '当前无法发送，请先启动本机 Codex 服务。'
-    : hasCliMissingIssue
-      ? '当前无法发送，请先让 bridge 识别本机 Codex CLI。'
-      : '当前无法发送，请先完成 Codex 重新验证。'
+    : hasInternalStatusFailure
+      ? '当前无法发送，请先修复状态检查失败的问题。'
+      : hasCliMissingIssue
+        ? '当前无法发送，请先让 bridge 识别本机 Codex CLI。'
+        : '当前无法发送，请先完成 Codex 重新验证。'
   const statusButtonActionLabel = isCheckingStatus
     ? '检查中'
     : isReady
       ? '检查状态'
       : isServiceDisconnected
         ? '重新检查服务'
-        : hasCliMissingIssue
-          ? '重新检查 CLI'
-          : '重新验证'
+        : hasInternalStatusFailure
+          ? '重新检查状态'
+          : hasCliMissingIssue
+            ? '重新检查 CLI'
+            : '重新验证'
 
   const activeSession = useMemo(
     () => sessionList.find((session) => session.sessionId === activeSessionId) ?? null,
@@ -190,6 +206,9 @@ export function AiSidebar({
     }
     if (isServiceDisconnected) {
       return { label: '未连接服务', tone: 'secondary' as const, icon: 'error' as const }
+    }
+    if (hasInternalStatusFailure) {
+      return { label: '状态检查失败', tone: 'secondary' as const, icon: 'error' as const }
     }
     if (hasCliMissingIssue) {
       return { label: 'CLI 不可用', tone: 'secondary' as const, icon: 'error' as const }
@@ -228,11 +247,88 @@ export function AiSidebar({
     onRevalidate()
   }
 
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setOpenMenuSessionId(null)
+      }
+    }
+
+    if (openMenuSessionId) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [openMenuSessionId])
+
+  // Focus input when editing starts
+  useEffect(() => {
+    if (editingSessionId && editInputRef.current) {
+      editInputRef.current.focus()
+      editInputRef.current.select()
+    }
+  }, [editingSessionId])
+
+  const handleMenuToggle = (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation()
+    setOpenMenuSessionId(openMenuSessionId === sessionId ? null : sessionId)
+  }
+
+  const handleStartRename = (e: React.MouseEvent, session: { sessionId: string; title: string }) => {
+    e.stopPropagation()
+    setOpenMenuSessionId(null)
+    setEditingSessionId(session.sessionId)
+    setEditingTitle(session.title)
+  }
+
+  const handleConfirmRename = () => {
+    if (editingSessionId && editingTitle.trim()) {
+      // TODO: Call rename API when available
+      // For now, just close the editing state
+      setEditingSessionId(null)
+      setEditingTitle('')
+    }
+  }
+
+  const handleCancelRename = () => {
+    setEditingSessionId(null)
+    setEditingTitle('')
+  }
+
+  const handleArchiveFromMenu = (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation()
+    setOpenMenuSessionId(null)
+    onArchiveSession(sessionId)
+  }
+
+  const handleDeleteFromMenu = (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation()
+    setOpenMenuSessionId(null)
+    onDeleteSession(sessionId)
+  }
+
   return (
     <>
       <section id={id} className={classNames(styles.panel, className)} data-mode={mode}>
         <div className={styles.header}>
-          {tabs ? <div className={styles.tabs}>{tabs}</div> : null}
+          <div className={styles.chrome}>
+            <div className={styles.modeIntro}>
+              <span className={styles.modeLabel}>AI</span>
+              <h2 className={styles.modeHeading}>智能协作</h2>
+              <p className={styles.modeDescription}>基于当前脑图上下文发起对话、检查状态并应用结果。</p>
+            </div>
+            {onCollapse ? (
+              <IconButton
+                label="隐藏右侧栏"
+                icon="back"
+                tone="secondary"
+                size="sm"
+                aria-controls={id}
+                className={styles.collapseButton}
+                onClick={onCollapse}
+              />
+            ) : null}
+          </div>
 
           <div className={styles.toolbarRow1}>
             <div className={styles.dropdownWrapper}>
@@ -264,19 +360,86 @@ export function AiSidebar({
               {isDropdownOpen && sessionList.length ? (
                 <div className={styles.dropdownMenu} role="listbox">
                   {sessionList.map((session) => (
-                    <button
+                    <div
                       key={session.sessionId}
-                      type="button"
                       className={classNames(
-                        styles.dropdownItem,
+                        styles.dropdownItemWrapper,
                         session.sessionId === activeSessionId && styles.dropdownItemActive,
                       )}
-                      role="option"
-                      aria-selected={session.sessionId === activeSessionId}
-                      onClick={() => handleSwitchSession(session.sessionId)}
                     >
-                      {session.title}
-                    </button>
+                      {editingSessionId === session.sessionId ? (
+                        <input
+                          ref={editInputRef}
+                          type="text"
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          onBlur={handleConfirmRename}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              handleConfirmRename()
+                            }
+                            if (e.key === 'Escape') {
+                              e.preventDefault()
+                              handleCancelRename()
+                            }
+                          }}
+                          className={styles.dropdownItemWithMenu}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className={styles.dropdownItemWithMenu}
+                          role="option"
+                          aria-selected={session.sessionId === activeSessionId}
+                          onClick={() => handleSwitchSession(session.sessionId)}
+                        >
+                          {session.title}
+                        </button>
+                      )}
+                      {editingSessionId !== session.sessionId && (
+                        <>
+                          <button
+                            type="button"
+                            className={styles.menuButton}
+                            onClick={(e) => handleMenuToggle(e, session.sessionId)}
+                            aria-label="会话选项"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                              <circle cx="8" cy="4" r="1.5" />
+                              <circle cx="8" cy="8" r="1.5" />
+                              <circle cx="8" cy="12" r="1.5" />
+                            </svg>
+                          </button>
+                          {openMenuSessionId === session.sessionId && (
+                            <div ref={menuRef} className={styles.sessionContextMenu}>
+                              <button
+                                type="button"
+                                className={styles.contextMenuItem}
+                                onClick={(e) => handleStartRename(e, session)}
+                              >
+                                重命名
+                              </button>
+                              <button
+                                type="button"
+                                className={styles.contextMenuItem}
+                                onClick={(e) => handleArchiveFromMenu(e, session.sessionId)}
+                              >
+                                归档
+                              </button>
+                              <button
+                                type="button"
+                                className={classNames(styles.contextMenuItem, styles.contextMenuItemDanger)}
+                                onClick={(e) => handleDeleteFromMenu(e, session.sessionId)}
+                              >
+                                删除
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
                   ))}
                 </div>
               ) : null}
@@ -298,32 +461,14 @@ export function AiSidebar({
               className={classNames(
                 styles.statusButton,
                 isReady && styles.statusButtonReady,
-                isServiceDisconnected && styles.statusButtonDisconnected,
+                (isServiceDisconnected || hasInternalStatusFailure) && styles.statusButtonDisconnected,
                 (needsVerification || hasCliMissingIssue) && styles.statusButtonError,
               )}
             >
               {statusButtonState.label}
             </Button>
 
-            <div className={styles.actionButtons}>
-              <IconButton
-                label="归档当前会话"
-                icon="archive"
-                tone="ghost"
-                size="sm"
-                onClick={() => onArchiveSession(activeSessionId ?? undefined)}
-                disabled={!activeSession}
-              />
-              <IconButton
-                label="删除当前会话"
-                icon="delete"
-                tone="ghost"
-                size="sm"
-                onClick={() => onDeleteSession(activeSessionId ?? undefined)}
-                disabled={!activeSession}
-              />
-              <IconButton label="AI 设置" icon="settings" tone="ghost" size="sm" onClick={handleOpenSettings} />
-            </div>
+            <IconButton label="AI 设置" icon="settings" tone="ghost" size="sm" onClick={handleOpenSettings} />
           </div>
 
           {isStatusExpanded ? (
@@ -335,12 +480,20 @@ export function AiSidebar({
                       styles.statusBadge,
                       isReady
                         ? styles.statusBadgeReady
-                        : isServiceDisconnected || hasCliMissingIssue
+                        : isServiceDisconnected || hasCliMissingIssue || hasInternalStatusFailure
                           ? styles.statusBadgeDisconnected
                           : styles.statusBadgeNeedAuth,
                     )}
                   >
-                    {isReady ? '可用' : isServiceDisconnected ? '未连接服务' : hasCliMissingIssue ? 'CLI 不可用' : '需要验证'}
+                    {isReady
+                      ? '可用'
+                      : isServiceDisconnected
+                        ? '未连接服务'
+                        : hasInternalStatusFailure
+                          ? '状态检查失败'
+                          : hasCliMissingIssue
+                            ? 'CLI 不可用'
+                            : '需要验证'}
                   </span>
                   <span className={styles.statusVersion}>Prompt {status?.systemPromptVersion ?? '未加载'}</span>
                 </div>
@@ -373,10 +526,13 @@ export function AiSidebar({
                   <p className={styles.statusText}>
                     {isServiceDisconnected
                       ? '当前未连接到本机 Codex 服务，AI 发送能力已暂停。'
-                      : hasCliMissingIssue
-                        ? '当前 bridge 没有解析到可用的本机 Codex CLI，修复命令解析后才能继续发送。'
-                        : '当前 Codex 验证信息不可用，修复登录或订阅后才能继续发送。'}
+                      : hasInternalStatusFailure
+                        ? '本机 Codex bridge 在线，但状态检查失败；修复 bridge 内部错误后才能继续发送。'
+                        : hasCliMissingIssue
+                          ? '当前 bridge 没有解析到可用的本机 Codex CLI，修复命令解析后才能继续发送。'
+                          : '当前 Codex 验证信息不可用，修复登录或订阅后才能继续发送。'}
                   </p>
+
                   {isServiceDisconnected ? (
                     <ol className={styles.issueList}>
                       <li>
@@ -398,21 +554,29 @@ export function AiSidebar({
                         访问 <code>http://127.0.0.1:8787/api/codex/status</code> 确认 bridge 已恢复可达。
                       </li>
                     </ol>
+                  ) : hasInternalStatusFailure ? (
+                    <ol className={styles.issueList}>
+                      <li>bridge 进程仍在线，但状态检查失败；请优先查看本地启动终端或 bridge 输出。</li>
+                      <li>
+                        重新点击“重新检查状态”，确认 <code>/api/codex/status</code> 是否已恢复为 <code>200</code> JSON 响应。
+                      </li>
+                      <li>
+                        如果反复失败，先停止当前开发进程，再重新运行 <code>pnpm dev</code>。
+                      </li>
+                    </ol>
                   ) : hasCliMissingIssue ? (
                     <ol className={styles.issueList}>
                       <li>
                         确认本机已经安装并可执行 <code>codex</code> 命令。
                       </li>
                       <li>
-                        如果刚安装 CLI 或刚更新 PATH，请重新运行 <code>pnpm dev</code> 或{' '}
-                        <code>pnpm dev:web</code>，让 bridge 继承最新环境变量。
+                        如果刚安装 CLI 或刚更新 PATH，请重新运行 <code>pnpm dev</code> 或 <code>pnpm dev:web</code>，
+                        让 bridge 继承最新环境变量。
                       </li>
                       <li>
                         如果前端已在运行，可单独执行 <code>pnpm dev:server</code> 重启 <code>8787</code> 服务。
                       </li>
-                      <li>
-                        Windows 下如果是从 VS Code 启动开发环境，必要时重开 VS Code 或终端后再试。
-                      </li>
+                      <li>Windows 下如果是从 VS Code 启动开发环境，必要时重启 VS Code 或终端后再试。</li>
                     </ol>
                   ) : (
                     <ol className={styles.issueList}>
@@ -425,9 +589,10 @@ export function AiSidebar({
                       <li>完成后回到这里点击“重新验证”。</li>
                     </ol>
                   )}
-                  {status?.issues?.length ? (
+
+                  {statusIssues.length ? (
                     <ul className={styles.issueDetails}>
-                      {status.issues.map((issue) => (
+                      {statusIssues.map((issue) => (
                         <li key={`${issue.code}:${issue.message}`}>{issue.message}</li>
                       ))}
                     </ul>
@@ -450,6 +615,7 @@ export function AiSidebar({
                   ) : null}
                 </div>
               ) : null}
+
               {statusError || lastExecutionError ? (
                 <p className={styles.statusLogHint}>
                   完整日志请查看本地启动终端或 bridge 输出，本页不展示原始日志内容。

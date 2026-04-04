@@ -1,25 +1,20 @@
-import type { KeyboardEvent, ReactNode } from 'react'
+import type { KeyboardEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { Button, SegmentedControl } from '../../../components/ui'
+import { Button, Icon, IconButton } from '../../../components/ui'
 import { createTopicAttachmentRef, createTopicLink } from '../../documents/topic-defaults'
 import type {
-  BranchSide,
-  MindMapTheme,
   TopicAttachmentRef,
   TopicLink,
   TopicLinkType,
-  TopicMarker,
   TopicMetadataPatch,
   TopicNode,
   TopicRichTextDocument,
-  TopicStylePatch,
   TopicTaskPriority,
   TopicTaskStatus,
 } from '../../documents/types'
 import {
   TOPIC_ATTACHMENT_SOURCES,
   TOPIC_LINK_TYPES,
-  TOPIC_MARKERS,
   TOPIC_TASK_PRIORITIES,
   TOPIC_TASK_STATUSES,
 } from '../../documents/types'
@@ -35,21 +30,12 @@ interface PropertiesPanelProps {
   isFirstLevel: boolean
   draftTitle: string
   isInspectorEditing: boolean
-  theme: Pick<MindMapTheme, 'surface' | 'text' | 'accent'>
   topicOptions: Array<{ id: string; title: string }>
-  onRenameStart: () => void
   onRenameChange: (value: string) => void
   onRenameCommit: () => void
   onRenameCancel: () => void
-  onAddChild: () => void
-  onAddSibling: () => void
-  onDelete: () => void
   onNoteChange: (noteRich: TopicRichTextDocument | null) => void
   onMetadataChange: (patch: TopicMetadataPatch) => void
-  onStyleChange: (patch: TopicStylePatch) => void
-  onApplyStyleToSelected?: (patch: TopicStylePatch) => void
-  onBranchSideChange: (side: BranchSide) => void
-  onResetPosition: () => void
   onToggleAiLock: (aiLocked: boolean) => void
   onLockSelected?: () => void
   onUnlockSelected?: () => void
@@ -57,27 +43,6 @@ interface PropertiesPanelProps {
   id?: string
   className?: string
   mode?: 'docked' | 'drawer'
-  tabs?: ReactNode
-}
-
-const sideOptions: BranchSide[] = ['auto', 'left', 'right']
-const emphasisOptions = [
-  { value: 'normal', label: '默认' },
-  { value: 'focus', label: '强调' },
-] as const
-const variantOptions = [
-  { value: 'default', label: '默认' },
-  { value: 'soft', label: '柔和' },
-  { value: 'solid', label: '实色' },
-] as const
-
-const markerLabels: Record<TopicMarker, string> = {
-  important: '重点',
-  question: '问题',
-  idea: '灵感',
-  warning: '风险',
-  decision: '决策',
-  blocked: '阻塞',
 }
 
 const taskStatusLabels: Record<TopicTaskStatus, string> = {
@@ -94,14 +59,6 @@ const taskPriorityLabels: Record<TopicTaskPriority, string> = {
 
 function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ')
-}
-
-function isHexColor(value: string | undefined): value is string {
-  return /^#(?:[0-9a-fA-F]{6})$/.test(value ?? '')
-}
-
-function colorValue(value: string | undefined, fallback: string): string {
-  return isHexColor(value) ? value : fallback
 }
 
 function createDefaultTask() {
@@ -148,32 +105,33 @@ export function PropertiesPanel({
   isFirstLevel,
   draftTitle,
   isInspectorEditing,
-  theme,
   topicOptions,
-  onRenameStart,
   onRenameChange,
   onRenameCommit,
   onRenameCancel,
-  onAddChild,
-  onAddSibling,
-  onDelete,
   onNoteChange,
   onMetadataChange,
-  onStyleChange,
-  onApplyStyleToSelected,
-  onBranchSideChange,
-  onResetPosition,
   onToggleAiLock,
-  onLockSelected,
-  onUnlockSelected,
   id,
   className,
   mode = 'docked',
-  tabs,
+  onLockSelected,
+  onUnlockSelected,
+  onCollapse,
 }: PropertiesPanelProps) {
   const titleInputRef = useRef<HTMLInputElement>(null)
   const skipBlurActionRef = useRef(false)
   const [labelDraft, setLabelDraft] = useState('')
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
+    note: true,
+    metadata: false,
+    aiLock: true,
+  })
+  const [showAiLockTooltip, setShowAiLockTooltip] = useState(false)
+
+  const toggleSection = (section: string) => {
+    setCollapsedSections((prev) => ({ ...prev, [section]: !prev[section] }))
+  }
 
   useEffect(() => {
     if (!isInspectorEditing) {
@@ -235,102 +193,36 @@ export function PropertiesPanel({
     })
   }
 
-  const renderStyleControls = (
-    applyPatch: (patch: TopicStylePatch) => void,
-    style?: TopicNode['style'],
-  ) => (
-    <div className={styles.styleStack}>
-      <div className={styles.subsection}>
-        <span className={styles.sublabel}>强调态</span>
-        <SegmentedControl
-          value={style?.emphasis ?? 'normal'}
-          ariaLabel="节点强调态"
-          onChange={(value) => applyPatch({ emphasis: value as TopicStylePatch['emphasis'] })}
-          options={emphasisOptions.map((option) => ({
-            value: option.value,
-            label: option.label,
-          }))}
-        />
-      </div>
-
-      <div className={styles.subsection}>
-        <span className={styles.sublabel}>节点预设</span>
-        <SegmentedControl
-          value={style?.variant ?? 'default'}
-          ariaLabel="节点样式预设"
-          onChange={(value) => applyPatch({ variant: value as TopicStylePatch['variant'] })}
-          options={variantOptions.map((option) => ({
-            value: option.value,
-            label: option.label,
-          }))}
-        />
-      </div>
-
-      <div className={styles.colorGrid}>
-        <label className={styles.colorField}>
-          <span className={styles.sublabel}>背景色</span>
-          <div className={styles.colorControl}>
-            <input
-              type="color"
-              className={styles.colorInput}
-              aria-label="背景色"
-              value={colorValue(style?.background, theme.surface)}
-              onChange={(event) => applyPatch({ background: event.target.value })}
-            />
-            <Button tone="ghost" size="sm" className={styles.inlineButton} onClick={() => applyPatch({ background: null })}>
-              清除
-            </Button>
-          </div>
-        </label>
-
-        <label className={styles.colorField}>
-          <span className={styles.sublabel}>文字色</span>
-          <div className={styles.colorControl}>
-            <input
-              type="color"
-              className={styles.colorInput}
-              aria-label="文字色"
-              value={colorValue(style?.textColor, theme.text)}
-              onChange={(event) => applyPatch({ textColor: event.target.value })}
-            />
-            <Button tone="ghost" size="sm" className={styles.inlineButton} onClick={() => applyPatch({ textColor: null })}>
-              清除
-            </Button>
-          </div>
-        </label>
-
-        <label className={styles.colorField}>
-          <span className={styles.sublabel}>分支色</span>
-          <div className={styles.colorControl}>
-            <input
-              type="color"
-              className={styles.colorInput}
-              aria-label="分支色"
-              value={colorValue(style?.branchColor, theme.accent)}
-              onChange={(event) => applyPatch({ branchColor: event.target.value })}
-            />
-            <Button tone="ghost" size="sm" className={styles.inlineButton} onClick={() => applyPatch({ branchColor: null })}>
-              清除
-            </Button>
-          </div>
-        </label>
-      </div>
-    </div>
-  )
-
   return (
     <section id={id} className={classNames(styles.panel, className)} data-mode={mode}>
       <div className={styles.header}>
-        {tabs ? <div className={styles.tabs}>{tabs}</div> : null}
+        <div className={styles.chrome}>
+          <div className={styles.placeholder}>
+            <span className={styles.label}>详情</span>
+            <h2 className={styles.heading}>节点详情</h2>
+            <p className={styles.empty}>查看并编辑当前选区的备注、元数据和节点操作。</p>
+          </div>
+          {onCollapse ? (
+            <IconButton
+              label="隐藏右侧栏"
+              icon="back"
+              tone="secondary"
+              size="sm"
+              aria-controls={id}
+              className={styles.collapseButton}
+              onClick={onCollapse}
+            />
+          ) : null}
+        </div>
         {!topic ? (
           <div className={styles.placeholder}>
             <h2 className={styles.heading}>
-              {isMultiSelection ? `已选择 ${selectionCount} 个节点` : '未选中主题'}
+              {isMultiSelection ? `已选择 ${selectionCount} 个节点` : '未选中节点'}
             </h2>
             <p className={styles.empty}>
               {isMultiSelection
-                ? '多选模式下不显示单节点元数据表单。你可以直接批量锁定当前选区，或对样式字段做按需批量套用。'
-                : '点击画布中的任意节点后，可以在这里编辑备注、元数据、样式和方向。'}
+                ? '多选模式下不显示单节点详情表单。你仍然可以批量锁定当前选区，或切换到标记/格式面板继续操作。'
+                : '点击画布中的任意节点后，可以在这里编辑摘要、详细内容、元数据和操作项。'}
             </p>
             {isMultiSelection ? (
               <div className={styles.multiSelectSummary}>
@@ -368,7 +260,7 @@ export function PropertiesPanel({
                   ref={titleInputRef}
                   value={draftTitle}
                   className={styles.headingInput}
-                  aria-label="编辑主题标题"
+                  aria-label="编辑节点标题"
                   onBlur={() => {
                     if (skipBlurActionRef.current) {
                       skipBlurActionRef.current = false
@@ -395,71 +287,94 @@ export function PropertiesPanel({
               ) : (
                 <h2 className={styles.heading}>{topic.title}</h2>
               )}
-              <p className={styles.topicType}>
-                {isRoot ? '中心主题' : isFirstLevel ? '一级分支' : '普通主题'}
-              </p>
-              {isInspectorEditing ? (
-                <p className={styles.renameHint}>正在编辑右侧标题，按 Enter 保存，Esc 取消。</p>
-              ) : null}
-            </div>
-
-            <div className={styles.titleActions}>
-              <Button
-                tone="secondary"
-                size="sm"
-                iconStart="edit"
-                aria-pressed={isInspectorEditing}
-                className={isInspectorEditing ? styles.renameButtonActive : undefined}
-                onClick={() => {
-                  if (isInspectorEditing) {
-                    titleInputRef.current?.focus()
-                    titleInputRef.current?.select()
-                    return
+              {isRoot || isFirstLevel ? (
+                <p className={styles.topicType}>{isRoot ? '中心主题' : '一级分支'}</p>
+              ) : (
+                <select
+                  className={styles.topicTypeSelect}
+                  value={topic.metadata?.type || 'normal'}
+                  onChange={(event) =>
+                    onMetadataChange({
+                      type: event.target.value as 'normal' | 'milestone' | 'task',
+                    })
                   }
-
-                  onRenameStart()
-                }}
-              >
-                重命名
-              </Button>
+                >
+                  <option value="normal">普通主题</option>
+                  <option value="milestone">Milestone</option>
+                  <option value="task">Task</option>
+                </select>
+              )}
+              {isInspectorEditing ? (
+                <p className={styles.renameHint}>正在编辑标题，按 Enter 保存，Esc 取消。</p>
+              ) : null}
             </div>
           </div>
         )}
       </div>
 
-      {isMultiSelection ? (
-        <div className={styles.content}>
-          <div className={styles.block}>
-            <span className={styles.label}>批量样式</span>
-            <p className={styles.helperText}>
-              只会把你本次显式修改的字段写入当前选区，未改字段保持每个节点原样。
-            </p>
-            {renderStyleControls(
-              (patch) => onApplyStyleToSelected?.(patch),
-              {
-                emphasis: 'normal',
-                variant: 'default',
-              },
-            )}
-          </div>
-        </div>
-      ) : null}
-
       {topic && !isMultiSelection ? (
         <div className={styles.content}>
           <div className={styles.block}>
-            <span className={styles.label}>备注</span>
-            <TopicRichTextEditor
-              id="topic-note"
-              value={topic.noteRich}
-              fallbackPlainText={topic.note}
-              onChange={onNoteChange}
-            />
+            <button
+              type="button"
+              className={styles.blockHeader}
+              onClick={() => toggleSection('note')}
+              aria-expanded={!collapsedSections.note}
+            >
+              <span className={styles.label}>详细内容</span>
+              <svg
+                className={classNames(styles.chevron, !collapsedSections.note && styles.chevronOpen)}
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                fill="none"
+              >
+                <path
+                  d="M2.5 4.5L6 8L9.5 4.5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            {!collapsedSections.note && (
+              <TopicRichTextEditor
+                id="topic-note"
+                value={topic.noteRich}
+                fallbackPlainText={topic.note}
+                onChange={onNoteChange}
+              />
+            )}
           </div>
 
           <div className={styles.block}>
-            <span className={styles.label}>元数据</span>
+            <button
+              type="button"
+              className={styles.blockHeader}
+              onClick={() => toggleSection('metadata')}
+              aria-expanded={!collapsedSections.metadata}
+            >
+              <span className={styles.label}>元数据</span>
+              <svg
+                className={classNames(styles.chevron, !collapsedSections.metadata && styles.chevronOpen)}
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                fill="none"
+              >
+                <path
+                  d="M2.5 4.5L6 8L9.5 4.5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
 
+            {!collapsedSections.metadata && (
+            <>
             <div className={styles.subsection}>
               <span className={styles.sublabel}>标签</span>
               <div className={styles.chipList}>
@@ -501,37 +416,15 @@ export function PropertiesPanel({
             </div>
 
             <div className={styles.subsection}>
-              <span className={styles.sublabel}>标记</span>
-              <div className={styles.markerGrid}>
-                {TOPIC_MARKERS.map((marker) => {
-                  const active = topic.metadata.markers.includes(marker)
-                  return (
-                    <Button
-                      key={marker}
-                      type="button"
-                      tone={active ? 'secondary' : 'ghost'}
-                      size="sm"
-                      className={styles.markerButton}
-                      onClick={() =>
-                        onMetadataChange({
-                          markers: active
-                            ? topic.metadata.markers.filter((item) => item !== marker)
-                            : [...topic.metadata.markers, marker],
-                        })
-                      }
-                    >
-                      {markerLabels[marker]}
-                    </Button>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div className={styles.subsection}>
               <div className={styles.subsectionHeader}>
                 <span className={styles.sublabel}>任务</span>
                 {topic.metadata.task ? (
-                  <Button tone="ghost" size="sm" className={styles.inlineButton} onClick={() => onMetadataChange({ task: null })}>
+                  <Button
+                    tone="ghost"
+                    size="sm"
+                    className={styles.inlineButton}
+                    onClick={() => onMetadataChange({ task: null })}
+                  >
                     清除任务
                   </Button>
                 ) : null}
@@ -601,7 +494,12 @@ export function PropertiesPanel({
                   </label>
                 </div>
               ) : (
-                <Button tone="secondary" size="sm" className={styles.inlineButton} onClick={() => onMetadataChange({ task: createDefaultTask() })}>
+                <Button
+                  tone="secondary"
+                  size="sm"
+                  className={styles.inlineButton}
+                  onClick={() => onMetadataChange({ task: createDefaultTask() })}
+                >
                   启用任务
                 </Button>
               )}
@@ -695,7 +593,9 @@ export function PropertiesPanel({
                               className={styles.nativeSelect}
                               value={link.targetTopicId ?? ''}
                               aria-label="目标主题"
-                              onChange={(event) => updateLink(link.id, { targetTopicId: event.target.value })}
+                              onChange={(event) =>
+                                updateLink(link.id, { targetTopicId: event.target.value })
+                              }
                             >
                               {topicOptions.map((option) => (
                                 <option key={option.id} value={option.id}>
@@ -737,7 +637,10 @@ export function PropertiesPanel({
                       className={styles.inlineButton}
                       onClick={() =>
                         onMetadataChange({
-                          attachments: [...topic.metadata.attachments, createPlaceholderAttachment(source)],
+                          attachments: [
+                            ...topic.metadata.attachments,
+                            createPlaceholderAttachment(source),
+                          ],
                         })
                       }
                     >
@@ -758,7 +661,9 @@ export function PropertiesPanel({
                           className={styles.inlineButton}
                           onClick={() =>
                             onMetadataChange({
-                              attachments: topic.metadata.attachments.filter((item) => item.id !== attachment.id),
+                              attachments: topic.metadata.attachments.filter(
+                                (item) => item.id !== attachment.id,
+                              ),
                             })
                           }
                         >
@@ -788,7 +693,9 @@ export function PropertiesPanel({
                             className={styles.nativeInput}
                             value={attachment.name}
                             aria-label="附件名称"
-                            onChange={(event) => updateAttachment(attachment.id, { name: event.target.value })}
+                            onChange={(event) =>
+                              updateAttachment(attachment.id, { name: event.target.value })
+                            }
                           />
                         </label>
                         <label className={styles.fieldItemWide}>
@@ -797,7 +704,9 @@ export function PropertiesPanel({
                             className={styles.nativeInput}
                             value={attachment.uri}
                             aria-label="附件 URI"
-                            onChange={(event) => updateAttachment(attachment.id, { uri: event.target.value })}
+                            onChange={(event) =>
+                              updateAttachment(attachment.id, { uri: event.target.value })
+                            }
                           />
                         </label>
                         <label className={styles.fieldItemWide}>
@@ -806,7 +715,11 @@ export function PropertiesPanel({
                             className={styles.nativeInput}
                             value={attachment.mimeType ?? ''}
                             aria-label="附件 MIME Type"
-                            onChange={(event) => updateAttachment(attachment.id, { mimeType: event.target.value || null })}
+                            onChange={(event) =>
+                              updateAttachment(attachment.id, {
+                                mimeType: event.target.value || null,
+                              })
+                            }
                           />
                         </label>
                       </div>
@@ -817,69 +730,59 @@ export function PropertiesPanel({
                 )}
               </div>
             </div>
+            </>
+            )}
           </div>
 
           <div className={styles.block}>
-            <span className={styles.label}>样式</span>
-            {renderStyleControls(onStyleChange, topic.style)}
-          </div>
-
-          <div className={styles.block}>
-            <span className={styles.label}>一级分支方向</span>
-            <SegmentedControl
-              value={topic.branchSide}
-              ariaLabel="一级分支方向"
-              onChange={onBranchSideChange}
-              options={sideOptions.map((side) => ({
-                value: side,
-                label: side === 'auto' ? '自动' : side === 'left' ? '左侧' : '右侧',
-                disabled: !isFirstLevel,
-              }))}
-            />
-            {!isFirstLevel ? (
-              <p className={styles.helperText}>只有一级分支可以切换左右方向。</p>
-            ) : null}
-          </div>
-
-          <div className={styles.block}>
-            <span className={styles.label}>AI 锁定</span>
-            <Button
-              tone={topic.aiLocked ? 'secondary' : 'ghost'}
-              iconStart={topic.aiLocked ? 'lock' : 'unlock'}
-              className={styles.actionButton}
-              onClick={() => onToggleAiLock(!topic.aiLocked)}
+            <button
+              type="button"
+              className={styles.blockHeader}
+              onClick={() => toggleSection('aiLock')}
+              aria-expanded={!collapsedSections.aiLock}
             >
-              {topic.aiLocked ? '已锁定，点击解锁' : '允许 AI 修改此节点'}
-            </Button>
-            <p className={styles.helperText}>
-              这是 AI 写保护，不影响人工直接编辑。锁定后，AI 仍可读取该节点，并在其下生成子节点或基于它生成同级节点，但不会修改、移动或删除它。
-            </p>
-          </div>
-
-          <div className={styles.block}>
-            <span className={styles.label}>位置</span>
-            <Button tone="secondary" iconStart="fitView" className={styles.actionButton} onClick={onResetPosition}>
-              重置位置
-            </Button>
-          </div>
-
-          <div className={styles.block}>
-            <span className={styles.label}>操作</span>
-            <div className={styles.actions}>
-              <Button tone="primary" iconStart="add" className={styles.actionButton} onClick={onAddChild}>
-                新增子主题
+              <span className={styles.labelWithIcon}>
+                AI 锁定
+                <span
+                  className={styles.infoIcon}
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseEnter={() => setShowAiLockTooltip(true)}
+                  onMouseLeave={() => setShowAiLockTooltip(false)}
+                >
+                  <Icon name="info" size={14} strokeWidth={2} />
+                  {showAiLockTooltip && (
+                    <span className={styles.infoTooltip}>
+                      这是 AI 写保护，不影响人工直接编辑。锁定后，AI 仍可读取该节点，并在其下生成子节点或基于它生成同级节点，但不会修改、移动或删除它。
+                    </span>
+                  )}
+                </span>
+              </span>
+              <svg
+                className={classNames(styles.chevron, !collapsedSections.aiLock && styles.chevronOpen)}
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                fill="none"
+              >
+                <path
+                  d="M2.5 4.5L6 8L9.5 4.5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            {!collapsedSections.aiLock && (
+              <Button
+                tone={topic.aiLocked ? 'danger' : 'ghost'}
+                iconStart={topic.aiLocked ? 'lock' : 'unlock'}
+                className={styles.actionButton}
+                onClick={() => onToggleAiLock(!topic.aiLocked)}
+              >
+                {topic.aiLocked ? '已锁定，点击解锁' : '允许 AI 修改此节点'}
               </Button>
-              {!isRoot ? (
-                <Button tone="secondary" iconStart="copy" className={styles.actionButton} onClick={onAddSibling}>
-                  新增同级主题
-                </Button>
-              ) : null}
-              {!isRoot ? (
-                <Button tone="danger" iconStart="delete" className={styles.actionButton} onClick={onDelete}>
-                  删除主题
-                </Button>
-              ) : null}
-            </div>
+            )}
           </div>
         </div>
       ) : null}

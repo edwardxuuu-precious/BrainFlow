@@ -91,17 +91,22 @@ const baseRequest: AiChatRequest = {
   },
 }
 
+function createBridge(overrides?: Record<string, unknown>) {
+  return {
+    getStatus: vi.fn().mockResolvedValue(status),
+    revalidate: vi.fn().mockResolvedValue(status),
+    getSettings: vi.fn().mockResolvedValue(settings),
+    saveSettings: vi.fn().mockResolvedValue(settings),
+    resetSettings: vi.fn().mockResolvedValue(settings),
+    streamChat: vi.fn(),
+    planChanges: vi.fn(),
+    ...overrides,
+  }
+}
+
 describe('codex app', () => {
   it('returns codex status through the proxy', async () => {
-    const bridge = {
-      getStatus: vi.fn().mockResolvedValue(status),
-      revalidate: vi.fn().mockResolvedValue(status),
-      getSettings: vi.fn().mockResolvedValue(settings),
-      saveSettings: vi.fn().mockResolvedValue(settings),
-      resetSettings: vi.fn().mockResolvedValue(settings),
-      streamChat: vi.fn(),
-      planChanges: vi.fn(),
-    }
+    const bridge = createBridge()
     const app = createApp({ bridge })
 
     const response = await app.request('/api/codex/status')
@@ -111,20 +116,53 @@ describe('codex app', () => {
     expect(bridge.getStatus).toHaveBeenCalledTimes(1)
   })
 
+  it('returns a structured json 500 when status throws unexpectedly', async () => {
+    const logError = vi.fn()
+    const bridge = createBridge({
+      getStatus: vi.fn().mockRejectedValue(new Error('runner exploded')),
+    })
+    const app = createApp({ bridge, logError })
+
+    const response = await app.request('/api/codex/status')
+
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({
+      code: 'request_failed',
+      message: 'runner exploded',
+    })
+    expect(logError).toHaveBeenCalledWith('[codex] GET /api/codex/status failed', expect.any(Error))
+  })
+
+  it('returns a structured json 500 when revalidate throws unexpectedly', async () => {
+    const logError = vi.fn()
+    const bridge = createBridge({
+      revalidate: vi.fn().mockRejectedValue(new Error('prompt load failed')),
+    })
+    const app = createApp({ bridge, logError })
+
+    const response = await app.request('/api/codex/revalidate', {
+      method: 'POST',
+    })
+
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({
+      code: 'request_failed',
+      message: 'prompt load failed',
+    })
+    expect(logError).toHaveBeenCalledWith(
+      '[codex] POST /api/codex/revalidate failed',
+      expect.any(Error),
+    )
+  })
+
   it('reads, saves, and resets codex settings', async () => {
-    const bridge = {
-      getStatus: vi.fn().mockResolvedValue(status),
-      revalidate: vi.fn().mockResolvedValue(status),
-      getSettings: vi.fn().mockResolvedValue(settings),
+    const bridge = createBridge({
       saveSettings: vi.fn().mockResolvedValue({
         ...settings,
         businessPrompt: '新的业务 Prompt',
         version: 'settings-v2',
       }),
-      resetSettings: vi.fn().mockResolvedValue(settings),
-      streamChat: vi.fn(),
-      planChanges: vi.fn(),
-    }
+    })
     const app = createApp({ bridge })
 
     const readResponse = await app.request('/api/codex/settings')
@@ -160,17 +198,12 @@ describe('codex app', () => {
         operations: [],
       },
     }
-    const bridge = {
-      getStatus: vi.fn().mockResolvedValue(status),
-      revalidate: vi.fn().mockResolvedValue(status),
-      getSettings: vi.fn().mockResolvedValue(settings),
-      saveSettings: vi.fn().mockResolvedValue(settings),
-      resetSettings: vi.fn().mockResolvedValue(settings),
+    const bridge = createBridge({
       streamChat: vi
         .fn()
         .mockResolvedValue({ assistantMessage: result.assistantMessage, emittedDelta: false }),
       planChanges: vi.fn<() => Promise<AiChatResponse>>().mockResolvedValue(result),
-    }
+    })
     const app = createApp({ bridge })
 
     const chatResponse = await app.request('/api/codex/chat', {
@@ -194,12 +227,7 @@ describe('codex app', () => {
   })
 
   it('keeps the first-stage answer available when planning changes fails', async () => {
-    const bridge = {
-      getStatus: vi.fn().mockResolvedValue(status),
-      revalidate: vi.fn().mockResolvedValue(status),
-      getSettings: vi.fn().mockResolvedValue(settings),
-      saveSettings: vi.fn().mockResolvedValue(settings),
-      resetSettings: vi.fn().mockResolvedValue(settings),
+    const bridge = createBridge({
       streamChat: vi
         .fn()
         .mockResolvedValue({ assistantMessage: '这里是一条已成功生成的回答。', emittedDelta: false }),
@@ -208,7 +236,7 @@ describe('codex app', () => {
         .mockRejectedValue(
           new CodexBridgeError('request_failed', '第二阶段结构化落图失败，请稍后重试。'),
         ),
-    }
+    })
     const app = createApp({ bridge })
 
     const chatResponse = await app.request('/api/codex/chat', {

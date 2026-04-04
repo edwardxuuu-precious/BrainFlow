@@ -8,7 +8,7 @@ import {
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopicNode } from '../../components/topic-node/TopicNode'
-import { IconButton, ToolbarGroup } from '../../components/ui'
+import { Icon, IconButton, ToolbarGroup } from '../../components/ui'
 import { SaveIndicator } from '../../components/SaveIndicator'
 import { AiSidebar } from '../../features/ai/components/AiSidebar'
 import { useAiStore } from '../../features/ai/ai-store'
@@ -16,9 +16,16 @@ import {
   documentService,
   setRecentDocumentId,
 } from '../../features/documents/document-service'
-import type { DocumentService, MindMapDocument } from '../../features/documents/types'
-import { EditorSidebarTabs } from '../../features/editor/components/EditorSidebarTabs'
+import type {
+  DocumentService,
+  MindMapDocument,
+  TopicMarker,
+  TopicNode as MindMapTopic,
+  TopicSticker,
+} from '../../features/documents/types'
+import { FormatPanel } from '../../features/editor/components/FormatPanel'
 import { HierarchySidebar } from '../../features/editor/components/HierarchySidebar'
+import { MarkersPanel } from '../../features/editor/components/MarkersPanel'
 
 import { PropertiesPanel } from '../../features/editor/components/PropertiesPanel'
 import { SidebarRail } from '../../features/editor/components/SidebarRail'
@@ -52,7 +59,9 @@ interface RenameDraft {
 }
 
 type ViewportMode = 'desktop' | 'tablet' | 'mobile'
-type RightPanelTab = 'inspector' | 'ai'
+type RightPanelMode = 'details' | 'markers' | 'format' | 'ai'
+type MarkerSubtab = 'markers' | 'stickers'
+type FormatSubtab = 'topic' | 'canvas'
 
 function areFlowNodesEquivalent(
   currentNode: MindMapFlowNode,
@@ -152,10 +161,16 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const additiveSelectionUntilRef = useRef(0)
   const dragSnapshotRef = useRef<DragSnapshot | null>(null)
   const nodesRef = useRef<MindMapFlowNode[]>([])
+  const documentTitleInputRef = useRef<HTMLInputElement>(null)
+  const skipDocumentTitleBlurRef = useRef(false)
   const [isSpacePressed, setIsSpacePressed] = useState(false)
   const [renameDraft, setRenameDraft] = useState<RenameDraft>({ topicId: null, value: '' })
+  const [documentTitleDraft, setDocumentTitleDraft] = useState('')
+  const [isEditingDocumentTitle, setIsEditingDocumentTitle] = useState(false)
   const [aiDraft, setAiDraft] = useState('')
-  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('inspector')
+  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('details')
+  const [markerSubtab, setMarkerSubtab] = useState<MarkerSubtab>('markers')
+  const [formatSubtab, setFormatSubtab] = useState<FormatSubtab>('topic')
   const [rightSidebarWidth, setRightSidebarWidth] = useState(300)
 
   const [useFullDocument, setUseFullDocument] = useState(true)
@@ -182,20 +197,20 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const toggleTopicSelection = useEditorStore((state) => state.toggleTopicSelection)
   const clearSelection = useEditorStore((state) => state.clearSelection)
   const toggleHierarchyBranch = useEditorStore((state) => state.toggleHierarchyBranch)
-  const startEditing = useEditorStore((state) => state.startEditing)
   const stopEditing = useEditorStore((state) => state.stopEditing)
   const renameDocument = useEditorStore((state) => state.renameDocument)
   const renameTopic = useEditorStore((state) => state.renameTopic)
   const addChild = useEditorStore((state) => state.addChild)
-  const addSibling = useEditorStore((state) => state.addSibling)
   const updateNoteRich = useEditorStore((state) => state.updateNoteRich)
   const updateTopicMetadata = useEditorStore((state) => state.updateTopicMetadata)
   const updateTopicStyle = useEditorStore((state) => state.updateTopicStyle)
   const updateTopicsStyle = useEditorStore((state) => state.updateTopicsStyle)
-  const removeTopic = useEditorStore((state) => state.removeTopic)
+  const toggleTopicMarker = useEditorStore((state) => state.toggleTopicMarker)
+  const toggleTopicSticker = useEditorStore((state) => state.toggleTopicSticker)
+  const updateDocumentTheme = useEditorStore((state) => state.updateDocumentTheme)
+  const applyDocumentTheme = useEditorStore((state) => state.applyDocumentTheme)
   const setBranchSide = useEditorStore((state) => state.setBranchSide)
   const setTopicOffset = useEditorStore((state) => state.setTopicOffset)
-  const resetTopicOffset = useEditorStore((state) => state.resetTopicOffset)
   const setTopicAiLocked = useEditorStore((state) => state.setTopicAiLocked)
   const setTopicsAiLocked = useEditorStore((state) => state.setTopicsAiLocked)
   const setViewport = useEditorStore((state) => state.setViewport)
@@ -220,6 +235,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const aiError = useAiStore((state) => state.error)
   const aiStatus = useAiStore((state) => state.status)
   const aiStatusError = useAiStore((state) => state.statusError)
+  const aiStatusFailureKind = useAiStore((state) => state.statusFailureKind)
   const aiStatusFeedback = useAiStore((state) => state.statusFeedback)
   const aiLastExecutionError = useAiStore((state) => state.lastExecutionError)
   const aiSettings = useAiStore((state) => state.settings)
@@ -244,6 +260,15 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
 
   const layout = useMemo(() => (document ? layoutMindMap(document) : null), [document])
   const selectedTopic = activeTopicId && document ? document.topics[activeTopicId] ?? null : null
+  const selectedTopics = useMemo(
+    () =>
+      document
+        ? selectedTopicIds
+            .map((topicId) => document.topics[topicId])
+            .filter((topic): topic is MindMapTopic => !!topic)
+        : [],
+    [document, selectedTopicIds],
+  )
   const isRoot = !!document && activeTopicId === document.rootTopicId
   const isFirstLevel = !!selectedTopic && selectedTopic.parentId === document?.rootTopicId
   const selectionCount = selectedTopicIds.length
@@ -338,15 +363,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     window.addEventListener('mouseup', handleUp)
   }, [])
 
-  const rightSidebarTabs = (onCollapse?: () => void) => (
-    <EditorSidebarTabs
-      controlsId={RIGHT_SIDEBAR_ID}
-      activeTab={rightPanelTab}
-      onChange={setRightPanelTab}
-      onCollapse={onCollapse}
-    />
-  )
-
   const canUndoLastApplied =
     !!aiLastAppliedChange &&
     history.length === aiLastAppliedChange.historyLength &&
@@ -408,6 +424,23 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
       setAiDraft('')
     })
   }, [aiHydrate, document?.id, document?.title])
+
+  useEffect(() => {
+    if (isEditingDocumentTitle) {
+      return
+    }
+
+    setDocumentTitleDraft(document?.title ?? '')
+  }, [document?.title, isEditingDocumentTitle])
+
+  useEffect(() => {
+    if (!isEditingDocumentTitle) {
+      return
+    }
+
+    documentTitleInputRef.current?.focus()
+    documentTitleInputRef.current?.select()
+  }, [isEditingDocumentTitle])
 
   useEffect(() => {
     const syncViewportMode = () => {
@@ -585,15 +618,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     }
   }
 
-  const handleRenameFromInspector = () => {
-    if (!activeTopicId || !selectedTopic) {
-      return
-    }
-
-    setRenameDraft({ topicId: activeTopicId, value: selectedTopic.title })
-    startEditing(activeTopicId, 'inspector')
-  }
-
   const handleRenameCommit = () => {
     if (!activeTopicId) {
       stopEditing()
@@ -607,6 +631,21 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const handleRenameCancel = () => {
     setRenameDraft({ topicId: selectedTopic?.id ?? null, value: selectedTopic?.title ?? '' })
     stopEditing()
+  }
+
+  const startDocumentTitleEditing = () => {
+    setDocumentTitleDraft(document.title)
+    setIsEditingDocumentTitle(true)
+  }
+
+  const commitDocumentTitle = () => {
+    renameDocument(documentTitleDraft)
+    setIsEditingDocumentTitle(false)
+  }
+
+  const cancelDocumentTitleEditing = () => {
+    setDocumentTitleDraft(document.title)
+    setIsEditingDocumentTitle(false)
   }
 
   const openLeftSidebar = () => {
@@ -631,6 +670,24 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
 
   const closeRightSidebar = () => {
     setSidebarOpen('right', false)
+  }
+
+  const openSidebarMode = (mode: RightPanelMode) => {
+    if (isTablet) {
+      setSidebarOpen('left', false)
+    }
+
+    setRightPanelMode(mode)
+    setSidebarOpen('right', true)
+  }
+
+  const handleTopbarModeClick = (mode: RightPanelMode) => {
+    if (rightSidebarOpen && rightPanelMode === mode) {
+      closeRightSidebar()
+      return
+    }
+
+    openSidebarMode(mode)
   }
 
   const handleSendAiMessage = async () => {
@@ -659,6 +716,22 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     setSelection([topicId], topicId)
   }
 
+  const handleToggleMarker = (marker: TopicMarker) => {
+    if (selectedTopicIds.length === 0) {
+      return
+    }
+
+    toggleTopicMarker(selectedTopicIds, marker)
+  }
+
+  const handleToggleSticker = (sticker: TopicSticker) => {
+    if (selectedTopicIds.length === 0) {
+      return
+    }
+
+    toggleTopicSticker(selectedTopicIds, sticker)
+  }
+
   const handleNodeClick: NodeMouseHandler<MindMapFlowNode> = (event, node) => {
     // If in canvas picking mode for AI context, add the node to context
     if (isPickingCanvasNode) {
@@ -683,12 +756,11 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     className: string,
     onCollapse?: () => void,
   ) =>
-    rightPanelTab === 'ai' ? (
+    rightPanelMode === 'ai' ? (
       <AiSidebar
         id={RIGHT_SIDEBAR_ID}
         className={className}
         mode={mode}
-        tabs={rightSidebarTabs(onCollapse)}
         selectedTopics={aiSelectedTopics}
         allTopics={aiAllTopics}
         useFullDocument={useFullDocument}
@@ -701,6 +773,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         archivedSessions={aiArchivedSessions}
         status={aiStatus}
         statusError={aiStatusError}
+        statusFailureKind={aiStatusFailureKind}
         statusFeedback={aiStatusFeedback}
         messages={aiMessages}
         runStage={aiRunStage}
@@ -741,12 +814,41 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         resolveTopicTitle={(topicId) => document.topics[topicId]?.title ?? '已删除节点'}
         onCollapse={onCollapse}
       />
+    ) : rightPanelMode === 'markers' ? (
+      <MarkersPanel
+        id={RIGHT_SIDEBAR_ID}
+        className={className}
+        mode={mode}
+        selectedTopics={selectedTopics}
+        activeSubtab={markerSubtab}
+        onSubtabChange={setMarkerSubtab}
+        onToggleMarker={handleToggleMarker}
+        onToggleSticker={handleToggleSticker}
+        onCollapse={onCollapse}
+      />
+    ) : rightPanelMode === 'format' ? (
+      <FormatPanel
+        id={RIGHT_SIDEBAR_ID}
+        className={className}
+        mode={mode}
+        topic={selectionCount > 1 ? null : selectedTopic}
+        selectionCount={selectionCount}
+        isFirstLevel={isFirstLevel}
+        activeSubtab={formatSubtab}
+        theme={document.theme}
+        onSubtabChange={setFormatSubtab}
+        onStyleChange={(patch) => activeTopicId && updateTopicStyle(activeTopicId, patch)}
+        onApplyStyleToSelected={(patch) => updateTopicsStyle(selectedTopicIds, patch)}
+        onBranchSideChange={(side) => activeTopicId && setBranchSide(activeTopicId, side)}
+        onUpdateTheme={updateDocumentTheme}
+        onApplyThemePreset={applyDocumentTheme}
+        onCollapse={onCollapse}
+      />
     ) : (
       <PropertiesPanel
         id={RIGHT_SIDEBAR_ID}
         className={className}
         mode={mode}
-        tabs={rightSidebarTabs(onCollapse)}
         topic={selectionCount > 1 ? null : selectedTopic}
         selectionCount={selectionCount}
         selectedLockedCount={selectedLockedCount}
@@ -755,14 +857,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         isFirstLevel={isFirstLevel}
         draftTitle={draftTitle}
         isInspectorEditing={isInspectorEditing}
-        theme={{
-          surface: document.theme.surface,
-          text: document.theme.text,
-          accent: document.theme.accent,
-        }}
         topicOptions={topicOptions}
         onCollapse={onCollapse}
-        onRenameStart={handleRenameFromInspector}
         onRenameChange={(value) =>
           setRenameDraft({
             topicId: activeTopicId,
@@ -771,18 +867,11 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         }
         onRenameCommit={handleRenameCommit}
         onRenameCancel={handleRenameCancel}
-        onAddChild={() => activeTopicId && addChild(activeTopicId)}
-        onAddSibling={() => activeTopicId && addSibling(activeTopicId)}
-        onDelete={() => activeTopicId && removeTopic(activeTopicId)}
         onNoteChange={(noteRich) => activeTopicId && updateNoteRich(activeTopicId, noteRich)}
         onMetadataChange={(patch) => activeTopicId && updateTopicMetadata(activeTopicId, patch)}
-        onStyleChange={(patch) => activeTopicId && updateTopicStyle(activeTopicId, patch)}
-        onApplyStyleToSelected={(patch) => updateTopicsStyle(selectedTopicIds, patch)}
-        onBranchSideChange={(side) => activeTopicId && setBranchSide(activeTopicId, side)}
         onToggleAiLock={(aiLocked) => activeTopicId && setTopicAiLocked(activeTopicId, aiLocked)}
         onLockSelected={() => setTopicsAiLocked(selectedTopicIds.filter((topicId) => !document.topics[topicId]?.aiLocked), true)}
         onUnlockSelected={() => setTopicsAiLocked(selectedTopicIds.filter((topicId) => document.topics[topicId]?.aiLocked), false)}
-        onResetPosition={() => activeTopicId && resetTopicOffset(activeTopicId)}
       />
     )
 
@@ -794,12 +883,52 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             <span className={styles.wordmark}>BrainFlow</span>
           </button>
           <div className={styles.titleWrap}>
-            <input
-              className={styles.titleInput}
-              value={document.title}
-              aria-label="脑图标题"
-              onChange={(event) => renameDocument(event.target.value)}
-            />
+            {isEditingDocumentTitle ? (
+              <input
+                ref={documentTitleInputRef}
+                className={styles.titleInput}
+                value={documentTitleDraft}
+                aria-label="编辑画布名称"
+                onBlur={() => {
+                  if (skipDocumentTitleBlurRef.current) {
+                    skipDocumentTitleBlurRef.current = false
+                    return
+                  }
+
+                  commitDocumentTitle()
+                }}
+                onChange={(event) => setDocumentTitleDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    skipDocumentTitleBlurRef.current = true
+                    commitDocumentTitle()
+                  }
+
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    skipDocumentTitleBlurRef.current = true
+                    cancelDocumentTitleEditing()
+                  }
+                }}
+              />
+            ) : (
+              <div
+                role="button"
+                tabIndex={0}
+                className={styles.titleDisplay}
+                aria-label={`画布名称：${document.title}`}
+                onDoubleClick={startDocumentTitleEditing}
+                onKeyDown={(event) => {
+                  if (event.key === 'F2' || event.key === 'Enter') {
+                    event.preventDefault()
+                    startDocumentTitleEditing()
+                  }
+                }}
+              >
+                {document.title}
+              </div>
+            )}
             <SaveIndicator lastSavedAt={lastSavedAt} isDirty={isDirty} />
           </div>
         </div>
@@ -821,6 +950,42 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             onClick={redo}
             disabled={future.length === 0}
           />
+          <button
+            type="button"
+            className={styles.topbarToolButton}
+            data-active={rightSidebarOpen && rightPanelMode === 'details'}
+            onClick={() => handleTopbarModeClick('details')}
+          >
+            <Icon name="note" size={16} strokeWidth={1.9} />
+            <span>详情</span>
+          </button>
+          <button
+            type="button"
+            className={styles.topbarToolButton}
+            data-active={rightSidebarOpen && rightPanelMode === 'markers'}
+            onClick={() => handleTopbarModeClick('markers')}
+          >
+            <Icon name="tag" size={16} strokeWidth={1.9} />
+            <span>标记</span>
+          </button>
+          <button
+            type="button"
+            className={styles.topbarToolButton}
+            data-active={rightSidebarOpen && rightPanelMode === 'format'}
+            onClick={() => handleTopbarModeClick('format')}
+          >
+            <Icon name="palette" size={16} strokeWidth={1.9} />
+            <span>格式</span>
+          </button>
+          <button
+            type="button"
+            className={styles.topbarToolButton}
+            data-active={rightSidebarOpen && rightPanelMode === 'ai'}
+            onClick={() => handleTopbarModeClick('ai')}
+          >
+            <Icon name="chat" size={16} strokeWidth={1.9} />
+            <span>AI</span>
+          </button>
           <button type="button" className={styles.exportButton} onClick={() => exportDocumentAsJson(document)}>
             导出 JSON
           </button>
@@ -1054,7 +1219,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
               side="right"
               controlsId={RIGHT_SIDEBAR_ID}
               expanded={false}
-              label="显示检查器"
+              label="显示右侧栏"
               className={styles.rightRail}
               onToggle={openRightSidebar}
             />
@@ -1072,14 +1237,16 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
               side="right"
               controlsId={RIGHT_SIDEBAR_ID}
               expanded={isRightDrawerOpen}
-              label="显示检查器"
+              label="显示右侧栏"
               className={styles.rightRail}
               onToggle={isRightDrawerOpen ? closeRightSidebar : openRightSidebar}
             />
           </>
         ) : null}
 
-        {isMobile ? renderRightSidebar('drawer', styles.mobileInspector) : null}
+        {isMobile && rightSidebarOpen
+          ? renderRightSidebar('drawer', styles.mobileInspector, closeRightSidebar)
+          : null}
       </section>
     </main>
   )

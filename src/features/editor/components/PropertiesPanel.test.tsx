@@ -3,7 +3,6 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { createMindMapDocument } from '../../documents/document-factory'
-import { EditorSidebarTabs } from './EditorSidebarTabs'
 import { PropertiesPanel } from './PropertiesPanel'
 import styles from './PropertiesPanel.module.css'
 
@@ -27,28 +26,15 @@ function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>
         isFirstLevel
         draftTitle={firstBranch.title}
         isInspectorEditing={false}
-        theme={{
-          surface: document.theme.surface,
-          text: document.theme.text,
-          accent: document.theme.accent,
-        }}
         topicOptions={Object.values(document.topics).map((topic) => ({
           id: topic.id,
           title: topic.title,
         }))}
-        onRenameStart={vi.fn()}
         onRenameChange={vi.fn()}
         onRenameCommit={vi.fn()}
         onRenameCancel={vi.fn()}
-        onAddChild={vi.fn()}
-        onAddSibling={vi.fn()}
-        onDelete={vi.fn()}
         onNoteChange={vi.fn()}
         onMetadataChange={vi.fn()}
-        onStyleChange={vi.fn()}
-        onApplyStyleToSelected={vi.fn()}
-        onBranchSideChange={vi.fn()}
-        onResetPosition={vi.fn()}
         onToggleAiLock={vi.fn()}
         onLockSelected={vi.fn()}
         onUnlockSelected={vi.fn()}
@@ -60,42 +46,29 @@ function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>
 }
 
 describe('PropertiesPanel', () => {
-  it('renders shared sidebar tabs and the collapse control', async () => {
+  it('renders the detail chrome and the collapse control', async () => {
     const onCollapse = vi.fn()
-    const onChange = vi.fn()
-
-    renderPanel({
-      tabs: (
-        <EditorSidebarTabs
-          controlsId="inspector-sidebar"
-          activeTab="inspector"
-          onChange={onChange}
-          onCollapse={onCollapse}
-        />
-      ),
-    })
-
-    expect(screen.getByRole('tab', { name: 'Inspector' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'false')
-
-    await userEvent.click(screen.getByRole('tab', { name: 'AI' }))
-    expect(onChange).toHaveBeenCalledWith('ai')
+    renderPanel({ onCollapse })
 
     const collapseButton = screen.getByRole('button', { name: '隐藏右侧栏' })
     expect(collapseButton).toHaveAttribute('aria-controls', 'inspector-sidebar')
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(screen.getByText('详情')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '节点详情' })).toBeInTheDocument()
 
     await userEvent.click(collapseButton)
     expect(onCollapse).toHaveBeenCalledTimes(1)
   })
 
-  it('shows the selected topic heading and note field by default', () => {
+  it('shows the selected topic heading and note field by default', async () => {
     renderPanel()
 
     expect(screen.getByRole('heading', { name: 'Focus topic' })).toBeInTheDocument()
-    const noteField = screen.getByRole('textbox', { name: '备注富文本编辑器' })
+    await userEvent.click(screen.getByRole('button', { name: '详细内容' }))
+    const noteField = screen.getByRole('textbox', { name: '详细内容富文本编辑器' })
     expect(noteField).not.toBeNull()
     expect(noteField).toHaveTextContent('Detailed note for the inspector.')
-    expect(screen.getByRole('group', { name: '备注视图切换' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: '详细内容视图切换' })).toBeInTheDocument()
   })
 
   it('renders the inspector title input when editing is active', () => {

@@ -4,8 +4,10 @@ import type {
   MindMapEditorChromeState,
   MindMapViewport,
   TopicLayout,
+  TopicMarker,
   TopicMetadataPatch,
   TopicNode,
+  TopicSticker,
   TopicStylePatch,
 } from '../documents/types'
 import {
@@ -16,6 +18,7 @@ import {
   normalizeTopicMetadata,
   normalizeTopicStyle,
 } from '../documents/topic-defaults'
+import { getMindMapThemePreset, updateMindMapTheme } from '../documents/theme'
 import {
   createPlainParagraphRichText,
   extractPlainTextFromTopicRichText,
@@ -300,6 +303,72 @@ export function updateTopicMetadata(
   return touchDocument(nextDoc)
 }
 
+export function toggleTopicsMarker(
+  doc: MindMapDocument,
+  topicIds: string[],
+  marker: TopicMarker,
+): MindMapDocument {
+  const normalizedTopicIds = Array.from(new Set(topicIds)).filter((topicId) => doc.topics[topicId])
+  if (normalizedTopicIds.length === 0) {
+    return doc
+  }
+
+  const shouldRemove = normalizedTopicIds.every((topicId) =>
+    normalizeTopicMetadata(doc.topics[topicId].metadata).markers.includes(marker),
+  )
+  let changed = false
+  const nextDoc = cloneDocument(doc)
+
+  for (const topicId of normalizedTopicIds) {
+    const metadata = normalizeTopicMetadata(nextDoc.topics[topicId].metadata)
+    const nextMarkers = shouldRemove
+      ? metadata.markers.filter((item) => item !== marker)
+      : [...metadata.markers, marker]
+    const nextMetadata = applyTopicMetadataPatch(metadata, { markers: nextMarkers })
+    if (JSON.stringify(nextMetadata) === JSON.stringify(metadata)) {
+      continue
+    }
+
+    nextDoc.topics[topicId].metadata = nextMetadata
+    changed = true
+  }
+
+  return changed ? touchDocument(nextDoc) : doc
+}
+
+export function toggleTopicsSticker(
+  doc: MindMapDocument,
+  topicIds: string[],
+  sticker: TopicSticker,
+): MindMapDocument {
+  const normalizedTopicIds = Array.from(new Set(topicIds)).filter((topicId) => doc.topics[topicId])
+  if (normalizedTopicIds.length === 0) {
+    return doc
+  }
+
+  const shouldRemove = normalizedTopicIds.every((topicId) =>
+    normalizeTopicMetadata(doc.topics[topicId].metadata).stickers.includes(sticker),
+  )
+  let changed = false
+  const nextDoc = cloneDocument(doc)
+
+  for (const topicId of normalizedTopicIds) {
+    const metadata = normalizeTopicMetadata(nextDoc.topics[topicId].metadata)
+    const nextStickers = shouldRemove
+      ? metadata.stickers.filter((item) => item !== sticker)
+      : [...metadata.stickers, sticker]
+    const nextMetadata = applyTopicMetadataPatch(metadata, { stickers: nextStickers })
+    if (JSON.stringify(nextMetadata) === JSON.stringify(metadata)) {
+      continue
+    }
+
+    nextDoc.topics[topicId].metadata = nextMetadata
+    changed = true
+  }
+
+  return changed ? touchDocument(nextDoc) : doc
+}
+
 export function updateTopicStyle(
   doc: MindMapDocument,
   topicId: string,
@@ -348,6 +417,31 @@ export function updateTopicsStyle(
     return doc
   }
 
+  return touchDocument(nextDoc)
+}
+
+export function updateDocumentTheme(
+  doc: MindMapDocument,
+  patch: Partial<MindMapDocument['theme']>,
+): MindMapDocument {
+  const nextTheme = updateMindMapTheme(doc.theme, patch)
+  if (JSON.stringify(nextTheme) === JSON.stringify(doc.theme)) {
+    return doc
+  }
+
+  const nextDoc = cloneDocument(doc)
+  nextDoc.theme = nextTheme
+  return touchDocument(nextDoc)
+}
+
+export function applyDocumentTheme(doc: MindMapDocument, themeId: string): MindMapDocument {
+  const preset = getMindMapThemePreset(themeId)
+  if (!preset || JSON.stringify(preset) === JSON.stringify(doc.theme)) {
+    return doc
+  }
+
+  const nextDoc = cloneDocument(doc)
+  nextDoc.theme = preset
   return touchDocument(nextDoc)
 }
 

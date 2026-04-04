@@ -20,22 +20,24 @@ describe('ai-client transport handling', () => {
 
     await expect(fetchCodexStatus()).rejects.toMatchObject({
       code: 'request_failed',
+      kind: 'bridge_unavailable',
+      status: 502,
       message: '本机 Codex bridge 无响应，请确认本机 bridge 已启动，并检查 8787 端口服务。',
     })
   })
 
-  it('maps structured 503 proxy responses to the same bridge unavailable message', async () => {
+  it('maps structured 500 status failures to a bridge internal error message', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
             code: 'request_failed',
-            message: '本机 Codex bridge 无响应，请确认本机 bridge 已启动，并检查 8787 端口服务。',
+            message: '系统 Prompt 加载失败：ENOENT',
           }),
           {
-            status: 503,
-            statusText: 'Service Unavailable',
+            status: 500,
+            statusText: 'Internal Server Error',
             headers: {
               'content-type': 'application/json',
             },
@@ -46,7 +48,28 @@ describe('ai-client transport handling', () => {
 
     await expect(fetchCodexStatus()).rejects.toMatchObject({
       code: 'request_failed',
-      message: '本机 Codex bridge 无响应，请确认本机 bridge 已启动，并检查 8787 端口服务。',
+      kind: 'bridge_internal_error',
+      status: 500,
+      message: '系统 Prompt 加载失败：ENOENT',
+    })
+  })
+
+  it('falls back to a fixed internal error message when a 500 response is not json', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('Internal Server Error', {
+          status: 500,
+          statusText: 'Internal Server Error',
+        }),
+      ),
+    )
+
+    await expect(fetchCodexStatus()).rejects.toMatchObject({
+      code: 'request_failed',
+      kind: 'bridge_internal_error',
+      status: 500,
+      message: '本机 Codex bridge 在线，但状态检查失败，请查看 bridge 日志后重试。',
     })
   })
 
@@ -66,6 +89,7 @@ describe('ai-client transport handling', () => {
 
     const request = expect(fetchCodexStatus()).rejects.toMatchObject({
       code: 'request_failed',
+      kind: 'bridge_unavailable',
       message: '本机 Codex bridge 响应超时，请确认本机 bridge 已启动后再试。',
     })
 

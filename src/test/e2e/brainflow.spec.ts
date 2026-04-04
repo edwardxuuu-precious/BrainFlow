@@ -634,7 +634,7 @@ test('shows remediation and disables sending when local Codex verification is un
 
   await page.getByRole('button', { name: '新建脑图' }).click()
   await expect(page).toHaveURL(/\/map\//)
-  await page.getByRole('tab', { name: 'AI' }).click()
+  await page.getByRole('button', { name: 'AI' }).click()
 
   await expect(
     aiSidebar(page).getByText('当前 Codex 验证信息不可用，修复登录或订阅后才能继续发送。'),
@@ -653,7 +653,7 @@ test('shows service remediation when the local Codex bridge is unavailable', asy
 
   await page.getByRole('button', { name: '新建脑图' }).click()
   await expect(page).toHaveURL(/\/map\//)
-  await page.getByRole('tab', { name: 'AI' }).click()
+  await page.getByRole('button', { name: 'AI' }).click()
 
   await expect(aiSidebar(page).getByText('未连接服务')).toBeVisible()
   await expect(
@@ -677,7 +677,7 @@ test('shows schema execution failures separately from Codex availability and sur
 
   await page.getByRole('button', { name: '新建脑图' }).click()
   await expect(page).toHaveURL(/\/map\//)
-  await page.getByRole('tab', { name: 'AI' }).click()
+  await page.getByRole('button', { name: 'AI' }).click()
 
   await expect(page.getByRole('button', { name: '检查状态' })).toBeVisible()
 
@@ -717,7 +717,7 @@ test('supports box selection, additive click, and additive box selection', async
   await dragSelectTopics(page, ['分支一'], { append: true })
   await expectSelectedNodeCount(page, 2)
 
-  await page.getByRole('tab', { name: 'AI' }).click()
+  await page.getByRole('button', { name: 'AI' }).click()
   await expect(aiSidebar(page).getByText('中心主题')).toBeVisible()
   await expect(aiSidebar(page).getByText('分支一')).toBeVisible()
 })
@@ -787,7 +787,7 @@ test('uses the full graph as context and applies Codex changes directly to the c
     },
   )
 
-  await page.getByRole('tab', { name: 'AI' }).click()
+  await page.getByRole('button', { name: 'AI' }).click()
   await expect(aiSidebar(page).getByText('分支一')).toBeVisible()
 
   const composer = page.getByRole('textbox', { name: 'AI 提问输入框' })
@@ -827,7 +827,7 @@ test('uses the full graph as context and applies Codex changes directly to the c
   await expect(topicNode(page, '娓犻亾绛栫暐')).toHaveCount(0)
 
   await page.reload()
-  await page.getByRole('tab', { name: 'AI' }).click()
+  await page.getByRole('button', { name: 'AI' }).click()
   await expect(page.getByText('我现在想要做 GTM，请直接帮我拆成可以执行的脑图结构')).toBeVisible()
   await expect(aiSidebar(page).getByText(/已新增 2 个 GTM 子主题/)).toBeVisible()
 })

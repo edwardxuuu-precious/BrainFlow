@@ -141,6 +141,7 @@ describe('editor-store', () => {
       metadata: {
         labels: [],
         markers: [],
+        stickers: [],
         task: null,
         links: [],
         attachments: [],

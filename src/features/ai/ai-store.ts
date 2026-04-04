@@ -15,6 +15,7 @@ import { getEditorSnapshot, useEditorStore } from '../editor/editor-store'
 import { applyAiProposal } from './ai-proposal'
 import { buildAiContext } from './ai-context'
 import {
+  type CodexRequestFailureKind,
   fetchCodexSettings,
   fetchCodexStatus,
   revalidateCodexStatus,
@@ -59,6 +60,7 @@ interface AiState {
   messages: AiMessage[]
   status: CodexStatus | null
   statusError: string | null
+  statusFailureKind: CodexRequestFailureKind | null
   statusFeedback: AiStatusFeedback | null
   hasCheckedStatus: boolean
   settings: CodexSettings | null
@@ -101,6 +103,19 @@ interface AiState {
 type AiSetState = (partial: Partial<AiState>) => void
 
 const DEFAULT_SESSION_TITLE = '新对话'
+
+function deriveStatusFailureKind(error: unknown): CodexRequestFailureKind | null {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'kind' in error &&
+    (error as { kind?: CodexRequestFailureKind }).kind
+  ) {
+    return (error as { kind?: CodexRequestFailureKind }).kind ?? null
+  }
+
+  return null
+}
 
 function createMessage(role: AiMessage['role'], content: string): AiMessage {
   return {
@@ -193,6 +208,7 @@ async function applyStatusRequest(
   set({
     isCheckingStatus: true,
     statusError: null,
+    statusFailureKind: null,
     statusFeedback: null,
   })
 
@@ -201,6 +217,7 @@ async function applyStatusRequest(
     set({
       status,
       statusError: null,
+      statusFailureKind: null,
       statusFeedback: options?.successFeedback?.(status) ?? null,
       hasCheckedStatus: true,
       isCheckingStatus: false,
@@ -209,6 +226,7 @@ async function applyStatusRequest(
     set({
       status: null,
       statusError: error instanceof Error ? error.message : 'Codex 状态检查失败。',
+      statusFailureKind: deriveStatusFailureKind(error),
       statusFeedback: null,
       hasCheckedStatus: true,
       isCheckingStatus: false,
@@ -307,6 +325,7 @@ export const useAiStore = create<AiState>((set, get) => ({
   messages: [],
   status: null,
   statusError: null,
+  statusFailureKind: null,
   statusFeedback: null,
   hasCheckedStatus: false,
   settings: null,
@@ -357,6 +376,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       streamingStatusText: '',
       streamingText: '',
       error: null,
+      statusFailureKind: shouldRefreshCodexState ? null : currentState.statusFailureKind,
       statusFeedback: null,
       hasCheckedStatus: shouldRefreshCodexState ? false : currentState.hasCheckedStatus,
       lastExecutionError: null,
@@ -646,6 +666,40 @@ export const useAiStore = create<AiState>((set, get) => ({
 
     const currentState = get()
     if (!currentState.status?.ready) {
+      const requestFailedIssue = currentState.status?.issues.find((issue) => issue.code === 'request_failed')
+      const cliMissingIssue = currentState.status?.issues.find((issue) => issue.code === 'cli_missing')
+
+      if (currentState.statusFailureKind === 'bridge_internal_error' || requestFailedIssue) {
+        const message =
+          currentState.statusError ??
+          requestFailedIssue?.message ??
+          '本机 Codex bridge 在线，但状态检查失败，请查看 bridge 日志后重试。'
+        set({
+          error: message,
+          lastExecutionError: createExecutionError('request_failed', message, 'error'),
+        })
+        return
+      }
+
+      if (currentState.status === null) {
+        const message =
+          currentState.statusError ??
+          '当前未连接到本机 Codex 服务，请先恢复 bridge 后再试。'
+        set({
+          error: message,
+          lastExecutionError: createExecutionError('request_failed', message, 'error'),
+        })
+        return
+      }
+
+      if (cliMissingIssue) {
+        set({
+          error: cliMissingIssue.message,
+          lastExecutionError: createExecutionError('cli_missing', cliMissingIssue.message, 'error'),
+        })
+        return
+      }
+
       set({
         error: '当前 Codex 验证信息不可用，请尽快重新验证。',
         lastExecutionError: createExecutionError(
@@ -943,6 +997,7 @@ export function resetAiStore(): void {
     messages: [],
     status: null,
     statusError: null,
+    statusFailureKind: null,
     statusFeedback: null,
     hasCheckedStatus: false,
     settings: null,
@@ -987,6 +1042,7 @@ export async function seedAiConversation(conversation: AiConversation): Promise<
     streamingStatusText: '',
     streamingText: '',
     error: null,
+    statusFailureKind: null,
     statusFeedback: null,
     hasCheckedStatus: false,
     lastExecutionError: null,

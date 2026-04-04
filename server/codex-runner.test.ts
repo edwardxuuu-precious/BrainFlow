@@ -97,6 +97,87 @@ describe('createCodexRunner', () => {
     expect(runCommand).toHaveBeenNthCalledWith(2, latestBundledCommand, ['--version'])
   })
 
+  it('skips an invalid npm shim and continues to the bundled VS Code codex executable', async () => {
+    const npmShimCommand = 'C:\\Users\\edwar\\AppData\\Roaming\\npm\\codex.cmd'
+    const latestBundledCommand =
+      'C:\\Users\\edwar\\.vscode\\extensions\\openai.chatgpt-26.5401.11717-win32-x64\\bin\\windows-x86_64\\codex.exe'
+    const runCommand = vi.fn().mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'codex') {
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      }
+
+      if (command === latestBundledCommand && args[0] === '--version') {
+        return { stdout: 'codex-cli 0.118.0', stderr: '', exitCode: 0 }
+      }
+
+      if (command === latestBundledCommand && args[0] === 'login') {
+        return { stdout: 'Logged in using ChatGPT', stderr: '', exitCode: 0 }
+      }
+
+      if (command === npmShimCommand) {
+        throw Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL' })
+      }
+
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+    })
+    const readdir = vi.fn().mockResolvedValue([
+      'openai.chatgpt-26.5401.11717-win32-x64',
+    ])
+    const runner = createCodexRunner({
+      runCommand,
+      readdir,
+      platform: 'win32',
+      env: {
+        USERPROFILE: 'C:\\Users\\edwar',
+        APPDATA: 'C:\\Users\\edwar\\AppData\\Roaming',
+      },
+    })
+
+    await expect(runner.getStatus()).resolves.toMatchObject({
+      cliInstalled: true,
+      loggedIn: true,
+      ready: true,
+      authProvider: 'ChatGPT',
+    })
+
+    expect(runCommand).toHaveBeenNthCalledWith(2, latestBundledCommand, ['--version'])
+    expect(runCommand).not.toHaveBeenCalledWith(npmShimCommand, ['login', 'status'])
+  })
+
+  it('returns cli_missing when all Windows fallback candidates are not directly executable', async () => {
+    const npmShimCommand = 'C:\\Users\\edwar\\AppData\\Roaming\\npm\\codex.cmd'
+    const runCommand = vi.fn().mockImplementation(async (command: string) => {
+      if (command === 'codex') {
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      }
+
+      if (command === npmShimCommand) {
+        throw Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL' })
+      }
+
+      throw Object.assign(new Error('spawn EFTYPE'), { code: 'EFTYPE' })
+    })
+    const readdir = vi.fn().mockResolvedValue([
+      'openai.chatgpt-26.5401.11717-win32-x64',
+    ])
+    const runner = createCodexRunner({
+      runCommand,
+      readdir,
+      platform: 'win32',
+      env: {
+        USERPROFILE: 'C:\\Users\\edwar',
+        APPDATA: 'C:\\Users\\edwar\\AppData\\Roaming',
+      },
+    })
+
+    await expect(runner.getStatus()).resolves.toMatchObject({
+      cliInstalled: false,
+      loggedIn: false,
+      ready: false,
+      issues: [expect.objectContaining({ code: 'cli_missing' })],
+    })
+  })
+
   it('returns verification required when login provider is not ChatGPT', async () => {
     const runCommand = vi
       .fn()

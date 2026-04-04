@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import type { AiChatRequest, AiRunStage, AiStreamEvent, CodexApiError } from '../shared/ai-contract.js'
 import {
   createCodexBridge,
@@ -8,6 +9,7 @@ import {
 
 interface CreateAppOptions {
   bridge?: CodexBridge
+  logError?: (message: string, error: unknown) => void
 }
 
 function validateChatRequest(payload: unknown): AiChatRequest {
@@ -83,6 +85,18 @@ function toApiError(error: unknown): CodexApiError {
   }
 }
 
+function toApiStatusCode(error: unknown): number {
+  if (error instanceof CodexBridgeError && error.code === 'invalid_request') {
+    return 400
+  }
+
+  return 500
+}
+
+function shouldLogApiError(error: unknown): boolean {
+  return !(error instanceof CodexBridgeError && error.code === 'invalid_request')
+}
+
 function emitErrorEvent(
   emit: (event: AiStreamEvent) => void,
   error: unknown,
@@ -137,32 +151,53 @@ function createNdjsonResponse(
 export function createApp(options?: CreateAppOptions) {
   const app = new Hono()
   const bridge = options?.bridge ?? createCodexBridge()
+  const logError =
+    options?.logError ??
+    ((message: string, error: unknown) => {
+      console.error(message, error)
+    })
 
-  app.get('/api/codex/status', async (c) => {
+  const jsonRoute =
+    <T>(routeName: string, handler: (c: Context) => Promise<T>) =>
+    async (c: Context) => {
+      try {
+        const payload = await handler(c)
+        return c.json(payload)
+      } catch (error) {
+        if (shouldLogApiError(error)) {
+          logError(`[codex] ${routeName} failed`, error)
+        }
+
+        const statusCode = toApiStatusCode(error) as 400 | 500
+        return c.json(toApiError(error), statusCode)
+      }
+    }
+
+  app.get('/api/codex/status', jsonRoute('GET /api/codex/status', async () => {
     const status = await bridge.getStatus()
-    return c.json(status)
-  })
+    return status
+  }))
 
-  app.post('/api/codex/revalidate', async (c) => {
+  app.post('/api/codex/revalidate', jsonRoute('POST /api/codex/revalidate', async () => {
     const status = await bridge.revalidate()
-    return c.json(status)
-  })
+    return status
+  }))
 
-  app.get('/api/codex/settings', async (c) => {
+  app.get('/api/codex/settings', jsonRoute('GET /api/codex/settings', async () => {
     const settings = await bridge.getSettings()
-    return c.json(settings)
-  })
+    return settings
+  }))
 
-  app.put('/api/codex/settings', async (c) => {
+  app.put('/api/codex/settings', jsonRoute('PUT /api/codex/settings', async (c) => {
     const payload = validateSettingsPayload(await c.req.json().catch(() => null))
     const settings = await bridge.saveSettings(payload.businessPrompt)
-    return c.json(settings)
-  })
+    return settings
+  }))
 
-  app.post('/api/codex/settings/reset', async (c) => {
+  app.post('/api/codex/settings/reset', jsonRoute('POST /api/codex/settings/reset', async () => {
     const settings = await bridge.resetSettings()
-    return c.json(settings)
-  })
+    return settings
+  }))
 
   app.post('/api/codex/chat', async (c) => {
     const request = validateChatRequest(await c.req.json().catch(() => null))

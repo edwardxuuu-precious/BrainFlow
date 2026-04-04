@@ -7,7 +7,7 @@ import { HierarchySidebar } from './HierarchySidebar'
 
 const COPY = {
   collapse: '隐藏层级栏',
-  noteDescription: '已添加备注',
+  noteDescription: '已添加详细内容',
 } as const
 
 function renderSidebar(overrides?: Partial<ComponentProps<typeof HierarchySidebar>>) {
@@ -109,6 +109,7 @@ describe('HierarchySidebar', () => {
       metadata: {
         labels: [],
         markers: [],
+        stickers: [],
         task: null,
         links: [],
         attachments: [],
@@ -155,6 +156,7 @@ describe('HierarchySidebar', () => {
       metadata: {
         labels: [],
         markers: [],
+        stickers: [],
         task: null,
         links: [],
         attachments: [],

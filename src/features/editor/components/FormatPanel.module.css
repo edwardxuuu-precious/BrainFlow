@@ -1,0 +1,52 @@
+.presetGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.presetCard {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(172, 179, 184, 0.16);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.62);
+  text-align: left;
+  transition:
+    border-color 180ms ease,
+    transform 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.presetCard:hover {
+  border-color: rgba(84, 95, 110, 0.24);
+  transform: translateY(-1px);
+}
+
+.presetCard[data-active='true'] {
+  border-color: color-mix(in srgb, var(--color-accent), white 52%);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent), white 88%);
+}
+
+.presetPreview {
+  display: flex;
+  gap: 6px;
+}
+
+.presetSwatch {
+  flex: 1;
+  height: 18px;
+  border-radius: 999px;
+}
+
+.presetName {
+  color: var(--color-text);
+  font-size: var(--font-size-body-sm);
+  font-weight: 600;
+}
+
+@media (max-width: 960px) {
+  .presetGrid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -11,6 +11,23 @@ export const TOPIC_MARKERS = [
 
 export type TopicMarker = (typeof TOPIC_MARKERS)[number]
 
+export const TOPIC_STICKERS = [
+  'smile',
+  'party',
+  'heart',
+  'star',
+  'fire',
+  'rocket',
+  'bulb',
+  'target',
+  'coffee',
+  'clap',
+  'rainbow',
+  'sparkles',
+] as const
+
+export type TopicSticker = (typeof TOPIC_STICKERS)[number]
+
 export const TOPIC_TASK_STATUSES = ['todo', 'in_progress', 'done'] as const
 export type TopicTaskStatus = (typeof TOPIC_TASK_STATUSES)[number]
 
@@ -46,12 +63,16 @@ export interface TopicAttachmentRef {
   mimeType?: string | null
 }
 
+export type TopicType = 'normal' | 'milestone' | 'task'
+
 export interface TopicMetadata {
   labels: string[]
   markers: TopicMarker[]
+  stickers: TopicSticker[]
   task: TopicTask | null
   links: TopicLink[]
   attachments: TopicAttachmentRef[]
+  type?: TopicType
 }
 
 export type TopicRichTextVersion = 1
@@ -112,9 +133,11 @@ export interface TopicStylePatch {
 export interface TopicMetadataPatch {
   labels?: string[] | null
   markers?: TopicMarker[] | null
+  stickers?: TopicSticker[] | null
   task?: TopicTask | null
   links?: TopicLink[] | null
   attachments?: TopicAttachmentRef[] | null
+  type?: TopicType | null
 }
 
 export interface TopicNode {

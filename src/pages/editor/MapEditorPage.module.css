@@ -68,6 +68,7 @@
   min-width: 0;
 }
 
+.titleDisplay,
 .titleInput {
   min-width: 240px;
   height: 36px;
@@ -82,12 +83,58 @@
   letter-spacing: -0.01em;
   line-height: 1;
   outline: none;
-  transition: box-shadow 180ms ease;
+  transition:
+    box-shadow 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.titleDisplay {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  cursor: text;
+}
+
+.titleDisplay:focus {
+  box-shadow: 0 0 0 2px rgba(0, 88, 188, 0.15);
+  border-color: rgba(0, 88, 188, 0.3);
 }
 
 .titleInput:focus {
   box-shadow: 0 0 0 2px rgba(0, 88, 188, 0.15);
   border-color: rgba(0, 88, 188, 0.3);
+}
+
+.topbarToolButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--document-muted, var(--on-surface-variant));
+  font-size: var(--font-size-body-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.topbarToolButton:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--document-text, var(--on-surface));
+}
+
+.topbarToolButton[data-active='true'] {
+  background: rgba(0, 88, 188, 0.1);
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px rgba(0, 88, 188, 0.14);
 }
 
 .workspace {
@@ -335,6 +382,7 @@
 }
 
 @media (max-width: 779px) {
+  .titleDisplay,
   .titleInput {
     min-width: 100%;
   }

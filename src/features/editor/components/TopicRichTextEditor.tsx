@@ -142,7 +142,7 @@ export function TopicRichTextEditor({
         <SegmentedControl
           value={mode}
           options={[...editorModeOptions]}
-          ariaLabel="备注视图切换"
+          ariaLabel="详细内容视图切换"
           onChange={setMode}
         />
         <div className={styles.toolbar}>
@@ -191,7 +191,7 @@ export function TopicRichTextEditor({
         previewText ? (
           <div
             className={styles.preview}
-            aria-label="备注预览"
+            aria-label="详细内容预览"
             dangerouslySetInnerHTML={{ __html: sourceHtml }}
           />
         ) : (
@@ -204,7 +204,7 @@ export function TopicRichTextEditor({
           contentEditable
           suppressContentEditableWarning
           role="textbox"
-          aria-label="备注富文本编辑器"
+          aria-label="详细内容富文本编辑器"
           aria-multiline="true"
           data-placeholder={placeholder}
           dangerouslySetInnerHTML={{ __html: sourceHtml }}

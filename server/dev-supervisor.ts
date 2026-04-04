@@ -5,6 +5,10 @@ import { pathToFileURL } from 'node:url'
 export const API_STABLE_UPTIME_MS = 30_000
 export const API_RESTART_BASE_DELAY_MS = 1_000
 export const API_RESTART_MAX_DELAY_MS = 10_000
+export const API_HEALTHCHECK_INITIAL_DELAY_MS = 10_000
+export const API_HEALTHCHECK_INTERVAL_MS = 5_000
+export const API_HEALTHCHECK_TIMEOUT_MS = 4_000
+export const API_HEALTHCHECK_FAILURE_THRESHOLD = 2
 
 type ChildRole = 'web' | 'api'
 type ChildScript = 'dev:web-only' | 'dev:server'
@@ -39,6 +43,7 @@ interface DevSupervisorDependencies {
   exitProcess?: (code: number) => void
   platform?: NodeJS.Platform
   env?: NodeJS.ProcessEnv
+  fetchStatus?: typeof fetch
 }
 
 function getPnpmCommand(platform: NodeJS.Platform): string {
@@ -156,6 +161,7 @@ function pipeOutput(
 export class DevSupervisor {
   private readonly spawnProcess: SpawnProcess
   private readonly terminateProcess: (child: ChildProcessWithoutNullStreams) => Promise<void>
+  private readonly fetchStatus: typeof fetch
   private readonly log: (message: string) => void
   private readonly error: (message: string) => void
   private readonly now: () => number
@@ -169,6 +175,9 @@ export class DevSupervisor {
   private apiChild: ManagedChild | null = null
   private apiRestartAttempt = 0
   private apiRestartTimer: ReturnType<typeof setTimeout> | null = null
+  private apiHealthTimer: ReturnType<typeof setTimeout> | null = null
+  private apiHealthFailureCount = 0
+  private apiRestartingPids = new Set<number>()
   private shuttingDown = false
   private shutdownPromise: Promise<void> | null = null
   private exitCode = 0
@@ -179,6 +188,7 @@ export class DevSupervisor {
       ((command, args, options) =>
         spawn(command, args, options) as ChildProcessWithoutNullStreams)
     this.terminateProcess = dependencies.terminateProcess ?? terminateProcessTree
+    this.fetchStatus = dependencies.fetchStatus ?? fetch
     this.log = dependencies.log ?? console.log
     this.error = dependencies.error ?? console.error
     this.now = dependencies.now ?? Date.now
@@ -207,6 +217,7 @@ export class DevSupervisor {
       this.clearTimer(this.apiRestartTimer)
       this.apiRestartTimer = null
     }
+    this.clearApiHealthTimer()
 
     this.shutdownPromise = (async () => {
       const children = [this.webChild, this.apiChild]
@@ -226,6 +237,116 @@ export class DevSupervisor {
     })()
 
     return this.shutdownPromise
+  }
+
+  private clearApiHealthTimer(): void {
+    if (this.apiHealthTimer) {
+      this.clearTimer(this.apiHealthTimer)
+      this.apiHealthTimer = null
+    }
+  }
+
+  private scheduleApiHealthCheck(delayMs: number): void {
+    if (this.shuttingDown || !this.apiChild) {
+      return
+    }
+
+    this.clearApiHealthTimer()
+    this.apiHealthTimer = this.setTimer(() => {
+      this.apiHealthTimer = null
+      void this.runApiHealthCheck()
+    }, delayMs)
+  }
+
+  private async checkApiHealth(): Promise<{ healthy: boolean; reason?: string }> {
+    const controller = new AbortController()
+    const timeoutId = this.setTimer(() => controller.abort(), API_HEALTHCHECK_TIMEOUT_MS)
+
+    try {
+      const response = await this.fetchStatus('http://127.0.0.1:8787/api/codex/status', {
+        signal: controller.signal,
+      })
+
+      if (response.status === 200) {
+        return { healthy: true }
+      }
+
+      return {
+        healthy: false,
+        reason: `health check returned ${response.status}`,
+      }
+    } catch (error) {
+      return {
+        healthy: false,
+        reason: error instanceof Error ? error.message : String(error),
+      }
+    } finally {
+      this.clearTimer(timeoutId)
+    }
+  }
+
+  private async runApiHealthCheck(): Promise<void> {
+    if (this.shuttingDown || !this.apiChild || this.apiRestartTimer) {
+      return
+    }
+
+    const child = this.apiChild
+    const result = await this.checkApiHealth()
+
+    if (this.shuttingDown || this.apiChild?.process !== child.process) {
+      return
+    }
+
+    if (result.healthy) {
+      this.apiHealthFailureCount = 0
+      this.scheduleApiHealthCheck(API_HEALTHCHECK_INTERVAL_MS)
+      return
+    }
+
+    this.apiHealthFailureCount += 1
+    this.error(
+      `[api] health check failed (${this.apiHealthFailureCount}/${API_HEALTHCHECK_FAILURE_THRESHOLD}): ${
+        result.reason ?? 'unknown error'
+      }`,
+    )
+
+    if (this.apiHealthFailureCount >= API_HEALTHCHECK_FAILURE_THRESHOLD) {
+      await this.restartApiAfterHealthFailure(
+        `[api] health check failed ${this.apiHealthFailureCount} times; restarting bridge.`,
+      )
+      return
+    }
+
+    this.scheduleApiHealthCheck(API_HEALTHCHECK_INTERVAL_MS)
+  }
+
+  private async restartApiAfterHealthFailure(message: string): Promise<void> {
+    if (!this.apiChild || this.shuttingDown) {
+      return
+    }
+
+    const child = this.apiChild
+    this.apiHealthFailureCount = 0
+    this.clearApiHealthTimer()
+
+    if (child.process.pid) {
+      this.apiRestartingPids.add(child.process.pid)
+    }
+
+    this.apiChild = null
+    this.error(message)
+
+    try {
+      await this.terminateProcess(child.process)
+    } catch (error) {
+      this.error(
+        `[api] failed to terminate unhealthy bridge: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+
+    this.scheduleApiRestart('[api] restarting bridge after failed health checks.', false)
   }
 
   private startWeb(): void {
@@ -267,6 +388,8 @@ export class DevSupervisor {
     }
 
     this.apiChild = child
+    this.apiHealthFailureCount = 0
+    this.scheduleApiHealthCheck(API_HEALTHCHECK_INITIAL_DELAY_MS)
 
     child.process.on('error', (error) => {
       this.error(`[api] failed to start: ${error.message}`)
@@ -274,9 +397,19 @@ export class DevSupervisor {
 
     child.process.on('exit', (code, signal) => {
       const uptime = this.now() - child.startedAt
-      this.apiChild = null
+      const wasExpectedRestart = child.process.pid
+        ? this.apiRestartingPids.delete(child.process.pid)
+        : false
+      this.clearApiHealthTimer()
+      if (this.apiChild?.process === child.process) {
+        this.apiChild = null
+      }
 
       if (this.shuttingDown) {
+        return
+      }
+
+      if (wasExpectedRestart) {
         return
       }
 
@@ -299,6 +432,8 @@ export class DevSupervisor {
       return
     }
 
+    this.clearApiHealthTimer()
+    this.apiHealthFailureCount = 0
     this.apiRestartAttempt = resetAttempts ? 1 : this.apiRestartAttempt + 1
     const delay = calculateApiRestartDelay(this.apiRestartAttempt)
     this.error(`${message} Restarting in ${delay}ms.`)

@@ -4,6 +4,7 @@ import type {
   TopicMetadata,
   TopicMetadataPatch,
   TopicMarker,
+  TopicSticker,
   TopicStyle,
   TopicStylePatch,
   TopicTask,
@@ -14,6 +15,7 @@ import {
   TOPIC_ATTACHMENT_SOURCES,
   TOPIC_LINK_TYPES,
   TOPIC_MARKERS,
+  TOPIC_STICKERS,
   TOPIC_TASK_PRIORITIES,
   TOPIC_TASK_STATUSES,
 } from './types'
@@ -37,6 +39,10 @@ function isMarker(value: string): value is TopicMarker {
   return (TOPIC_MARKERS as readonly string[]).includes(value)
 }
 
+function isSticker(value: string): value is TopicSticker {
+  return (TOPIC_STICKERS as readonly string[]).includes(value)
+}
+
 function normalizeLabels(labels: string[] | null | undefined): string[] {
   return uniqueStrings((labels ?? []).map(normalizeText))
 }
@@ -45,6 +51,12 @@ function normalizeMarkers(markers: TopicMarker[] | null | undefined): TopicMarke
   return uniqueStrings((markers ?? []).filter((marker): marker is TopicMarker => isMarker(marker))).map(
     (marker) => marker as TopicMarker,
   )
+}
+
+function normalizeStickers(stickers: TopicSticker[] | null | undefined): TopicSticker[] {
+  return uniqueStrings(
+    (stickers ?? []).filter((sticker): sticker is TopicSticker => isSticker(sticker)),
+  ).map((sticker) => sticker as TopicSticker)
 }
 
 function normalizeTask(task: TopicTask | null | undefined): TopicTask | null {
@@ -132,6 +144,7 @@ export function createDefaultTopicMetadata(): TopicMetadata {
   return {
     labels: [],
     markers: [],
+    stickers: [],
     task: null,
     links: [],
     attachments: [],
@@ -149,6 +162,7 @@ export function normalizeTopicMetadata(metadata?: Partial<TopicMetadata> | null)
   return {
     labels: normalizeLabels(metadata?.labels),
     markers: normalizeMarkers(metadata?.markers),
+    stickers: normalizeStickers(metadata?.stickers),
     task: normalizeTask(metadata?.task),
     links: (metadata?.links ?? [])
       .map((link, index) => normalizeLink(link as TopicLink, index))
@@ -156,6 +170,7 @@ export function normalizeTopicMetadata(metadata?: Partial<TopicMetadata> | null)
     attachments: (metadata?.attachments ?? [])
       .map((attachment, index) => normalizeAttachment(attachment as TopicAttachmentRef, index))
       .filter((attachment): attachment is TopicAttachmentRef => !!attachment),
+    type: metadata?.type,
   }
 }
 
@@ -179,9 +194,11 @@ export function applyTopicMetadataPatch(
   return normalizeTopicMetadata({
     labels: 'labels' in patch ? patch.labels ?? [] : current.labels,
     markers: 'markers' in patch ? patch.markers ?? [] : current.markers,
+    stickers: 'stickers' in patch ? patch.stickers ?? [] : current.stickers,
     task: 'task' in patch ? patch.task ?? null : current.task,
     links: 'links' in patch ? patch.links ?? [] : current.links,
     attachments: 'attachments' in patch ? patch.attachments ?? [] : current.attachments,
+    type: 'type' in patch ? patch.type ?? undefined : current.type,
   })
 }
 
@@ -214,4 +231,3 @@ export function createTopicAttachmentRef(
     mimeType: null,
   }
 }
-

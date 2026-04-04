@@ -175,6 +175,15 @@ function isCommandNotFoundError(error: unknown): boolean {
   )
 }
 
+function isWindowsSpawnFallbackError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false
+  }
+
+  const code = 'code' in error ? (error as { code?: string }).code : undefined
+  return code === 'EINVAL' || code === 'EFTYPE'
+}
+
 function buildCliMissingIssue(): CodexBridgeIssue {
   return {
     code: 'cli_missing',
@@ -339,11 +348,6 @@ async function listWindowsCodexFallbackCommands(
 ): Promise<string[]> {
   const commands = new Set<string>()
 
-  if (env.APPDATA) {
-    commands.add(join(env.APPDATA, 'npm', 'codex.cmd'))
-    commands.add(join(env.APPDATA, 'npm', 'codex'))
-  }
-
   if (env.USERPROFILE) {
     const vscodeExtensionRoot = join(env.USERPROFILE, '.vscode', 'extensions')
 
@@ -357,8 +361,12 @@ async function listWindowsCodexFallbackCommands(
         commands.add(join(vscodeExtensionRoot, entryName, 'bin', 'windows-x86_64', 'codex.exe'))
       }
     } catch {
-      return Array.from(commands)
+      // Ignore missing extension folders and continue to npm global fallbacks.
     }
+  }
+
+  if (env.APPDATA) {
+    commands.add(join(env.APPDATA, 'npm', 'codex.cmd'))
   }
 
   return Array.from(commands)
@@ -391,7 +399,7 @@ async function resolveCodexCommand(
       await executeCommand(fallbackCommand, ['--version'])
       return fallbackCommand
     } catch (error) {
-      if (!isCommandNotFoundError(error)) {
+      if (!isCommandNotFoundError(error) && !isWindowsSpawnFallbackError(error)) {
         throw error
       }
     }

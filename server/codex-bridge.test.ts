@@ -60,7 +60,7 @@ const baseRequest: AiChatRequest = {
   baseDocumentUpdatedAt: 1,
 }
 
-function createPromptStore() {
+function createPromptStore(overrides?: Record<string, unknown>) {
   return {
     loadPrompt: vi.fn().mockResolvedValue({
       summary: 'summary',
@@ -70,10 +70,61 @@ function createPromptStore() {
     getSettings: vi.fn(),
     saveSettings: vi.fn(),
     resetSettings: vi.fn(),
+    ...overrides,
   }
 }
 
 describe('createCodexBridge', () => {
+  it('degrades status when prompt loading fails instead of throwing', async () => {
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockResolvedValue(readyStatus),
+        execute: vi.fn(),
+        executeMessage: vi.fn(),
+      },
+      promptStore: createPromptStore({
+        loadPrompt: vi.fn().mockRejectedValue(new Error('ENOENT')),
+      }),
+    })
+
+    await expect(bridge.getStatus()).resolves.toMatchObject({
+      cliInstalled: true,
+      loggedIn: true,
+      ready: false,
+      issues: [expect.objectContaining({ code: 'request_failed', message: '系统 Prompt 加载失败：ENOENT' })],
+      systemPromptSummary: '系统 Prompt 加载失败',
+      systemPromptVersion: 'unavailable',
+      systemPrompt: '',
+    })
+  })
+
+  it('degrades status when runner status throws unexpectedly instead of bubbling a 500', async () => {
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockRejectedValue(new Error('runner exploded')),
+        execute: vi.fn(),
+        executeMessage: vi.fn(),
+      },
+      promptStore: createPromptStore(),
+    })
+
+    await expect(bridge.getStatus()).resolves.toMatchObject({
+      cliInstalled: false,
+      loggedIn: false,
+      authProvider: null,
+      ready: false,
+      issues: [
+        expect.objectContaining({
+          code: 'request_failed',
+          message: '本机 Codex 状态检查失败：runner exploded',
+        }),
+      ],
+      systemPromptSummary: 'summary',
+      systemPromptVersion: 'version',
+      systemPrompt: 'prompt',
+    })
+  })
+
   it('streams natural-language chat first and forwards assistant deltas when available', async () => {
     const executeMessage = vi.fn().mockImplementation(async (_prompt, options) => {
       options?.onEvent?.({

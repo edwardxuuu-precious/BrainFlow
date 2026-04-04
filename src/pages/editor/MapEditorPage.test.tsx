@@ -100,7 +100,7 @@ describe('MapEditorPage', () => {
     window.dispatchEvent(new Event('resize'))
   })
 
-  it('switches between inspector and AI from the shared right-sidebar tabs', async () => {
+  it('switches between details, markers, format and AI from the top toolbar without shared sidebar tabs', async () => {
     const document = createMindMapDocument('Editor regression')
     const rootTopic = document.topics[document.rootTopicId]
     rootTopic.title = 'Root focus'
@@ -119,7 +119,7 @@ describe('MapEditorPage', () => {
     await seedAiConversation(conversation)
 
     const service = createService(document)
-    const { container } = render(
+    render(
       <MemoryRouter initialEntries={[`/map/${document.id}`]}>
         <Routes>
           <Route path="/map/:documentId" element={<MapEditorPage service={service} />} />
@@ -127,24 +127,66 @@ describe('MapEditorPage', () => {
       </MemoryRouter>,
     )
 
-    await screen.findByRole('tab', { name: 'Inspector' })
-    expect(screen.getByRole('tab', { name: 'Inspector' })).toHaveAttribute('aria-selected', 'true')
-    expect(container.querySelector('#topic-note')).not.toBeNull()
+    const detailButton = await screen.findByRole('button', { name: '详情' })
+    if (!screen.queryByRole('heading', { name: '节点详情' })) {
+      await userEvent.click(detailButton)
+    }
+    expect(screen.getByRole('heading', { name: '节点详情' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Root focus' })).toBeInTheDocument()
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('tab', { name: 'AI' }))
+    await userEvent.click(screen.getByRole('button', { name: '标记' }))
+    expect(screen.getByRole('heading', { name: '节点标记' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重点' })).toBeInTheDocument()
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '格式' }))
+    expect(screen.getByRole('heading', { name: '样式与画布' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '画布' }))
+    expect(screen.getByRole('button', { name: 'Cupertino Slate' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'AI' }))
 
     await screen.findByText('Launch plan')
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'true')
-      expect(container.querySelector('#topic-note')).toBeNull()
+      expect(screen.getByRole('heading', { name: '智能协作' })).toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: '节点详情' })).not.toBeInTheDocument()
     })
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Inspector' }))
+    await userEvent.click(screen.getByRole('button', { name: 'AI' }))
 
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'Inspector' })).toHaveAttribute('aria-selected', 'true')
-      expect(container.querySelector('#topic-note')).not.toBeNull()
+      expect(screen.queryByText('Launch plan')).not.toBeInTheDocument()
     })
+
+    await userEvent.click(detailButton)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: '节点详情' })).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Root focus' })).toBeInTheDocument()
+    })
+  })
+
+  it('shows the canvas title as text and enters edit mode on double click', async () => {
+    const document = createMindMapDocument('Canvas title')
+    const service = createService(document)
+
+    render(
+      <MemoryRouter initialEntries={[`/map/${document.id}`]}>
+        <Routes>
+          <Route path="/map/:documentId" element={<MapEditorPage service={service} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const titleDisplay = await screen.findByRole('button', { name: '画布名称：Canvas title' })
+    expect(screen.queryByRole('textbox', { name: '编辑画布名称' })).not.toBeInTheDocument()
+
+    await userEvent.dblClick(titleDisplay)
+
+    const titleInput = screen.getByRole('textbox', { name: '编辑画布名称' })
+    expect(titleInput).toHaveValue('Canvas title')
+    expect(titleInput).toHaveFocus()
   })
 
   it('does not keep auto-refreshing codex status when the bridge is unavailable', async () => {
@@ -160,11 +202,11 @@ describe('MapEditorPage', () => {
       </MemoryRouter>,
     )
 
-    await screen.findByRole('tab', { name: 'AI' })
+    await screen.findByRole('button', { name: 'AI' })
     await waitFor(() => expect(vi.mocked(fetchCodexStatus).mock.calls.length).toBeGreaterThan(0))
     const initialCallCount = vi.mocked(fetchCodexStatus).mock.calls.length
 
-    await userEvent.click(screen.getByRole('tab', { name: 'AI' }))
+    await userEvent.click(screen.getByRole('button', { name: 'AI' }))
     await screen.findByRole('button', { name: '重新检查服务' })
     const stabilizedCallCount = vi.mocked(fetchCodexStatus).mock.calls.length
     await new Promise((resolve) => setTimeout(resolve, 50))

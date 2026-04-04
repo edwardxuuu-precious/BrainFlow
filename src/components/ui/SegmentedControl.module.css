@@ -4,28 +4,29 @@
 }
 
 .track {
-  display: grid;
-  grid-template-columns: repeat(var(--segment-count), minmax(0, 1fr));
+  display: inline-flex;
   gap: 8px;
 }
 
 .segment {
-  min-height: 42px;
-  border: 1px solid var(--color-line-soft);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.78);
-  color: var(--color-text-soft);
-  font-size: var(--font-size-label);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
+  font-size: var(--font-size-body-sm);
   font-weight: 600;
-  transition:
-    border-color 180ms ease,
-    background-color 180ms ease,
-    color 180ms ease,
-    transform 180ms ease;
+  cursor: pointer;
+  transition: all 180ms ease;
 }
 
 .segment:hover:not(:disabled) {
-  transform: translateY(-1px);
+  background: var(--surface-container-high);
 }
 
 .segment:disabled {
@@ -34,7 +35,11 @@
 }
 
 .active {
-  border-color: rgba(84, 95, 110, 0.22);
-  background: linear-gradient(180deg, var(--color-accent), var(--color-accent-strong));
-  color: var(--color-accent-ink);
+  background: var(--primary-600);
+  color: white;
+}
+
+.active:hover:not(:disabled) {
+  background: var(--primary-700);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
 }

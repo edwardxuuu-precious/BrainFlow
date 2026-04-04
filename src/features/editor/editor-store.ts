@@ -3,13 +3,16 @@ import type {
   BranchSide,
   MindMapDocument,
   MindMapViewport,
+  TopicMarker,
   TopicMetadataPatch,
   TopicRichTextDocument,
+  TopicSticker,
   TopicStylePatch,
 } from '../documents/types'
 import {
   addChild,
   addSibling,
+  applyDocumentTheme,
   expandHierarchyPath,
   moveTopic,
   removeTopic,
@@ -21,8 +24,11 @@ import {
   setTopicsAiLocked,
   setTopicOffset,
   updateTopicMetadata,
+  updateDocumentTheme,
   updateTopicStyle,
   updateTopicsStyle,
+  toggleTopicsMarker,
+  toggleTopicsSticker,
   toggleHierarchyBranch,
   toggleCollapse,
   updateTopicNote,
@@ -70,6 +76,10 @@ interface EditorState {
   updateTopicMetadata: (topicId: string, patch: TopicMetadataPatch) => void
   updateTopicStyle: (topicId: string, patch: TopicStylePatch) => void
   updateTopicsStyle: (topicIds: string[], patch: TopicStylePatch) => void
+  toggleTopicMarker: (topicIds: string[], marker: TopicMarker) => void
+  toggleTopicSticker: (topicIds: string[], sticker: TopicSticker) => void
+  updateDocumentTheme: (patch: Partial<MindMapDocument['theme']>) => void
+  applyDocumentTheme: (themeId: string) => void
   removeTopic: (topicId: string) => void
   toggleCollapse: (topicId: string) => void
   moveTopic: (topicId: string, targetParentId: string, targetIndex: number) => void
@@ -652,6 +662,74 @@ export const useEditorStore = create<EditorState>((set) => ({
         activeTopicId: nextActiveTopicId,
         selectedTopicIds,
         expandActivePath: false,
+      })
+    }),
+
+  toggleTopicMarker: (topicIds, marker) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const selectedTopicIds = uniqueTopicIds(topicIds).filter((topicId) => state.document?.topics[topicId])
+      if (selectedTopicIds.length === 0) {
+        return {}
+      }
+
+      const nextDocument = toggleTopicsMarker(state.document, selectedTopicIds, marker)
+      if (nextDocument === state.document) {
+        return {}
+      }
+
+      return commitContentDocument(state, nextDocument, {
+        activeTopicId: state.activeTopicId,
+        selectedTopicIds,
+        expandActivePath: false,
+      })
+    }),
+
+  toggleTopicSticker: (topicIds, sticker) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const selectedTopicIds = uniqueTopicIds(topicIds).filter((topicId) => state.document?.topics[topicId])
+      if (selectedTopicIds.length === 0) {
+        return {}
+      }
+
+      const nextDocument = toggleTopicsSticker(state.document, selectedTopicIds, sticker)
+      if (nextDocument === state.document) {
+        return {}
+      }
+
+      return commitContentDocument(state, nextDocument, {
+        activeTopicId: state.activeTopicId,
+        selectedTopicIds,
+        expandActivePath: false,
+      })
+    }),
+
+  updateDocumentTheme: (patch) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      return commitContentDocument(state, updateDocumentTheme(state.document, patch), {
+        history: false,
+      })
+    }),
+
+  applyDocumentTheme: (themeId) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      return commitContentDocument(state, applyDocumentTheme(state.document, themeId), {
+        history: false,
       })
     }),
 

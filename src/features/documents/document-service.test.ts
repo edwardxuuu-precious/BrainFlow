@@ -5,7 +5,7 @@ import {
   getRecentDocumentId,
   setRecentDocumentId,
 } from './document-service'
-import { defaultTheme } from './theme'
+import { defaultTheme, normalizeMindMapTheme } from './theme'
 
 async function resetDatabase(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -44,7 +44,7 @@ describe('documentService', () => {
     expect(list[0].id).toBe(doc.id)
   })
 
-  it('normalizes legacy theme data to the new slate palette', async () => {
+  it('normalizes legacy theme data while preserving explicit colors', async () => {
     const legacy = createMindMapDocument('旧主题文档')
     legacy.theme = {
       ...legacy.theme,
@@ -63,7 +63,9 @@ describe('documentService', () => {
     const loaded = await documentService.getDocument(legacy.id)
     const list = await documentService.listDocuments()
 
-    expect(loaded?.theme).toEqual(defaultTheme)
+    const normalizedTheme = normalizeMindMapTheme(legacy.theme)
+
+    expect(loaded?.theme).toEqual(normalizedTheme)
     expect(list[0]?.previewColor).toBe(defaultTheme.accent)
   })
 
@@ -185,6 +187,7 @@ describe('documentService', () => {
       metadata: {
         labels: [],
         markers: [],
+        stickers: [],
         task: null,
         links: [],
         attachments: [],

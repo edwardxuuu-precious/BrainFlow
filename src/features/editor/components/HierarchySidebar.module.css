@@ -19,36 +19,23 @@
   padding: 12px 14px 8px;
 }
 
-.headerTop {
+.chrome {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
 }
 
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: var(--secondary-200);
-  color: var(--on-surface-muted);
-  font-size: var(--font-size-label);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
 .collapseButton {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  border-radius: 12px;
 }
 
-.headerContent {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.collapseButton :global(svg) {
+  transform: rotate(180deg);
 }
 
 .title {
@@ -58,6 +45,9 @@
   font-weight: 600;
   line-height: 1.3;
   color: var(--on-surface);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .subtitle {
@@ -209,6 +199,10 @@
   border-radius: 999px;
   background: var(--primary-50);
   color: var(--primary-600);
+}
+
+.stickerIndicator {
+  font-size: 11px;
 }
 
 .treeMeta {

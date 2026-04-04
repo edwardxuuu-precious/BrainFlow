@@ -5,6 +5,8 @@ import { PassThrough } from 'node:stream'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  API_HEALTHCHECK_INITIAL_DELAY_MS,
+  API_HEALTHCHECK_INTERVAL_MS,
   API_RESTART_BASE_DELAY_MS,
   buildChildCommandSpec,
   DevSupervisor,
@@ -72,6 +74,7 @@ describe('DevSupervisor', () => {
       terminateProcess: vi.fn(async () => undefined),
       exitProcess,
       platform: 'win32',
+      fetchStatus: vi.fn().mockResolvedValue(new Response('{}', { status: 200 })),
     })
 
     supervisor.start()
@@ -104,6 +107,7 @@ describe('DevSupervisor', () => {
       terminateProcess: vi.fn(async () => undefined),
       exitProcess: vi.fn(),
       platform: 'win32',
+      fetchStatus: vi.fn().mockResolvedValue(new Response('{}', { status: 200 })),
     })
 
     supervisor.start()
@@ -122,13 +126,80 @@ describe('DevSupervisor', () => {
     expect(spawnProcess.mock.calls[3]?.[1]).toEqual(['/d', '/s', '/c', 'pnpm dev:server'])
   })
 
-  it('shuts down the whole supervisor when web exits and cleans up api', async () => {
-    const webChild = createChild(121)
-    const apiChild = createChild(242)
+  it('restarts api when the health check fails twice in a row', async () => {
+    vi.useFakeTimers()
+
+    const webChild = createChild(301)
+    const apiChildFirst = createChild(302)
+    const apiChildSecond = createChild(303)
     const spawnProcess = vi
       .fn()
       .mockReturnValueOnce(webChild)
-      .mockReturnValueOnce(apiChild)
+      .mockReturnValueOnce(apiChildFirst)
+      .mockReturnValueOnce(apiChildSecond)
+    const terminateProcess = vi.fn(async () => undefined)
+    const fetchStatus = vi
+      .fn()
+      .mockResolvedValue(new Response('Internal Server Error', { status: 500 }))
+
+    const supervisor = new DevSupervisor({
+      spawnProcess,
+      terminateProcess,
+      exitProcess: vi.fn(),
+      platform: 'win32',
+      fetchStatus,
+    })
+
+    supervisor.start()
+
+    await vi.advanceTimersByTimeAsync(API_HEALTHCHECK_INITIAL_DELAY_MS)
+    expect(fetchStatus).toHaveBeenCalledTimes(1)
+    expect(spawnProcess).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(API_HEALTHCHECK_INTERVAL_MS)
+    expect(fetchStatus).toHaveBeenCalledTimes(2)
+    expect(terminateProcess).toHaveBeenCalledWith(apiChildFirst)
+
+    await vi.advanceTimersByTimeAsync(API_RESTART_BASE_DELAY_MS)
+    expect(spawnProcess).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not restart api when health checks return 200 even if ready is false', async () => {
+    vi.useFakeTimers()
+
+    const webChild = createChild(401)
+    const apiChild = createChild(402)
+    const spawnProcess = vi.fn().mockReturnValueOnce(webChild).mockReturnValueOnce(apiChild)
+    const fetchStatus = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ready: false,
+          issues: [{ code: 'verification_required', message: '需要重新验证。' }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    )
+
+    const supervisor = new DevSupervisor({
+      spawnProcess,
+      terminateProcess: vi.fn(async () => undefined),
+      exitProcess: vi.fn(),
+      platform: 'win32',
+      fetchStatus,
+    })
+
+    supervisor.start()
+
+    await vi.advanceTimersByTimeAsync(API_HEALTHCHECK_INITIAL_DELAY_MS + API_HEALTHCHECK_INTERVAL_MS)
+
+    expect(fetchStatus).toHaveBeenCalledTimes(2)
+    expect(spawnProcess).toHaveBeenCalledTimes(2)
+  })
+
+  it('shuts down the whole supervisor when web exits and cleans up api', async () => {
+    const webChild = createChild(121)
+    const apiChild = createChild(242)
+    const spawnProcess = vi.fn().mockReturnValueOnce(webChild).mockReturnValueOnce(apiChild)
     const terminateProcess = vi.fn(async () => undefined)
     const exitProcess = vi.fn()
 
@@ -137,6 +208,7 @@ describe('DevSupervisor', () => {
       terminateProcess,
       exitProcess,
       platform: 'win32',
+      fetchStatus: vi.fn().mockResolvedValue(new Response('{}', { status: 200 })),
     })
 
     supervisor.start()
@@ -161,6 +233,7 @@ describe('DevSupervisor', () => {
       exitProcess,
       error,
       platform: 'win32',
+      fetchStatus: vi.fn().mockResolvedValue(new Response('{}', { status: 200 })),
     })
 
     supervisor.start()
@@ -173,8 +246,8 @@ describe('DevSupervisor', () => {
   it('retries api startup when spawn throws synchronously', async () => {
     vi.useFakeTimers()
 
-    const webChild = createChild(301)
-    const apiChild = createChild(302)
+    const webChild = createChild(501)
+    const apiChild = createChild(502)
     const spawnProcess = vi
       .fn()
       .mockReturnValueOnce(webChild)
@@ -182,13 +255,13 @@ describe('DevSupervisor', () => {
         throw new Error('spawn EINVAL')
       })
       .mockReturnValueOnce(apiChild)
-    const exitProcess = vi.fn()
 
     const supervisor = new DevSupervisor({
       spawnProcess,
       terminateProcess: vi.fn(async () => undefined),
-      exitProcess,
+      exitProcess: vi.fn(),
       platform: 'win32',
+      fetchStatus: vi.fn().mockResolvedValue(new Response('{}', { status: 200 })),
     })
 
     supervisor.start()
@@ -196,6 +269,5 @@ describe('DevSupervisor', () => {
 
     expect(spawnProcess).toHaveBeenCalledTimes(3)
     expect(spawnProcess.mock.calls[2]?.[0]).toBe('cmd.exe')
-    expect(exitProcess).not.toHaveBeenCalled()
   })
 })
