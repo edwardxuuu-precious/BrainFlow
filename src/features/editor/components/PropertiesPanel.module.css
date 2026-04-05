@@ -301,18 +301,19 @@
   gap: 8px;
   width: 100%;
   padding: 8px 12px;
-  border: 0;
+  border: 1px solid rgba(0, 0, 0, 0.1);
   border-radius: var(--radius-xs);
-  background: var(--surface-container-highest);
-  color: var(--on-surface);
+  background: white;
+  color: var(--color-text);
   font-size: var(--font-size-body-sm);
   font-weight: 500;
   cursor: pointer;
-  transition: background-color 180ms ease;
+  transition: all 180ms ease;
 }
 
 .topicTypeTrigger:hover {
-  background: var(--surface-container-high);
+  border-color: rgba(0, 0, 0, 0.2);
+  background: #f9fafb;
 }
 
 .topicTypeValue {
@@ -343,10 +344,10 @@
   display: grid;
   gap: 2px;
   padding: 6px;
-  border: 0;
+  border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: var(--radius-sm);
-  background: var(--surface-container-lowest);
-  box-shadow: var(--shadow-ghost);
+  background: white;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .topicTypeItem {
@@ -357,7 +358,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--on-surface);
+  color: var(--color-text);
   font-size: var(--font-size-body-sm);
   font-weight: 500;
   text-align: left;
@@ -366,11 +367,11 @@
 }
 
 .topicTypeItem:hover {
-  background: var(--surface-container-high);
+  background: #f3f4f6;
 }
 
 .topicTypeItemActive {
-  background: var(--primary-100);
+  background: #eff6ff;
   color: var(--primary-700);
 }
 
@@ -432,13 +433,11 @@
 
 .sublabel,
 .fieldCaption {
-  color: var(--color-text);
+  color: var(--color-muted);
   font-size: var(--font-size-label);
-  font-weight: 600;
-}
-
-.fieldCaption {
-  color: var(--color-text-soft);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
 .chipList,
@@ -493,6 +492,7 @@
   outline: none;
   background: rgba(255, 255, 255, 0.82);
   color: var(--color-text);
+  font-size: var(--font-size-body-sm);
   transition:
     border-color 180ms ease,
     box-shadow 180ms ease,

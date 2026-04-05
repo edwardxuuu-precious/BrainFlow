@@ -133,7 +133,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
       />
 
       <div className={styles.content}>
-        {(isLocked || topicType) && (
+        {(isLocked || hasNote || topicType || task) && (
           <div className={styles.statusBar}>
             {isLocked ? (
               <span
@@ -149,7 +149,20 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                 ) : null}
               </span>
             ) : null}
-            {isLocked ? <span className={styles.lockedLabel}>已锁定</span> : null}
+            {hasNote ? (
+              <span
+                className={classNames(styles.statusIcon, styles.noteIcon)}
+                onMouseEnter={() => setHoveredIcon('note')}
+                onMouseLeave={() => setHoveredIcon(null)}
+                role="img"
+                aria-label="已添加详细内容"
+              >
+                <Icon name="note" size={11} strokeWidth={2} />
+                {hoveredIcon === 'note' ? (
+                  <span className={styles.statusTooltip}>已添加详细内容</span>
+                ) : null}
+              </span>
+            ) : null}
             {topicType === 'milestone' ? (
               <span
                 className={classNames(styles.statusIcon, styles.milestoneIcon)}
@@ -175,6 +188,37 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                 <Icon name="checkCircle" size={11} strokeWidth={2} />
                 {hoveredIcon === 'task' ? (
                   <span className={styles.statusTooltip}>任务节点</span>
+                ) : null}
+              </span>
+            ) : null}
+            {task ? (
+              <span
+                className={classNames(styles.statusIcon, styles.taskStatusIcon)}
+                data-task-status={task.status}
+                onMouseEnter={() => setHoveredIcon('taskStatus')}
+                onMouseLeave={() => setHoveredIcon(null)}
+                role="img"
+                aria-label={`任务状态：${task.status}`}
+              >
+                <Icon
+                  name={
+                    task.status === 'done'
+                      ? 'check'
+                      : task.status === 'in_progress'
+                        ? 'calendar'
+                        : 'history'
+                  }
+                  size={11}
+                  strokeWidth={2}
+                />
+                {hoveredIcon === 'taskStatus' ? (
+                  <span className={styles.statusTooltip}>
+                    {task.status === 'done'
+                      ? '已完成'
+                      : task.status === 'in_progress'
+                        ? '进行中'
+                        : '待办'}
+                  </span>
                 ) : null}
               </span>
             ) : null}
@@ -207,16 +251,6 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
           <>
             <div className={styles.titleRow}>
               <div className={styles.title}>{data.title}</div>
-              {hasNote ? (
-                <span
-                  className={styles.noteIndicator}
-                  data-note-indicator="true"
-                  role="img"
-                  aria-label="已添加详细内容"
-                >
-                  <Icon name="note" size={12} strokeWidth={1.9} />
-                </span>
-              ) : null}
             </div>
 
             {showMetaRow ? (
@@ -263,27 +297,6 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                   ))}
                   {extraStickerCount > 0 ? (
                     <span className={styles.metaCount}>+{extraStickerCount}</span>
-                  ) : null}
-
-                  {task ? (
-                    <span
-                      className={classNames(styles.metaBadge, styles.taskBadge)}
-                      data-task-status={task.status}
-                      role="img"
-                      aria-label={`任务：${task.status}`}
-                    >
-                      <Icon
-                        name={
-                          task.status === 'done'
-                            ? 'check'
-                            : task.status === 'in_progress'
-                              ? 'calendar'
-                              : 'history'
-                        }
-                        size={11}
-                        strokeWidth={2}
-                      />
-                    </span>
                   ) : null}
 
                   {hasLinks ? (
