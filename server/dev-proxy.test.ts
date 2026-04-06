@@ -12,6 +12,10 @@ import {
 class FakeProxy extends EventEmitter {}
 
 describe('dev proxy helpers', () => {
+  it('uses a long enough timeout for Codex streaming requests', () => {
+    expect(BRIDGE_PROXY_TIMEOUT_MS).toBeGreaterThanOrEqual(180_000)
+  })
+
   it('writes a structured 503 response when the local bridge is unavailable', () => {
     const setHeader = vi.fn()
     const end = vi.fn()

@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import {
@@ -5,8 +6,20 @@ import {
   BRIDGE_PROXY_TIMEOUT_MS,
 } from './server/dev-proxy'
 
+const require = createRequire(import.meta.url)
+const decodeNamedCharacterReferenceEntry = require.resolve('decode-named-character-reference', {
+  paths: [require.resolve('remark-parse')],
+})
+
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      // Force the worker-safe decoder entry; the browser export relies on DOM globals
+      // and breaks local Markdown parsing inside module workers.
+      'decode-named-character-reference': decodeNamedCharacterReferenceEntry,
+    },
+  },
   server: {
     proxy: {
       '/api': {

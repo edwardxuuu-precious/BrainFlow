@@ -1,6 +1,6 @@
 import type { ClientRequest, IncomingMessage, ServerResponse } from 'node:http'
 
-export const BRIDGE_PROXY_TIMEOUT_MS = 4_000
+export const BRIDGE_PROXY_TIMEOUT_MS = 180_000
 export const BRIDGE_UNAVAILABLE_MESSAGE =
   '本机 Codex bridge 无响应，请确认本机 bridge 已启动，并检查 8787 端口服务。'
 

@@ -5,7 +5,9 @@ import type {
   AiRunStage,
   AiStreamEvent,
   CodexApiError,
+  TextImportSemanticAdjudicationRequest,
   TextImportRequest,
+  TextImportRunStage,
   TextImportStreamEvent,
 } from '../shared/ai-contract.js'
 import {
@@ -16,6 +18,7 @@ import {
 
 interface CreateAppOptions {
   bridge?: CodexBridge
+  logInfo?: (message: string) => void
   logError?: (message: string, error: unknown) => void
 }
 
@@ -68,6 +71,37 @@ function validateImportRequest(payload: unknown): TextImportRequest {
   return request as TextImportRequest
 }
 
+function validateImportAdjudicationRequest(payload: unknown): TextImportSemanticAdjudicationRequest {
+  if (!payload || typeof payload !== 'object') {
+    throw new CodexBridgeError('invalid_request', '无效的语义裁决请求体。')
+  }
+
+  const request = payload as Partial<TextImportSemanticAdjudicationRequest>
+  if (
+    typeof request.jobId !== 'string' ||
+    typeof request.documentId !== 'string' ||
+    typeof request.documentTitle !== 'string' ||
+    !Array.isArray(request.candidates)
+  ) {
+    throw new CodexBridgeError('invalid_request', '语义裁决请求缺少必要字段。')
+  }
+
+  for (const candidate of request.candidates) {
+    if (
+      !candidate ||
+      typeof candidate !== 'object' ||
+      typeof candidate.candidateId !== 'string' ||
+      (candidate.scope !== 'existing_topic' && candidate.scope !== 'cross_file') ||
+      !candidate.source ||
+      !candidate.target
+    ) {
+      throw new CodexBridgeError('invalid_request', '语义裁决候选对格式无效。')
+    }
+  }
+
+  return request as TextImportSemanticAdjudicationRequest
+}
+
 function validateSettingsPayload(payload: unknown): { businessPrompt: string } {
   if (!payload || typeof payload !== 'object') {
     throw new CodexBridgeError('invalid_request', '无效的 AI 设置请求体。')
@@ -106,19 +140,26 @@ function delay(ms: number): Promise<void> {
 }
 
 function toApiError(error: unknown): CodexApiError {
+  const requestId =
+    typeof error === 'object' && error && 'requestId' in error
+      ? ((error as { requestId?: string | null }).requestId ?? undefined)
+      : undefined
+
   if (error instanceof CodexBridgeError) {
     return {
       code: error.code,
       message: error.message,
       issues: error.issues,
       rawMessage: error.rawMessage,
+      requestId,
     }
   }
 
   return {
     code: 'request_failed',
-      message: error instanceof Error ? error.message : 'Codex 请求失败。',
-      rawMessage: error instanceof Error ? error.message : undefined,
+    message: error instanceof Error ? error.message : 'Codex 请求失败。',
+    rawMessage: error instanceof Error ? error.message : undefined,
+    requestId,
   }
 }
 
@@ -153,17 +194,62 @@ function emitErrorEvent(
 function emitImportErrorEvent(
   emit: (event: TextImportStreamEvent) => void,
   error: unknown,
-  stage?: 'extracting_input' | 'analyzing_source' | 'resolving_conflicts' | 'building_preview',
+  stage?: TextImportRunStage,
 ): void {
   const apiError = toApiError(error)
+  const errorStage =
+    stage ??
+    (error instanceof CodexBridgeError
+      ? error.stage
+      : undefined)
   emit({
     type: 'error',
-    stage,
+    stage: errorStage as TextImportRunStage | undefined,
     code: apiError.code,
     message: apiError.message,
     issues: apiError.issues,
     rawMessage: apiError.rawMessage,
+    requestId: apiError.requestId,
   })
+}
+
+function createImportRequestId(): string {
+  return `import_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function summarizeLogText(value: string | undefined, maxLength = 160): string | undefined {
+  if (!value) {
+    return undefined
+  }
+
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (!normalized) {
+    return undefined
+  }
+
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}…` : normalized
+}
+
+function formatImportLog(
+  requestId: string,
+  fields: Record<string, string | number | boolean | null | undefined>,
+): string {
+  const payload = Object.entries(fields)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+    .join(' ')
+  return payload ? `[import][requestId=${requestId}] ${payload}` : `[import][requestId=${requestId}]`
+}
+
+function formatSemanticLog(
+  jobId: string,
+  fields: Record<string, string | number | boolean | null | undefined>,
+): string {
+  const payload = Object.entries(fields)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+    .join(' ')
+  return payload ? `[semantic][jobId=${jobId}] ${payload}` : `[semantic][jobId=${jobId}]`
 }
 
 function createNdjsonResponse(
@@ -205,6 +291,7 @@ function createNdjsonResponse(
 
 function createImportNdjsonResponse(
   handler: (emit: (event: TextImportStreamEvent) => void) => Promise<void>,
+  requestId?: string,
 ): Response {
   const encoder = new TextEncoder()
 
@@ -212,7 +299,9 @@ function createImportNdjsonResponse(
     new ReadableStream({
       async start(controller) {
         const emit = (event: TextImportStreamEvent) => {
-          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
+          controller.enqueue(
+            encoder.encode(`${JSON.stringify(requestId ? { ...event, requestId } : event)}\n`),
+          )
         }
 
         try {
@@ -225,6 +314,7 @@ function createImportNdjsonResponse(
             message: apiError.message,
             issues: apiError.issues,
             rawMessage: apiError.rawMessage,
+            requestId: apiError.requestId ?? requestId,
           })
         } finally {
           controller.close()
@@ -242,11 +332,17 @@ function createImportNdjsonResponse(
 
 export function createApp(options?: CreateAppOptions) {
   const app = new Hono()
-  const bridge = options?.bridge ?? createCodexBridge()
+  const logInfo = options?.logInfo ?? console.log
   const logError =
     options?.logError ??
     ((message: string, error: unknown) => {
       console.error(message, error)
+    })
+  const bridge =
+    options?.bridge ??
+    createCodexBridge({
+      logInfo,
+      logError: (message) => logError(message, undefined),
     })
 
   const jsonRoute =
@@ -367,6 +463,17 @@ export function createApp(options?: CreateAppOptions) {
 
   app.post('/api/codex/import/preview', async (c) => {
     const request = validateImportRequest(await c.req.json().catch(() => null))
+    const requestId = createImportRequestId()
+    const requestStartedAt = Date.now()
+    logInfo(
+      formatImportLog(requestId, {
+        event: 'request_started',
+        sourceName: request.sourceName,
+        rawTextLength: request.rawText.length,
+        preprocessedHintCount: request.preprocessedHints.length,
+        topicCount: request.context.topicCount,
+      }),
+    )
 
     return createImportNdjsonResponse(async (emit) => {
       emit({
@@ -377,16 +484,41 @@ export function createApp(options?: CreateAppOptions) {
       emit({
         type: 'status',
         stage: 'analyzing_source',
-        message: '正在结合整张脑图进行语义整理、匹配与去重…',
+        message: '正在结合整张脑图整理导入上下文…',
       })
 
       try {
         const result = await bridge.previewTextImport(request, {
-          onStatus: (message) => {
+          requestId,
+          onStatus: ({ stage, message }) => {
             emit({
               type: 'status',
-              stage: 'building_preview',
+              stage,
               message,
+            })
+          },
+          onRunnerObservation: (observation) => {
+            emit({
+              type: 'runner_observation',
+              ...observation,
+            })
+          },
+          onCodexEvent: (codexEvent) => {
+            emit({
+              type: 'codex_event',
+              ...codexEvent,
+            })
+          },
+          onCodexExplainer: (explainer) => {
+            emit({
+              type: 'codex_explainer',
+              ...explainer,
+            })
+          },
+          onCodexDiagnostic: (diagnostic) => {
+            emit({
+              type: 'codex_diagnostic',
+              ...diagnostic,
             })
           },
         })
@@ -404,11 +536,86 @@ export function createApp(options?: CreateAppOptions) {
           type: 'result',
           data: result,
         })
+        logInfo(
+          formatImportLog(requestId, {
+            event: 'request_completed',
+            status: 'success',
+            durationMs: Date.now() - requestStartedAt,
+            previewNodeCount: result.previewNodes.length,
+            operationCount: result.operations.length,
+            conflictCount: result.conflicts.length,
+            warningCount: result.warnings?.length ?? 0,
+          }),
+        )
       } catch (error) {
-        emitImportErrorEvent(emit, error, 'building_preview')
+        logError(
+          formatImportLog(requestId, {
+            event: 'request_failed',
+            status: 'error',
+            durationMs: Date.now() - requestStartedAt,
+            stage:
+              error instanceof CodexBridgeError
+                ? error.stage
+                : 'building_preview',
+            code: error instanceof CodexBridgeError ? error.code : 'request_failed',
+            message:
+              error instanceof CodexBridgeError
+                ? summarizeLogText(error.message)
+                : summarizeLogText(error instanceof Error ? error.message : String(error)),
+            rawMessage:
+              error instanceof CodexBridgeError
+                ? summarizeLogText(error.rawMessage)
+                : undefined,
+          }),
+          error,
+        )
+        emitImportErrorEvent(emit, error)
       }
-    })
+    }, requestId)
   })
+
+  app.post('/api/codex/import/adjudicate', jsonRoute('POST /api/codex/import/adjudicate', async (c) => {
+    const request = validateImportAdjudicationRequest(await c.req.json().catch(() => null))
+    const startedAt = Date.now()
+    logInfo(
+      formatSemanticLog(request.jobId, {
+        event: 'request_started',
+        candidateCount: request.candidates.length,
+        batchTitle: request.batchTitle ?? null,
+      }),
+    )
+
+    try {
+      const result = await bridge.adjudicateTextImportCandidates(request)
+      logInfo(
+        formatSemanticLog(request.jobId, {
+          event: 'request_completed',
+          durationMs: Date.now() - startedAt,
+          decisionCount: result.decisions.length,
+          warningCount: result.warnings?.length ?? 0,
+        }),
+      )
+      return result
+    } catch (error) {
+      if (shouldLogApiError(error)) {
+        logError(
+          formatSemanticLog(request.jobId, {
+            event: 'request_failed',
+            durationMs: Date.now() - startedAt,
+            code: error instanceof CodexBridgeError ? error.code : 'request_failed',
+            message:
+              error instanceof CodexBridgeError
+                ? summarizeLogText(error.message)
+                : summarizeLogText(error instanceof Error ? error.message : String(error)),
+            rawMessage:
+              error instanceof CodexBridgeError ? summarizeLogText(error.rawMessage) : undefined,
+          }),
+          error,
+        )
+      }
+      throw error
+    }
+  }))
 
   app.post('/api/ai/session', (c) =>
     c.json(

@@ -30,6 +30,7 @@ function renderPanel(overrides?: Partial<ComponentProps<typeof PropertiesPanel>>
           id: topic.id,
           title: topic.title,
         }))}
+        availableLabels={[]}
         onRenameChange={vi.fn()}
         onRenameCommit={vi.fn()}
         onRenameCancel={vi.fn()}

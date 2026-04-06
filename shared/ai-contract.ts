@@ -258,11 +258,101 @@ export interface TextImportPreviewNode extends TextImportPreviewItem {
   children: TextImportPreviewNode[]
 }
 
+export interface TextImportMergeSuggestion {
+  id: string
+  previewNodeId: string
+  matchedTopicId: string
+  matchedTopicTitle: string
+  kind?: 'same_topic' | 'partial_overlap' | 'conflict'
+  confidence: 'high' | 'medium'
+  reason: string
+}
+
+export interface TextImportCrossFileMergeSuggestion {
+  id: string
+  previewNodeId: string
+  sourceName: string
+  matchedPreviewNodeId: string
+  matchedSourceName: string
+  matchedTitle: string
+  kind?: 'same_topic' | 'partial_overlap' | 'conflict'
+  confidence: 'high' | 'medium'
+  reason: string
+}
+
+export interface TextImportSemanticTargetSnapshot {
+  id: string
+  scope: 'existing_topic' | 'import_preview'
+  sourceName: string | null
+  pathTitles: string[]
+  title: string
+  noteSummary: string
+  parentTitle: string | null
+  fingerprint?: string | null
+}
+
+export interface TextImportSemanticCandidate {
+  candidateId: string
+  scope: 'existing_topic' | 'cross_file'
+  source: TextImportSemanticTargetSnapshot
+  target: TextImportSemanticTargetSnapshot
+}
+
+export interface TextImportSemanticAdjudicationRequest {
+  jobId: string
+  documentId: string
+  documentTitle: string
+  batchTitle?: string | null
+  candidates: TextImportSemanticCandidate[]
+}
+
+export interface TextImportSemanticDecision {
+  candidateId: string
+  kind: 'same_topic' | 'partial_overlap' | 'conflict' | 'distinct'
+  confidence: 'high' | 'medium'
+  mergedTitle: string | null
+  mergedSummary: string | null
+  evidence: string
+}
+
+export interface TextImportSemanticAdjudicationResponse {
+  decisions: TextImportSemanticDecision[]
+  warnings?: string[]
+}
+
+export interface TextImportBatchFileSummary {
+  sourceName: string
+  sourceType: TextImportSourceType
+  previewNodeId: string
+  nodeCount: number
+  mergeSuggestionCount: number
+  warningCount: number
+}
+
+export interface TextImportBatchSummary {
+  jobType: 'single' | 'batch'
+  fileCount: number
+  completedFileCount: number
+  currentFileName: string | null
+  batchContainerTitle?: string | null
+  files?: TextImportBatchFileSummary[]
+}
+
+export interface TextImportSemanticMergeSummary {
+  candidateCount: number
+  adjudicatedCount: number
+  autoMergedExistingCount: number
+  autoMergedCrossFileCount: number
+  conflictCount: number
+  fallbackCount: number
+}
+
 export type AiImportOperation = AiCanvasOperation & {
   id: string
   risk: AiImportOperationRisk
   conflictId?: string
   reason?: string
+  targetFingerprint?: string | null
 }
 
 export interface TextImportResponse {
@@ -271,6 +361,10 @@ export interface TextImportResponse {
   previewNodes: TextImportPreviewItem[]
   operations: AiImportOperation[]
   conflicts: TextImportConflict[]
+  mergeSuggestions?: TextImportMergeSuggestion[]
+  crossFileMergeSuggestions?: TextImportCrossFileMergeSuggestion[]
+  semanticMerge?: TextImportSemanticMergeSummary | null
+  batch?: TextImportBatchSummary | null
   warnings?: string[]
 }
 
@@ -314,6 +408,77 @@ export interface CodexApiError {
   message: string
   issues?: CodexBridgeIssue[]
   rawMessage?: string
+  requestId?: string
+}
+
+export type TextImportRunStage =
+  | 'extracting_input'
+  | 'analyzing_source'
+  | 'parsing_markdown'
+  | 'analyzing_import'
+  | 'semantic_candidate_generation'
+  | 'semantic_adjudication'
+  | 'semantic_merge_review'
+  | 'loading_prompt'
+  | 'starting_codex_primary'
+  | 'waiting_codex_primary'
+  | 'parsing_primary_result'
+  | 'repairing_structure'
+  | 'starting_codex_repair'
+  | 'waiting_codex_repair'
+  | 'parsing_repair_result'
+  | 'resolving_conflicts'
+  | 'building_preview'
+
+export type TextImportRunnerAttempt = 'primary' | 'repair'
+
+export type TextImportRunnerObservationPhase =
+  | 'spawn_started'
+  | 'heartbeat'
+  | 'first_json_event'
+  | 'completed'
+
+export interface TextImportRunnerObservation {
+  attempt: TextImportRunnerAttempt
+  phase: TextImportRunnerObservationPhase
+  kind: 'structured' | 'message'
+  promptLength: number
+  elapsedSinceSpawnMs?: number
+  elapsedSinceLastEventMs?: number
+  exitCode?: number
+  hadJsonEvent?: boolean
+}
+
+export interface TextImportCodexEvent {
+  attempt: TextImportRunnerAttempt
+  eventType: string
+  at: number
+  summary: string
+  rawJson: string
+  requestId?: string
+}
+
+export interface TextImportCodexExplainer {
+  attempt: TextImportRunnerAttempt
+  at: number
+  headline: string
+  reason: string
+  evidence: string[]
+  requestId?: string
+}
+
+export type TextImportCodexDiagnosticCategory =
+  | 'noise'
+  | 'capability_gap'
+  | 'actionable'
+
+export interface TextImportCodexDiagnostic {
+  attempt: TextImportRunnerAttempt
+  category: TextImportCodexDiagnosticCategory
+  at: number
+  message: string
+  rawLine: string
+  requestId?: string
 }
 
 export type AiRunStage =
@@ -322,8 +487,19 @@ export type AiRunStage =
   | 'building_context'
   | 'extracting_input'
   | 'analyzing_source'
+  | 'loading_prompt'
+  | 'starting_codex_primary'
+  | 'waiting_codex_primary'
+  | 'parsing_primary_result'
   | 'parsing_markdown'
   | 'analyzing_import'
+  | 'semantic_candidate_generation'
+  | 'semantic_adjudication'
+  | 'semantic_merge_review'
+  | 'repairing_structure'
+  | 'starting_codex_repair'
+  | 'waiting_codex_repair'
+  | 'parsing_repair_result'
   | 'resolving_conflicts'
   | 'building_preview'
   | 'starting_codex'
@@ -371,20 +547,36 @@ export type AiStreamEvent =
 export type TextImportStreamEvent =
   | {
       type: 'status'
-      stage: 'extracting_input' | 'analyzing_source' | 'resolving_conflicts' | 'building_preview'
+      stage: TextImportRunStage
       message: string
+      requestId?: string
     }
+  | ({
+      type: 'runner_observation'
+      requestId?: string
+    } & TextImportRunnerObservation)
+  | ({
+      type: 'codex_event'
+    } & TextImportCodexEvent)
+  | ({
+      type: 'codex_explainer'
+    } & TextImportCodexExplainer)
+  | ({
+      type: 'codex_diagnostic'
+    } & TextImportCodexDiagnostic)
   | {
       type: 'result'
       data: TextImportResponse
+      requestId?: string
     }
   | {
       type: 'error'
-      stage?: 'extracting_input' | 'analyzing_source' | 'resolving_conflicts' | 'building_preview'
+      stage?: TextImportRunStage
       code?: CodexApiError['code']
       message: string
       issues?: CodexBridgeIssue[]
       rawMessage?: string
+      requestId?: string
     }
 
 export type MarkdownImportStreamEvent = TextImportStreamEvent

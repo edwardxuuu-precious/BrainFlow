@@ -6,6 +6,7 @@ import type {
   AiChatResponse,
   CodexSettings,
   CodexStatus,
+  TextImportSemanticAdjudicationRequest,
   TextImportRequest,
   TextImportResponse,
 } from '../shared/ai-contract.js'
@@ -116,6 +117,39 @@ const baseImportRequest: TextImportRequest = {
   ],
 }
 
+const baseAdjudicationRequest: TextImportSemanticAdjudicationRequest = {
+  jobId: 'job_semantic_1',
+  documentId: 'doc_1',
+  documentTitle: '测试脑图',
+  batchTitle: 'Import batch: GTM',
+  candidates: [
+    {
+      candidateId: 'candidate_1',
+      scope: 'existing_topic',
+      source: {
+        id: 'preview_1',
+        scope: 'import_preview',
+        sourceName: 'GTM_main.md',
+        pathTitles: ['Import: GTM_main', 'Goals'],
+        title: 'Goals',
+        noteSummary: 'Imported summary',
+        parentTitle: 'Import: GTM_main',
+        fingerprint: null,
+      },
+      target: {
+        id: 'topic_1',
+        scope: 'existing_topic',
+        sourceName: null,
+        pathTitles: ['中心主题', '分支一'],
+        title: '分支一',
+        noteSummary: 'Existing summary',
+        parentTitle: '中心主题',
+        fingerprint: 'fp_1',
+      },
+    },
+  ],
+}
+
 function createBridge(overrides?: Record<string, unknown>) {
   return {
     getStatus: vi.fn().mockResolvedValue(status),
@@ -127,8 +161,17 @@ function createBridge(overrides?: Record<string, unknown>) {
     planChanges: vi.fn(),
     previewTextImport: vi.fn(),
     previewMarkdownImport: vi.fn(),
+    adjudicateTextImportCandidates: vi.fn(),
     ...overrides,
   }
+}
+
+function parseNdjsonPayload(payload: string): Array<Record<string, unknown>> {
+  return payload
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
 describe('codex app', () => {
@@ -206,10 +249,47 @@ describe('codex app', () => {
       conflicts: [],
       warnings: [],
     }
+    const logInfo = vi.fn()
+    const logError = vi.fn()
     const bridge = createBridge({
-      previewTextImport: vi.fn().mockResolvedValue(result),
+      previewTextImport: vi.fn().mockImplementation(async (_request, options) => {
+        options?.onStatus?.({
+          stage: 'loading_prompt',
+          message: '已加载系统提示词，正在准备导入分析…',
+          durationMs: 12,
+        })
+        options?.onStatus?.({
+          stage: 'starting_codex_primary',
+          message: '正在启动 Codex 导入分析…',
+        })
+        options?.onStatus?.({
+          stage: 'waiting_codex_primary',
+          message: 'Codex 正在分析全文与整张脑图…',
+        })
+        options?.onRunnerObservation?.({
+          attempt: 'primary',
+          phase: 'heartbeat',
+          kind: 'structured',
+          promptLength: 120,
+          elapsedSinceSpawnMs: 5_000,
+          elapsedSinceLastEventMs: 5_000,
+          hadJsonEvent: false,
+        })
+        options?.onCodexEvent?.({
+          attempt: 'primary',
+          eventType: 'turn.started',
+          at: 1_000,
+          summary: 'Codex 已开始分析导入内容',
+          rawJson: '{"type":"turn.started"}',
+        })
+        options?.onStatus?.({
+          stage: 'parsing_primary_result',
+          message: '正在解析主导入结果…',
+        })
+        return result
+      }),
     })
-    const app = createApp({ bridge })
+    const app = createApp({ bridge, logInfo, logError })
 
     const response = await app.request('/api/codex/import/preview', {
       method: 'POST',
@@ -221,12 +301,31 @@ describe('codex app', () => {
 
     expect(response.status).toBe(200)
     const payload = await response.text()
+    const events = parseNdjsonPayload(payload)
     expect(payload).toContain('"stage":"extracting_input"')
     expect(payload).toContain('"stage":"analyzing_source"')
+    expect(payload).toContain('"stage":"loading_prompt"')
+    expect(payload).toContain('"stage":"starting_codex_primary"')
+    expect(payload).toContain('"stage":"waiting_codex_primary"')
+    expect(payload).toContain('"type":"runner_observation"')
+    expect(payload).toContain('"phase":"heartbeat"')
+    expect(payload).toContain('"type":"codex_event"')
+    expect(payload).toContain('"eventType":"turn.started"')
+    expect(payload).toContain('"stage":"parsing_primary_result"')
     expect(payload).toContain('"stage":"resolving_conflicts"')
     expect(payload).toContain('"stage":"building_preview"')
     expect(payload).toContain('"type":"result"')
+    expect(events.length).toBeGreaterThan(0)
+    expect(events.every((event) => typeof event.requestId === 'string')).toBe(true)
+    expect(events.at(-1)).toEqual(
+      expect.objectContaining({
+        type: 'result',
+        requestId: expect.stringMatching(/^import_/),
+      }),
+    )
     expect(bridge.previewTextImport).toHaveBeenCalledWith(baseImportRequest, expect.any(Object))
+    expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('[import][requestId='))
+    expect(logError).not.toHaveBeenCalled()
   })
 
   it('forwards raw import errors through the NDJSON error event', async () => {
@@ -251,8 +350,61 @@ describe('codex app', () => {
     })
 
     const payload = await response.text()
+    const events = parseNdjsonPayload(payload)
     expect(payload).toContain('"type":"error"')
     expect(payload).toContain('"message":"Codex 导入结构修正失败"')
     expect(payload).toContain('"rawMessage":"stderr: model output was truncated"')
+    expect(events.at(-1)).toEqual(
+      expect.objectContaining({
+        type: 'error',
+        requestId: expect.stringMatching(/^import_/),
+        rawMessage: 'stderr: model output was truncated',
+      }),
+    )
+  })
+
+  it('proxies semantic adjudication requests through the JSON route', async () => {
+    const bridge = createBridge({
+      adjudicateTextImportCandidates: vi.fn().mockResolvedValue({
+        decisions: [
+          {
+            candidateId: 'candidate_1',
+            kind: 'same_topic',
+            confidence: 'high',
+            mergedTitle: 'Unified Goals',
+            mergedSummary: 'Merged summary',
+            evidence: 'The imported topic and target share the same goal framing.',
+          },
+        ],
+        warnings: [],
+      }),
+    })
+    const logInfo = vi.fn()
+    const app = createApp({ bridge, logInfo })
+
+    const response = await app.request('/api/codex/import/adjudicate', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(baseAdjudicationRequest),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      decisions: [
+        {
+          candidateId: 'candidate_1',
+          kind: 'same_topic',
+          confidence: 'high',
+          mergedTitle: 'Unified Goals',
+          mergedSummary: 'Merged summary',
+          evidence: 'The imported topic and target share the same goal framing.',
+        },
+      ],
+      warnings: [],
+    })
+    expect(bridge.adjudicateTextImportCandidates).toHaveBeenCalledWith(baseAdjudicationRequest)
+    expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('[semantic][jobId=job_semantic_1]'))
   })
 })

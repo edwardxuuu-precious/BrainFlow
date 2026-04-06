@@ -181,6 +181,9 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const [markerSubtab, setMarkerSubtab] = useState<MarkerSubtab>('markers')
   const [formatSubtab, setFormatSubtab] = useState<FormatSubtab>('topic')
   const [rightSidebarWidth, setRightSidebarWidth] = useState(300)
+  const [mainMenuOpen, setMainMenuOpen] = useState(false)
+  const [exportSubmenuOpen, setExportSubmenuOpen] = useState(false)
+  const mainMenuRef = useRef<HTMLDivElement>(null)
 
   const [useFullDocument, setUseFullDocument] = useState(true)
   const [aiContextTopicIds, setAiContextTopicIds] = useState<string[]>([])
@@ -266,7 +269,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const aiUndoLastAppliedChange = useAiStore((state) => state.undoLastAppliedChange)
   const textImportOpen = useTextImportStore((state) => state.open)
   const textImportClose = useTextImportStore((state) => state.close)
-  const textImportPreviewFile = useTextImportStore((state) => state.previewFile)
+  const textImportPreviewFiles = useTextImportStore((state) => state.previewFiles)
   const textImportPreviewText = useTextImportStore((state) => state.previewText)
   const textImportSetDraftSourceName = useTextImportStore((state) => state.setDraftSourceName)
   const textImportSetDraftText = useTextImportStore((state) => state.setDraftText)
@@ -277,19 +280,57 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const textImportIsOpen = useTextImportStore((state) => state.isOpen)
   const textImportSourceName = useTextImportStore((state) => state.sourceName)
   const textImportSourceType = useTextImportStore((state) => state.sourceType)
+  const textImportSourceFiles = useTextImportStore((state) => state.sourceFiles)
   const textImportRawText = useTextImportStore((state) => state.rawText)
   const textImportDraftSourceName = useTextImportStore((state) => state.draftSourceName)
   const textImportDraftText = useTextImportStore((state) => state.draftText)
   const textImportPreprocessedHints = useTextImportStore((state) => state.preprocessedHints)
   const textImportPreview = useTextImportStore((state) => state.preview)
   const textImportPreviewTree = useTextImportStore((state) => state.previewTree)
+  const textImportCrossFileMergeSuggestions = useTextImportStore(
+    (state) => state.crossFileMergeSuggestions,
+  )
   const textImportApprovedConflictIds = useTextImportStore(
     (state) => state.approvedConflictIds,
   )
   const textImportStatusText = useTextImportStore((state) => state.statusText)
+  const textImportProgress = useTextImportStore((state) => state.progress)
+  const textImportProgressIndeterminate = useTextImportStore((state) => state.progressIndeterminate)
+  const textImportActiveJobMode = useTextImportStore((state) => state.activeJobMode)
+  const textImportActiveJobType = useTextImportStore((state) => state.activeJobType)
+  const textImportCurrentStatus = useTextImportStore((state) => state.currentStatus)
+  const textImportLatestCodexExplainer = useTextImportStore((state) => state.latestCodexExplainer)
+  const textImportLatestCodexEvent = useTextImportStore((state) => state.latestCodexEvent)
+  const textImportCodexEventFeed = useTextImportStore((state) => state.codexEventFeed)
+  const textImportCodexDiagnostics = useTextImportStore((state) => state.codexDiagnostics)
+  const textImportStatusTimeline = useTextImportStore((state) => state.statusTimeline)
+  const textImportFileCount = useTextImportStore((state) => state.fileCount)
+  const textImportCompletedFileCount = useTextImportStore(
+    (state) => state.completedFileCount,
+  )
+  const textImportCurrentFileName = useTextImportStore((state) => state.currentFileName)
+  const textImportSemanticMergeStage = useTextImportStore(
+    (state) => state.semanticMergeStage,
+  )
+  const textImportSemanticCandidateCount = useTextImportStore(
+    (state) => state.semanticCandidateCount,
+  )
+  const textImportSemanticAdjudicatedCount = useTextImportStore(
+    (state) => state.semanticAdjudicatedCount,
+  )
+  const textImportSemanticFallbackCount = useTextImportStore(
+    (state) => state.semanticFallbackCount,
+  )
+  const textImportModeHint = useTextImportStore((state) => state.modeHint)
   const textImportError = useTextImportStore((state) => state.error)
   const textImportIsPreviewing = useTextImportStore((state) => state.isPreviewing)
   const textImportIsApplying = useTextImportStore((state) => state.isApplying)
+  const textImportPreviewStartedAt = useTextImportStore((state) => state.previewStartedAt)
+  const textImportPreviewFinishedAt = useTextImportStore((state) => state.previewFinishedAt)
+  const textImportApplyProgress = useTextImportStore((state) => state.applyProgress)
+  const textImportAppliedCount = useTextImportStore((state) => state.appliedCount)
+  const textImportTotalOperations = useTextImportStore((state) => state.totalOperations)
+  const textImportCurrentApplyLabel = useTextImportStore((state) => state.currentApplyLabel)
 
   useEditorShortcuts()
 
@@ -400,6 +441,17 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     !!aiLastAppliedChange &&
     history.length === aiLastAppliedChange.historyLength &&
     document?.updatedAt === aiLastAppliedChange.documentUpdatedAt
+  const textImportButtonLabel = textImportIsPreviewing
+    ? textImportActiveJobType === 'batch'
+      ? `智能导入 ${textImportCompletedFileCount}/${Math.max(1, textImportFileCount)}`
+      : `智能导入 ${textImportProgress}%`
+    : textImportIsApplying
+      ? `应用中 ${textImportAppliedCount}/${Math.max(1, textImportTotalOperations)}`
+    : textImportPreview
+      ? textImportActiveJobType === 'batch'
+        ? '智能导入（批次可应用）'
+        : '智能导入（可应用）'
+      : '智能导入'
   const themeVariables = useMemo(
     () =>
       document
@@ -484,6 +536,21 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     window.addEventListener('resize', syncViewportMode)
     return () => window.removeEventListener('resize', syncViewportMode)
   }, [])
+
+  // Close main menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (mainMenuRef.current && !mainMenuRef.current.contains(event.target as Node)) {
+        setMainMenuOpen(false)
+        setExportSubmenuOpen(false)
+      }
+    }
+
+    if (mainMenuOpen) {
+      window.document.addEventListener('mousedown', handleClickOutside)
+      return () => window.document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [mainMenuOpen])
 
   useEffect(() => {
     if (!document || (!isDirty && !hasPendingWorkspaceSave)) {
@@ -652,20 +719,20 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   }
 
   const handleTextImportFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
+    const files = Array.from(event.target.files ?? [])
     event.target.value = ''
 
-    if (!file || !document) {
+    if (files.length === 0 || !document) {
       return
     }
 
-    await textImportPreviewFile(
+    await textImportPreviewFiles(
       document,
       {
         activeTopicId,
         selectedTopicIds,
       },
-      file,
+      files,
     )
   }
 
@@ -681,7 +748,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   }
 
   const handleApplyTextImport = async () => {
-    const result = textImportApplyPreview(document)
+    const result = await textImportApplyPreview(document)
     if (!result) {
       return
     }
@@ -921,6 +988,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         draftTitle={draftTitle}
         isInspectorEditing={isInspectorEditing}
         topicOptions={topicOptions}
+        availableLabels={document ? Array.from(new Set(Object.values(document.topics).flatMap((t) => t.metadata.labels))) : []}
         onRenameChange={(value) =>
           setRenameDraft({
             topicId: activeTopicId,
@@ -941,6 +1009,68 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     <main className={styles.page} style={themeVariables}>
       <header className={styles.topbar}>
         <div className={styles.topbarLeft}>
+          <div className={styles.mainMenuContainer} ref={mainMenuRef}>
+            <button
+              type="button"
+              className={styles.hamburgerButton}
+              onClick={() => setMainMenuOpen(!mainMenuOpen)}
+              aria-expanded={mainMenuOpen}
+              aria-label="打开菜单"
+            >
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path d="M3 5H17M3 10H17M3 15H17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+              </svg>
+            </button>
+            {mainMenuOpen && (
+              <div className={styles.mainMenuDropdown}>
+                <div className={styles.menuItemWithSubmenu}>
+                  <button
+                    type="button"
+                    className={styles.menuItem}
+                    onClick={() => setExportSubmenuOpen(!exportSubmenuOpen)}
+                    aria-expanded={exportSubmenuOpen}
+                  >
+                    <span>导出</span>
+                    <svg
+                      className={`${styles.submenuArrow} ${exportSubmenuOpen ? styles.submenuArrowOpen : ''}`}
+                      width="12"
+                      height="12"
+                      viewBox="0 0 12 12"
+                      fill="none"
+                    >
+                      <path d="M4.5 2L8 6L4.5 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </button>
+                  {exportSubmenuOpen && (
+                    <div className={styles.submenu}>
+                      <button
+                        type="button"
+                        className={styles.submenuItem}
+                        onClick={() => {
+                          exportDocumentAsJson(document)
+                          setMainMenuOpen(false)
+                          setExportSubmenuOpen(false)
+                        }}
+                      >
+                        导出 JSON
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.submenuItem}
+                        onClick={() => {
+                          void handleExportPng()
+                          setMainMenuOpen(false)
+                          setExportSubmenuOpen(false)
+                        }}
+                      >
+                        导出 PNG
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <button type="button" className={styles.brandBlock} onClick={() => navigate('/')}>
             <span className={styles.wordmark}>BrainFlow</span>
           </button>
@@ -1000,6 +1130,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
               ref={textImportInputRef}
               type="file"
               hidden
+              multiple
               onChange={(event) => void handleTextImportFileSelected(event)}
             />
           <IconButton
@@ -1068,13 +1199,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             className={styles.exportButtonPrimary}
             onClick={handleOpenTextImport}
           >
-            智能导入
-          </button>
-          <button type="button" className={styles.exportButtonPrimary} onClick={() => exportDocumentAsJson(document)}>
-            导出 JSON
-          </button>
-          <button type="button" className={styles.exportButtonPrimary} onClick={() => void handleExportPng()}>
-            导出 PNG
+            {textImportButtonLabel}
           </button>
         </ToolbarGroup>
       </header>
@@ -1282,25 +1407,51 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
           open={textImportIsOpen}
           sourceName={textImportSourceName}
           sourceType={textImportSourceType}
+          sourceFiles={textImportSourceFiles}
           rawText={textImportRawText}
           draftSourceName={textImportDraftSourceName}
           draftText={textImportDraftText}
           preprocessedHints={textImportPreprocessedHints}
           preview={textImportPreview}
           previewTree={textImportPreviewTree}
+          crossFileMergeSuggestions={textImportCrossFileMergeSuggestions}
           approvedConflictIds={textImportApprovedConflictIds}
           statusText={textImportStatusText}
+          progress={textImportProgress}
+          progressIndeterminate={textImportProgressIndeterminate}
+          modeHint={textImportModeHint}
           error={textImportError}
-        isPreviewing={textImportIsPreviewing}
-        isApplying={textImportIsApplying}
-        onClose={textImportClose}
-        onChooseFile={() => textImportInputRef.current?.click()}
-        onDraftSourceNameChange={textImportSetDraftSourceName}
-        onDraftTextChange={textImportSetDraftText}
-        onGenerateFromText={() => void handleGenerateTextImportPreview()}
-        onToggleConflict={textImportToggleConflictApproval}
-        onApply={() => void handleApplyTextImport()}
-      />
+          isPreviewing={textImportIsPreviewing}
+          isApplying={textImportIsApplying}
+          previewStartedAt={textImportPreviewStartedAt}
+          previewFinishedAt={textImportPreviewFinishedAt}
+          jobMode={textImportActiveJobMode}
+          jobType={textImportActiveJobType}
+          currentStatus={textImportCurrentStatus}
+          latestCodexExplainer={textImportLatestCodexExplainer}
+          latestCodexEvent={textImportLatestCodexEvent}
+          codexEventFeed={textImportCodexEventFeed}
+          codexDiagnostics={textImportCodexDiagnostics}
+          statusTimeline={textImportStatusTimeline}
+          fileCount={textImportFileCount}
+          completedFileCount={textImportCompletedFileCount}
+          currentFileName={textImportCurrentFileName}
+          semanticMergeStage={textImportSemanticMergeStage}
+          semanticCandidateCount={textImportSemanticCandidateCount}
+          semanticAdjudicatedCount={textImportSemanticAdjudicatedCount}
+          semanticFallbackCount={textImportSemanticFallbackCount}
+          applyProgress={textImportApplyProgress}
+          appliedCount={textImportAppliedCount}
+          totalOperations={textImportTotalOperations}
+          currentApplyLabel={textImportCurrentApplyLabel}
+          onClose={textImportClose}
+          onChooseFile={() => textImportInputRef.current?.click()}
+          onDraftSourceNameChange={textImportSetDraftSourceName}
+          onDraftTextChange={textImportSetDraftText}
+          onGenerateFromText={() => void handleGenerateTextImportPreview()}
+          onToggleConflict={textImportToggleConflictApproval}
+          onApply={() => void handleApplyTextImport()}
+        />
     </main>
   )
 }

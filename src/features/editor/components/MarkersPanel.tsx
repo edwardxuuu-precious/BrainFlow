@@ -41,40 +41,21 @@ export function MarkersPanel({
   const selectionCount = selectedTopics.length
   const hasSelection = selectionCount > 0
 
-  const isMarkerActive = (marker: TopicMarker) =>
-    hasSelection && selectedTopics.every((topic) => topic.metadata.markers.includes(marker))
-
-  const isStickerActive = (sticker: TopicSticker) =>
-    hasSelection && selectedTopics.every((topic) => topic.metadata.stickers.includes(sticker))
-
   return (
     <section id={id} className={classNames(styles.panel, className)} data-mode={mode}>
-      <div className={styles.header}>
-        <div className={styles.chrome}>
-          <div className={styles.modeIntro}>
-            <span className={styles.modeLabel}>标记</span>
-            <h2 className={styles.modeHeading}>节点标记</h2>
-            <p className={styles.modeDescription}>
-              {hasSelection
-                ? selectionCount === 1
-                  ? '为当前选中的节点添加标记或贴纸。再次点击已选项会移除它。'
-                  : `当前选中了 ${selectionCount} 个节点。点击项目会按整组选区批量添加或移除。`
-                : '先在画布中选中一个或多个节点，然后在这里添加标记或贴纸。'}
-            </p>
-          </div>
-          {onCollapse ? (
-            <IconButton
-              label="隐藏右侧栏"
-              icon="chevronRight"
-              tone="ghost"
-              size="sm"
-              className={styles.collapseButton}
-              aria-controls={id}
-              onClick={onCollapse}
-            />
-          ) : null}
+      {onCollapse ? (
+        <div className={styles.collapseHeader}>
+          <IconButton
+            label="隐藏右侧栏"
+            icon="chevronRight"
+            tone="ghost"
+            size="sm"
+            className={styles.collapseButton}
+            aria-controls={id}
+            onClick={onCollapse}
+          />
         </div>
-      </div>
+      ) : null}
 
       <div className={styles.content}>
         <div className={styles.block}>
@@ -99,7 +80,7 @@ export function MarkersPanel({
               ? TOPIC_MARKERS.map((marker) => (
                   <Button
                     key={marker}
-                    tone={isMarkerActive(marker) ? 'secondary' : 'ghost'}
+                    tone="primary"
                     size="sm"
                     className={styles.markerButton}
                     disabled={!hasSelection}
@@ -111,7 +92,7 @@ export function MarkersPanel({
               : TOPIC_STICKERS.map((sticker) => (
                   <Button
                     key={sticker}
-                    tone={isStickerActive(sticker) ? 'secondary' : 'ghost'}
+                    tone="primary"
                     size="sm"
                     className={styles.markerButton}
                     disabled={!hasSelection}

@@ -1,9 +1,13 @@
 // @vitest-environment node
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createCodexRunner } from './codex-runner.js'
 
 describe('createCodexRunner', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('returns a cli_missing issue when codex cannot be resolved', async () => {
     const runCommand = vi
       .fn()
@@ -201,7 +205,11 @@ describe('createCodexRunner', () => {
       exitCode: 0,
     })
     const runStreamingCommand = vi.fn().mockImplementation(
-      async (_command, _args, options?: { onStdoutLine?: (line: string) => void }) => {
+      async (
+        _command,
+        _args,
+        options?: { inputText?: string; onStdoutLine?: (line: string) => void },
+      ) => {
         options?.onStdoutLine?.(
           JSON.stringify({
             type: 'item.completed',
@@ -236,16 +244,233 @@ describe('createCodexRunner', () => {
         '--json',
         '--ephemeral',
         '--skip-git-repo-check',
+        '-',
       ]),
       expect.objectContaining({
         cwd: 'C:\\temp\\brainflow-codex-test',
+        inputText: 'prompt text',
       }),
     )
+    expect(runStreamingCommand.mock.calls[0]?.[1]).not.toContain('prompt text')
+    expect(runStreamingCommand.mock.calls[0]?.[1].at(-1)).toBe('-')
     expect(writeFile).toHaveBeenCalled()
     expect(rm).toHaveBeenCalledWith('C:\\temp\\brainflow-codex-test', {
       recursive: true,
       force: true,
     })
+  })
+
+  it('reports runner observations for spawn, first json event, and completion', async () => {
+    const runCommand = vi.fn().mockResolvedValue({
+      stdout: 'codex-cli 0.118.0',
+      stderr: '',
+      exitCode: 0,
+    })
+    const runStreamingCommand = vi.fn().mockImplementation(
+      async (
+        _command,
+        _args,
+        options?: { inputText?: string; onStdoutLine?: (line: string) => void },
+      ) => {
+        options?.onStdoutLine?.(
+          JSON.stringify({
+            type: 'item.delta',
+            item: {
+              text_delta: 'partial',
+            },
+          }),
+        )
+        options?.onStdoutLine?.(
+          JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'agent_message',
+              text: '{"assistantMessage":"ok"}',
+            },
+          }),
+        )
+
+        return {
+          stdout: 'jsonl',
+          stderr: '',
+          exitCode: 0,
+        }
+      },
+    )
+    const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
+    const writeFile = vi.fn().mockResolvedValue(undefined)
+    const rm = vi.fn().mockResolvedValue(undefined)
+    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, writeFile, rm })
+    const onObservation = vi.fn()
+
+    await runner.execute('prompt text', { type: 'object' }, { onObservation })
+
+    expect(onObservation).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        phase: 'spawn_started',
+        kind: 'structured',
+        promptLength: 'prompt text'.length,
+      }),
+    )
+    expect(onObservation).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        phase: 'first_json_event',
+        kind: 'structured',
+      }),
+    )
+    expect(onObservation).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        phase: 'completed',
+        kind: 'structured',
+        exitCode: 0,
+        hadJsonEvent: true,
+      }),
+    )
+  })
+
+  it('forwards structured stdout JSON events while executing imports', async () => {
+    const runCommand = vi.fn().mockResolvedValue({
+      stdout: 'codex-cli 0.118.0',
+      stderr: '',
+      exitCode: 0,
+    })
+    const runStreamingCommand = vi.fn().mockImplementation(
+      async (
+        _command,
+        _args,
+        options?: { inputText?: string; onStdoutLine?: (line: string) => void },
+      ) => {
+        options?.onStdoutLine?.(JSON.stringify({ type: 'thread.started', thread_id: 'thread_1' }))
+        options?.onStdoutLine?.(JSON.stringify({ type: 'turn.started', turn_id: 'turn_1' }))
+        options?.onStdoutLine?.(
+          JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'agent_message',
+              text: '{"summary":"Compact preview ready"}',
+            },
+          }),
+        )
+
+        return {
+          stdout: 'jsonl',
+          stderr: '',
+          exitCode: 0,
+        }
+      },
+    )
+    const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
+    const writeFile = vi.fn().mockResolvedValue(undefined)
+    const rm = vi.fn().mockResolvedValue(undefined)
+    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, writeFile, rm })
+    const onEvent = vi.fn()
+
+    await runner.execute('prompt text', { type: 'object' }, { onEvent })
+
+    expect(onEvent).toHaveBeenCalledTimes(3)
+    expect(onEvent).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        type: 'thread.started',
+      }),
+    )
+    expect(onEvent).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        type: 'turn.started',
+      }),
+    )
+    expect(onEvent).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        type: 'item.completed',
+      }),
+    )
+  })
+
+  it('emits heartbeat observations while waiting for codex output', async () => {
+    vi.useFakeTimers()
+
+    const runCommand = vi.fn().mockResolvedValue({
+      stdout: 'codex-cli 0.118.0',
+      stderr: '',
+      exitCode: 0,
+    })
+    const runStreamingCommand = vi.fn().mockImplementation(
+      async (
+        _command,
+        _args,
+        options?: { inputText?: string; onStdoutLine?: (line: string) => void },
+      ) => {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 12_000)
+        })
+        options?.onStdoutLine?.(
+          JSON.stringify({
+            type: 'item.completed',
+            item: {
+              type: 'agent_message',
+              text: '{"assistantMessage":"ok"}',
+            },
+          }),
+        )
+
+        return {
+          stdout: 'jsonl',
+          stderr: '',
+          exitCode: 0,
+        }
+      },
+    )
+    const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
+    const writeFile = vi.fn().mockResolvedValue(undefined)
+    const rm = vi.fn().mockResolvedValue(undefined)
+    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, writeFile, rm })
+    const onObservation = vi.fn()
+
+    const execution = runner.execute('prompt text', { type: 'object' }, { onObservation })
+    await vi.advanceTimersByTimeAsync(12_000)
+    await execution
+
+    expect(onObservation).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        phase: 'spawn_started',
+      }),
+    )
+    expect(onObservation).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        phase: 'heartbeat',
+        hadJsonEvent: false,
+        elapsedSinceLastEventMs: 5_000,
+      }),
+    )
+    expect(onObservation).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        phase: 'heartbeat',
+        hadJsonEvent: false,
+        elapsedSinceLastEventMs: 10_000,
+      }),
+    )
+    expect(onObservation).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        phase: 'first_json_event',
+        hadJsonEvent: true,
+      }),
+    )
+    expect(onObservation).toHaveBeenNthCalledWith(
+      5,
+      expect.objectContaining({
+        phase: 'completed',
+        hadJsonEvent: true,
+      }),
+    )
   })
 
   it('uses the resolved fallback codex command when streaming execution', async () => {
@@ -262,7 +487,11 @@ describe('createCodexRunner', () => {
       throw new Error(`Unexpected command: ${command} ${args.join(' ')}`)
     })
     const runStreamingCommand = vi.fn().mockImplementation(
-      async (_command, _args, options?: { onStdoutLine?: (line: string) => void }) => {
+      async (
+        _command,
+        _args,
+        options?: { inputText?: string; onStdoutLine?: (line: string) => void },
+      ) => {
         options?.onStdoutLine?.(
           JSON.stringify({
             type: 'item.completed',
@@ -298,11 +527,13 @@ describe('createCodexRunner', () => {
 
     expect(runStreamingCommand).toHaveBeenCalledWith(
       fallbackCommand,
-      expect.arrayContaining(['exec', '--sandbox', 'read-only', '--json']),
+      expect.arrayContaining(['exec', '--sandbox', 'read-only', '--json', '-']),
       expect.objectContaining({
         cwd: 'C:\\temp\\brainflow-codex-test',
+        inputText: 'prompt text',
       }),
     )
+    expect(runStreamingCommand.mock.calls[0]?.[1]).not.toContain('prompt text')
   })
 
   it('forwards jsonl events while collecting the final assistant message', async () => {
@@ -312,7 +543,11 @@ describe('createCodexRunner', () => {
       exitCode: 0,
     })
     const runStreamingCommand = vi.fn().mockImplementation(
-      async (_command, _args, options?: { onStdoutLine?: (line: string) => void }) => {
+      async (
+        _command,
+        _args,
+        options?: { inputText?: string; onStdoutLine?: (line: string) => void },
+      ) => {
         options?.onStdoutLine?.(
           JSON.stringify({
             type: 'item.delta',
@@ -354,6 +589,13 @@ describe('createCodexRunner', () => {
         type: 'item.delta',
       }),
     )
+    expect(runStreamingCommand).toHaveBeenCalledWith(
+      'codex',
+      expect.arrayContaining(['-']),
+      expect.objectContaining({
+        inputText: 'prompt text',
+      }),
+    )
   })
 
   it('maps invalid response schema failures to schema_invalid', async () => {
@@ -363,7 +605,11 @@ describe('createCodexRunner', () => {
       exitCode: 0,
     })
     const runStreamingCommand = vi.fn().mockImplementation(
-      async (_command, _args, options?: { onStdoutLine?: (line: string) => void }) => {
+      async (
+        _command,
+        _args,
+        options?: { inputText?: string; onStdoutLine?: (line: string) => void },
+      ) => {
         options?.onStdoutLine?.(
           JSON.stringify({
             type: 'error',
@@ -389,5 +635,12 @@ describe('createCodexRunner', () => {
         code: 'schema_invalid',
       }),
     })
+    expect(runStreamingCommand).toHaveBeenCalledWith(
+      'codex',
+      expect.arrayContaining(['-']),
+      expect.objectContaining({
+        inputText: 'prompt text',
+      }),
+    )
   })
 })

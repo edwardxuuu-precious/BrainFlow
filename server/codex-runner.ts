@@ -12,6 +12,18 @@ export interface CodexRunnerStatus {
   issues: CodexBridgeIssue[]
 }
 
+export interface CodexExecutionObservation {
+  phase: 'spawn_started' | 'heartbeat' | 'first_json_event' | 'completed'
+  kind: 'structured' | 'message'
+  timestampMs: number
+  promptLength: number
+  elapsedSinceLastEventMs?: number
+  exitCode?: number
+  stdoutLength?: number
+  stderrLength?: number
+  hadJsonEvent?: boolean
+}
+
 export interface CodexJsonEvent {
   type?: string
   message?: string
@@ -29,10 +41,22 @@ export interface CodexJsonEvent {
 
 export interface CodexRunner {
   getStatus(): Promise<CodexRunnerStatus>
-  execute(prompt: string, schema: object): Promise<string>
+  execute(
+    prompt: string,
+    schema: object,
+    options?: {
+      onEvent?: (event: CodexJsonEvent) => void
+      onStderrLine?: (line: string) => void
+      onObservation?: (event: CodexExecutionObservation) => void
+    },
+  ): Promise<string>
   executeMessage(
     prompt: string,
-    options?: { onEvent?: (event: CodexJsonEvent) => void },
+    options?: {
+      onEvent?: (event: CodexJsonEvent) => void
+      onStderrLine?: (line: string) => void
+      onObservation?: (event: CodexExecutionObservation) => void
+    },
   ): Promise<string>
 }
 
@@ -109,12 +133,17 @@ async function runCommand(
 async function runStreamingCommand(
   command: string,
   args: string[],
-  options?: { cwd?: string; onStdoutLine?: (line: string) => void },
+  options?: {
+    cwd?: string
+    inputText?: string
+    onStdoutLine?: (line: string) => void
+    onStderrLine?: (line: string) => void
+  },
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options?.cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: process.env,
       windowsHide: true,
     })
@@ -122,14 +151,18 @@ async function runStreamingCommand(
     let stdout = ''
     let stderr = ''
     let stdoutBuffer = ''
+    let stderrBuffer = ''
 
-    const flushStdoutLine = (line: string) => {
+    const flushLine = (
+      line: string,
+      onLine?: (line: string) => void,
+    ) => {
       const trimmed = line.trim()
       if (!trimmed) {
         return
       }
 
-      options?.onStdoutLine?.(trimmed)
+      onLine?.(trimmed)
     }
 
     child.stdout.on('data', (chunk) => {
@@ -138,12 +171,22 @@ async function runStreamingCommand(
       stdoutBuffer += text
       const lines = stdoutBuffer.split(/\r?\n/)
       stdoutBuffer = lines.pop() ?? ''
-      lines.forEach(flushStdoutLine)
+      lines.forEach((line) => flushLine(line, options?.onStdoutLine))
     })
 
     child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString()
+      const text = chunk.toString()
+      stderr += text
+      stderrBuffer += text
+      const lines = stderrBuffer.split(/\r?\n/)
+      stderrBuffer = lines.pop() ?? ''
+      lines.forEach((line) => flushLine(line, options?.onStderrLine))
     })
+
+    if (typeof options?.inputText === 'string') {
+      child.stdin.write(options.inputText)
+    }
+    child.stdin.end()
 
     child.on('error', (error) => {
       if ('code' in error && error.code === 'ENOENT') {
@@ -156,7 +199,11 @@ async function runStreamingCommand(
 
     child.on('close', (exitCode) => {
       if (stdoutBuffer.trim()) {
-        flushStdoutLine(stdoutBuffer)
+        flushLine(stdoutBuffer, options?.onStdoutLine)
+      }
+
+      if (stderrBuffer.trim()) {
+        flushLine(stderrBuffer, options?.onStderrLine)
       }
 
       resolve({
@@ -435,11 +482,19 @@ async function executeCodexJsonCommand(
   options: {
     cwd: string
     schemaPath?: string
+    kind: 'structured' | 'message'
     onEvent?: (event: CodexJsonEvent) => void
+    onStderrLine?: (line: string) => void
+    onObservation?: (event: CodexExecutionObservation) => void
   },
 ): Promise<string> {
+  const HEARTBEAT_INTERVAL_MS = 5_000
   let finalText = ''
   let eventError: string | null = null
+  let firstJsonEventObserved = false
+  let heartbeatId: NodeJS.Timeout | null = null
+  const spawnStartedAt = Date.now()
+  let lastJsonEventAt: number | null = null
 
   const args = [
     'exec',
@@ -454,41 +509,121 @@ async function executeCodexJsonCommand(
     args.push('--output-schema', options.schemaPath)
   }
 
-  args.push(prompt)
-
-  const result = await executeStreamingCommand(codexCommand, args, {
-    cwd: options.cwd,
-    onStdoutLine: (line) => {
-      const event = parseJsonEvent(line)
-      if (!event) {
-        return
-      }
-
-      options.onEvent?.(event)
-
-      const maybeFinalText = extractFinalText(event)
-      if (maybeFinalText) {
-        finalText = maybeFinalText
-      }
-
-      const maybeError = extractEventError(event)
-      if (maybeError) {
-        eventError = maybeError
-      }
-    },
+  args.push('-')
+  options.onObservation?.({
+    phase: 'spawn_started',
+    kind: options.kind,
+    timestampMs: spawnStartedAt,
+    promptLength: prompt.length,
   })
+
+  heartbeatId = setInterval(() => {
+    const now = Date.now()
+    options.onObservation?.({
+      phase: 'heartbeat',
+      kind: options.kind,
+      timestampMs: now,
+      promptLength: prompt.length,
+      elapsedSinceLastEventMs:
+        lastJsonEventAt === null ? now - spawnStartedAt : now - lastJsonEventAt,
+      hadJsonEvent: firstJsonEventObserved,
+    })
+  }, HEARTBEAT_INTERVAL_MS)
+
+  let result: CommandResult
+  try {
+    result = await executeStreamingCommand(codexCommand, args, {
+      cwd: options.cwd,
+      inputText: prompt,
+      onStderrLine: options.onStderrLine,
+      onStdoutLine: (line) => {
+        const event = parseJsonEvent(line)
+        if (!event) {
+          return
+        }
+
+        const observedAt = Date.now()
+        lastJsonEventAt = observedAt
+
+        if (!firstJsonEventObserved) {
+          firstJsonEventObserved = true
+          options.onObservation?.({
+            phase: 'first_json_event',
+            kind: options.kind,
+            timestampMs: observedAt,
+            promptLength: prompt.length,
+            elapsedSinceLastEventMs: observedAt - spawnStartedAt,
+            hadJsonEvent: true,
+          })
+        }
+
+        options.onEvent?.(event)
+
+        const maybeFinalText = extractFinalText(event)
+        if (maybeFinalText) {
+          finalText = maybeFinalText
+        }
+
+        const maybeError = extractEventError(event)
+        if (maybeError) {
+          eventError = maybeError
+        }
+      },
+    })
+  } finally {
+    if (heartbeatId) {
+      clearInterval(heartbeatId)
+    }
+  }
 
   if (eventError) {
     throw new Error(eventError)
   }
 
   if (result.exitCode !== 0) {
+    options.onObservation?.({
+      phase: 'completed',
+      kind: options.kind,
+      timestampMs: Date.now(),
+      promptLength: prompt.length,
+      elapsedSinceLastEventMs:
+        lastJsonEventAt === null ? Date.now() - spawnStartedAt : Date.now() - lastJsonEventAt,
+      exitCode: result.exitCode,
+      stdoutLength: result.stdout.length,
+      stderrLength: result.stderr.length,
+      hadJsonEvent: firstJsonEventObserved,
+    })
     throw new Error(result.stderr.trim() || 'Codex CLI exited with a non-zero status.')
   }
 
   if (!finalText.trim()) {
+    options.onObservation?.({
+      phase: 'completed',
+      kind: options.kind,
+      timestampMs: Date.now(),
+      promptLength: prompt.length,
+      elapsedSinceLastEventMs:
+        lastJsonEventAt === null ? Date.now() - spawnStartedAt : Date.now() - lastJsonEventAt,
+      exitCode: result.exitCode,
+      stdoutLength: result.stdout.length,
+      stderrLength: result.stderr.length,
+      hadJsonEvent: firstJsonEventObserved,
+    })
     throw new Error('Codex CLI returned an empty response.')
   }
+
+  options.onObservation?.({
+    phase: 'completed',
+    kind: options.kind,
+    timestampMs: Date.now(),
+    promptLength: prompt.length,
+    elapsedSinceLastEventMs:
+      lastJsonEventAt === null ? Date.now() - spawnStartedAt : Date.now() - lastJsonEventAt,
+    exitCode: result.exitCode,
+    stdoutLength: result.stdout.length,
+    stderrLength: result.stderr.length,
+    hadJsonEvent: firstJsonEventObserved,
+  })
 
   return finalText
 }
@@ -538,7 +673,7 @@ export function createCodexRunner(dependencies?: CodexRunnerDependencies): Codex
       }
     },
 
-    async execute(prompt, schema) {
+    async execute(prompt, schema, options) {
       let workingDirectory: string | null = null
 
       try {
@@ -553,6 +688,10 @@ export function createCodexRunner(dependencies?: CodexRunnerDependencies): Codex
         return await executeCodexJsonCommand(executeStreamingCommand, codexCommand, prompt, {
           cwd: workingDirectory,
           schemaPath,
+          kind: 'structured',
+          onEvent: options?.onEvent,
+          onStderrLine: options?.onStderrLine,
+          onObservation: options?.onObservation,
         })
       } catch (error) {
         const issue = normalizeExecutionError(error)
@@ -579,7 +718,10 @@ export function createCodexRunner(dependencies?: CodexRunnerDependencies): Codex
         workingDirectory = await makeTempDirectory(join(tmpdir(), 'brainflow-codex-'))
         return await executeCodexJsonCommand(executeStreamingCommand, codexCommand, prompt, {
           cwd: workingDirectory,
+          kind: 'message',
           onEvent: options?.onEvent,
+          onStderrLine: options?.onStderrLine,
+          onObservation: options?.onObservation,
         })
       } catch (error) {
         const issue = normalizeExecutionError(error)
