@@ -1,0 +1,15 @@
+[Unit]
+Description=BrainFlow API bridge
+After=network.target
+
+[Service]
+Type=simple
+User=brainflow
+WorkingDirectory=/opt/brainflow
+EnvironmentFile=/opt/brainflow/deploy/brainflow.env
+ExecStart=/usr/bin/node /opt/brainflow/server/dist/server/index.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

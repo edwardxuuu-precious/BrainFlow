@@ -76,7 +76,7 @@ export function NetworkConstellation() {
           if (dist < maxDist) {
             const alpha = (1 - dist / maxDist) * 0.85
             ctx.beginPath()
-            ctx.strokeStyle = `rgba(106, 214, 229, ${alpha})`
+            ctx.strokeStyle = `rgba(30, 160, 190, ${alpha})`
             ctx.lineWidth = 1.2
             ctx.moveTo(p1.x, p1.y)
             ctx.lineTo(p2.x, p2.y)
@@ -109,8 +109,8 @@ export function NetworkConstellation() {
 
         ctx.beginPath()
         ctx.arc(p.x, p.y, Math.max(0.5, radius), 0, Math.PI * 2)
-        ctx.fillStyle = `rgba(100, 210, 230, ${Math.max(0.5, alpha)})`
-        ctx.shadowColor = 'rgba(100, 210, 230, 0.8)'
+        ctx.fillStyle = `rgba(25, 150, 180, ${Math.max(0.5, alpha)})`
+        ctx.shadowColor = 'rgba(25, 150, 180, 0.9)'
         ctx.shadowBlur = 10 + pulse * 4
         ctx.fill()
         ctx.shadowBlur = 0

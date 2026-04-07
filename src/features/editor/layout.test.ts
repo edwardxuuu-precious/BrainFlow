@@ -60,4 +60,36 @@ describe('layoutMindMap', () => {
     expect(shiftedChild?.position.x).toBe((baseChild?.position.x ?? 0) + 52)
     expect(shiftedChild?.position.y).toBe((baseChild?.position.y ?? 0) + 20)
   })
+
+  it('expands long-title node heights and preserves sibling spacing', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    const withFirstChild = addChild(document, branchId).document
+    const firstChildId = withFirstChild.topics[branchId].childIds[0]
+    const withSecondChild = addChild(withFirstChild, branchId).document
+    const secondChildId = withSecondChild.topics[branchId].childIds[1]
+    withSecondChild.topics[firstChildId].title =
+      '所以第一步不是找“大市场”，而是锁定一个足够具体的 beachhead segment'
+
+    const layout = layoutMindMap(withSecondChild)
+    const firstChild = layout.renderNodes.find((node) => node.id === firstChildId)
+    const secondChild = layout.renderNodes.find((node) => node.id === secondChildId)
+    const firstChildHeight = Number(firstChild?.style?.height ?? 0)
+
+    expect(firstChildHeight).toBeGreaterThan(54)
+    expect(secondChild).toBeDefined()
+    expect((secondChild?.position.y ?? 0)).toBeGreaterThanOrEqual(
+      (firstChild?.position.y ?? 0) + firstChildHeight + 30,
+    )
+  })
+
+  it('expands the root node height for long titles', () => {
+    const document = createMindMapDocument()
+    document.topics[document.rootTopicId].title =
+      '所以第一步不是找“大市场”，而是锁定一个足够具体的 beachhead segment'
+
+    const rootNode = layoutMindMap(document).renderNodes.find((node) => node.id === document.rootTopicId)
+
+    expect(Number(rootNode?.style?.height ?? 0)).toBeGreaterThan(82)
+  })
 })

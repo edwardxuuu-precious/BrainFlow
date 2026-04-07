@@ -1,5 +1,5 @@
 import { type Edge, Position, type XYPosition, type Node } from '@xyflow/react'
-import type { MindMapDocument, TopicMetadata, TopicStyle } from '../documents/types'
+import type { MindMapDocument, TopicMetadata, TopicNode, TopicStyle } from '../documents/types'
 import { normalizeTopicMetadata, normalizeTopicStyle } from '../documents/topic-defaults'
 import {
   getRootChildForTopic,
@@ -9,10 +9,22 @@ import {
   resolveTopicSide,
   type ResolvedBranchSide,
 } from './tree-operations'
+import {
+  getTopicTitleTypography,
+  measureTopicTitle,
+  measureWeightedTitleWidth,
+} from './topic-title-display'
 
 const ROOT_HORIZONTAL_GAP = 208
 const CHILD_HORIZONTAL_GAP = 168
 const VERTICAL_GAP = 30
+const ROOT_HORIZONTAL_PADDING = 40
+const NODE_HORIZONTAL_PADDING = 28
+const ROOT_VERTICAL_PADDING = 32
+const NODE_VERTICAL_PADDING = 20
+const CONTENT_ROW_GAP = 4
+const STATUS_BAR_HEIGHT = 22
+const META_ROW_HEIGHT = 22
 
 interface NodeMetrics {
   width: number
@@ -54,15 +66,59 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max))
 }
 
-function measureNode(title: string, isRoot: boolean): Pick<NodeMetrics, 'width' | 'height'> {
+function hasTopicStatusBar(topic: TopicNode): boolean {
+  return topic.aiLocked || topic.note.trim().length > 0 || (!!topic.metadata.type && topic.metadata.type !== 'normal')
+}
+
+function hasTopicMetaRow(metadata: TopicMetadata): boolean {
+  return (
+    metadata.labels.length > 0 ||
+    metadata.markers.length > 0 ||
+    (metadata.stickers?.length ?? 0) > 0
+  )
+}
+
+function measureNode(
+  topic: TopicNode,
+  isRoot: boolean,
+  options?: { priority?: 'primary' | 'secondary' | 'supporting' | null; topicType?: TopicMetadata['type'] },
+): Pick<NodeMetrics, 'width' | 'height'> {
   const baseWidth = isRoot ? 248 : 148
   const maxWidth = isRoot ? 420 : 320
-  const characterWidth = isRoot ? 18 : 12
-  const width = clamp(baseWidth + title.trim().length * characterWidth, baseWidth, maxWidth)
+  const priorityBoost =
+    options?.priority === 'primary' ? 28 : options?.priority === 'supporting' ? -12 : 0
+  const typeBoost = options?.topicType === 'milestone' ? 10 : options?.topicType === 'task' ? 16 : 0
+  const titleKind = isRoot ? 'root' : 'regular'
+  const titleTypography = getTopicTitleTypography(topic.title, titleKind)
+  const horizontalPadding = isRoot ? ROOT_HORIZONTAL_PADDING : NODE_HORIZONTAL_PADDING
+  const verticalPadding = isRoot ? ROOT_VERTICAL_PADDING : NODE_VERTICAL_PADDING
+  const minimumWidth = baseWidth + priorityBoost + typeBoost
+  const estimatedTitleWidth =
+    measureWeightedTitleWidth(
+      topic.title,
+      titleTypography.fontSize,
+      titleTypography.letterSpacing,
+    ) + horizontalPadding
+  const width = clamp(Math.ceil(Math.max(minimumWidth, estimatedTitleWidth)), baseWidth, maxWidth)
+  const titleMeasurement = measureTopicTitle(topic.title, {
+    kind: titleKind,
+    availableWidth: width - horizontalPadding,
+  })
+  const hasStatusBar = hasTopicStatusBar(topic)
+  const hasMetaRow = hasTopicMetaRow(topic.metadata)
+  const contentRowCount = 1 + Number(hasStatusBar) + Number(hasMetaRow)
+  const contentHeight =
+    titleMeasurement.height +
+    (hasStatusBar ? STATUS_BAR_HEIGHT : 0) +
+    (hasMetaRow ? META_ROW_HEIGHT : 0) +
+    Math.max(0, contentRowCount - 1) * CONTENT_ROW_GAP
 
   return {
     width,
-    height: isRoot ? 82 : 54,
+    height: Math.max(
+      isRoot ? 82 : options?.priority === 'primary' ? 58 : 54,
+      Math.ceil(contentHeight + verticalPadding),
+    ),
   }
 }
 
@@ -74,7 +130,11 @@ function buildMetrics(doc: MindMapDocument, topicId: string, cache: Map<string, 
 
   const topic = doc.topics[topicId]
   const isRoot = topicId === doc.rootTopicId
-  const { width, height } = measureNode(topic.title, isRoot)
+  const topicLayout = getTopicLayout(topic)
+  const { width, height } = measureNode(topic, isRoot, {
+    priority: topicLayout.priority,
+    topicType: topic.metadata.type,
+  })
   const childIds = topic.isCollapsed ? [] : topic.childIds
 
   if (childIds.length === 0) {
@@ -85,7 +145,14 @@ function buildMetrics(doc: MindMapDocument, topicId: string, cache: Map<string, 
 
   const childHeight = childIds.reduce((sum, childId, index) => {
     const childMetrics = buildMetrics(doc, childId, cache)
-    return sum + childMetrics.subtreeHeight + (index > 0 ? VERTICAL_GAP : 0)
+    const previousChildId = index > 0 ? childIds[index - 1] : null
+    const previousLayout = previousChildId ? getTopicLayout(doc.topics[previousChildId]) : null
+    const currentLayout = getTopicLayout(doc.topics[childId])
+    const groupGap =
+      index > 0 && previousLayout?.semanticGroupKey !== currentLayout.semanticGroupKey
+        ? 18
+        : 0
+    return sum + childMetrics.subtreeHeight + (index > 0 ? VERTICAL_GAP + groupGap : 0)
   }, 0)
 
   const metrics = {
@@ -212,8 +279,16 @@ export function layoutMindMap(doc: MindMapDocument): LayoutResult {
 
       let cursor = finalCenter.y - totalHeight / 2
 
-      directionalChildIds.forEach((childId) => {
+      directionalChildIds.forEach((childId, index) => {
         const childMetrics = buildMetrics(doc, childId, metricsCache)
+        if (index > 0) {
+          const previousChildId = directionalChildIds[index - 1]
+          const previousLayout = getTopicLayout(doc.topics[previousChildId])
+          const currentLayout = getTopicLayout(doc.topics[childId])
+          if (previousLayout.semanticGroupKey !== currentLayout.semanticGroupKey) {
+            cursor += 18
+          }
+        }
         const horizontalGap = topicId === doc.rootTopicId ? ROOT_HORIZONTAL_GAP : CHILD_HORIZONTAL_GAP
         const childBaseCenter = {
           x:

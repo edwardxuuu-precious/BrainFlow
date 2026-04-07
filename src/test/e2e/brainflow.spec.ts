@@ -165,15 +165,6 @@ async function selectTopicNode(page: Page, topicTitle: string): Promise<void> {
   await topicNode(page, topicTitle).click({ force: true })
 }
 
-async function clickCanvasEmptySpace(page: Page): Promise<void> {
-  const pane = await page.locator('.react-flow__pane').boundingBox()
-  if (!pane) {
-    throw new Error('Unable to resolve canvas pane bounds')
-  }
-
-  await page.mouse.click(pane.x + 24, pane.y + 24)
-}
-
 async function panCanvas(
   page: Page,
   options?: { button?: 'left' | 'middle'; holdSpace?: boolean; deltaX?: number; deltaY?: number },
@@ -208,7 +199,7 @@ async function panCanvas(
 async function dragSelectTopics(
   page: Page,
   topicTitles: string[],
-  options?: { append?: boolean },
+  options?: { append?: boolean; steps?: number },
 ): Promise<void> {
   const boxes = await Promise.all(
     topicTitles.map(async (title) => {
@@ -243,7 +234,69 @@ async function dragSelectTopics(
 
   await page.mouse.move(startX, startY)
   await page.mouse.down()
-  await page.mouse.move(endX, endY, { steps: 12 })
+  await page.mouse.move(endX, endY, { steps: options?.steps ?? 12 })
+  await page.mouse.up()
+
+  if (options?.append) {
+    await page.keyboard.up('Shift')
+  }
+}
+
+async function dragSelectEmptyArea(
+  page: Page,
+  options?: { append?: boolean; steps?: number },
+): Promise<void> {
+  const pane = await page.locator('.react-flow__pane').boundingBox()
+  if (!pane) {
+    throw new Error('Unable to resolve canvas pane bounds')
+  }
+
+  const occupiedBoxes = await page.locator('.react-flow__node').evaluateAll((elements) =>
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect()
+      return {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+      }
+    }),
+  )
+
+  const dragWidth = 72
+  const dragHeight = 72
+  const margin = 24
+  const candidates = [
+    { startX: pane.x + margin, startY: pane.y + margin },
+    { startX: pane.x + pane.width - dragWidth - margin, startY: pane.y + margin },
+    { startX: pane.x + margin, startY: pane.y + pane.height - dragHeight - margin },
+    {
+      startX: pane.x + pane.width - dragWidth - margin,
+      startY: pane.y + pane.height - dragHeight - margin,
+    },
+  ]
+
+  const candidate = candidates.find(({ startX, startY }) => {
+    return !occupiedBoxes.some((box) => {
+      const horizontalOverlap = startX < box.x + box.width && startX + dragWidth > box.x
+      const verticalOverlap = startY < box.y + box.height && startY + dragHeight > box.y
+      return horizontalOverlap && verticalOverlap
+    })
+  })
+
+  if (!candidate) {
+    throw new Error('Unable to find an empty area for drag selection')
+  }
+
+  if (options?.append) {
+    await page.keyboard.down('Shift')
+  }
+
+  await page.mouse.move(candidate.startX, candidate.startY)
+  await page.mouse.down()
+  await page.mouse.move(candidate.startX + dragWidth, candidate.startY + dragHeight, {
+    steps: options?.steps ?? 12,
+  })
   await page.mouse.up()
 
   if (options?.append) {
@@ -253,6 +306,29 @@ async function dragSelectTopics(
 
 async function expectSelectedNodeCount(page: Page, count: number): Promise<void> {
   await expect(page.locator('.react-flow__node [data-selected="true"]')).toHaveCount(count)
+}
+
+async function expectSelectionOverlayHidden(page: Page): Promise<void> {
+  const overlay = page.locator('.react-flow__nodesselection-rect')
+  await expect(overlay).toHaveCount(1)
+  await expect
+    .poll(async () => {
+      return overlay.evaluate((element) => {
+        const styles = getComputedStyle(element)
+        return {
+          backgroundColor: styles.backgroundColor,
+          borderTopStyle: styles.borderTopStyle,
+          borderTopWidth: styles.borderTopWidth,
+          boxShadow: styles.boxShadow,
+        }
+      })
+    })
+    .toEqual({
+      backgroundColor: 'rgba(0, 0, 0, 0)',
+      borderTopStyle: 'none',
+      borderTopWidth: '0px',
+      boxShadow: 'none',
+    })
 }
 
 async function readViewportTransform(page: Page): Promise<{ x: number; y: number; scale: number }> {
@@ -443,6 +519,26 @@ test('creates a document, returns to the list, and reopens it', async ({ page })
   await expect(page).toHaveURL(/\/map\//)
 })
 
+test('opens the export submenu from the canvas menu and closes it after exporting JSON', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: '新建脑图' }).click()
+  await expect(page).toHaveURL(/\/map\//)
+
+  await page.getByRole('button', { name: '打开菜单' }).click()
+  await page.getByRole('button', { name: '导出' }).hover()
+
+  await expect(page.getByRole('menuitem', { name: '导出 JSON' })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: '导出 PNG' })).toBeVisible()
+
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('menuitem', { name: '导出 JSON' }).click()
+  const download = await downloadPromise
+
+  expect(download.suggestedFilename()).toMatch(/\.json$/i)
+  await expect(page.getByRole('menuitem', { name: '导出 JSON' })).toHaveCount(0)
+})
+
 test('persists the active topic and viewport as workspace state without changing updatedAt', async ({
   page,
 }) => {
@@ -603,9 +699,6 @@ test('persists hierarchy tree collapse separately from canvas nodes and re-expan
               labels: [],
               markers: [],
               stickers: [],
-              task: null,
-              links: [],
-              attachments: [],
             },
             style: {
               emphasis: 'normal',
@@ -726,29 +819,50 @@ test('shows schema execution failures separately from Codex availability and sur
 })
 
 test('supports box selection, additive click, and additive box selection', async ({ page }) => {
+  const pageErrors: string[] = []
+  const consoleErrors: string[] = []
+
+  page.on('pageerror', (error) => {
+    pageErrors.push(error.message)
+  })
+  page.on('console', (message) => {
+    if (message.type() === 'error') {
+      consoleErrors.push(message.text())
+    }
+  })
+
   await mockCodexStatus(page, createReadyStatus())
 
   await page.getByRole('button', { name: '鏂板缓鑴戝浘' }).click()
   await expect(page).toHaveURL(/\/map\//)
 
-  await dragSelectTopics(page, ['中心主题', '分支一'])
+  await dragSelectTopics(page, ['中心主题', '分支一'], { steps: 24 })
   await expectSelectedNodeCount(page, 2)
+  await expectSelectionOverlayHidden(page)
   await expect(page.getByRole('heading', { name: '已选择 2 个节点' })).toBeVisible()
 
   await topicNode(page, '分支二').click({ modifiers: ['Shift'] })
   await expectSelectedNodeCount(page, 3)
   await expect(page.getByRole('heading', { name: '已选择 3 个节点' })).toBeVisible()
 
-  await clickCanvasEmptySpace(page)
+  await dragSelectEmptyArea(page, { steps: 24 })
+  await expectSelectedNodeCount(page, 0)
+
   await selectTopicNode(page, '中心主题')
   await expectSelectedNodeCount(page, 1)
 
-  await dragSelectTopics(page, ['分支一'], { append: true })
+  await dragSelectTopics(page, ['分支一'], { append: true, steps: 24 })
   await expectSelectedNodeCount(page, 2)
 
   await page.getByRole('button', { name: 'AI' }).click()
   await expect(aiSidebar(page).getByText('中心主题')).toBeVisible()
   await expect(aiSidebar(page).getByText('分支一')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '脑图暂时无法打开' })).toHaveCount(0)
+
+  expect(pageErrors).toEqual([])
+  expect(
+    consoleErrors.filter((message) => message.includes('Maximum update depth exceeded')),
+  ).toEqual([])
 })
 
 test('uses the full graph as context and applies Codex changes directly to the canvas', async ({

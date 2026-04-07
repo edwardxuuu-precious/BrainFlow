@@ -1,7 +1,36 @@
 import { describe, expect, it } from 'vitest'
+import type { TextImportResponse } from '../../../shared/ai-contract'
 import { createMindMapDocument } from '../documents/document-factory'
 import { renameTopic } from '../editor/tree-operations'
 import { applyTextImportPreview } from './text-import-apply'
+
+function createPreviewResponse(
+  overrides: Partial<TextImportResponse>,
+): TextImportResponse {
+  return {
+    summary: 'Import preview',
+    baseDocumentUpdatedAt: 0,
+    anchorTopicId: null,
+    classification: {
+      archetype: 'mixed',
+      confidence: 0.5,
+      rationale: 'Test fixture.',
+      secondaryArchetype: null,
+    },
+    templateSummary: {
+      archetype: 'mixed',
+      visibleSlots: ['themes'],
+      foldedSlots: ['summary'],
+    },
+    nodePlans: [],
+    previewNodes: [],
+    operations: [],
+    conflicts: [],
+    mergeSuggestions: [],
+    warnings: [],
+    ...overrides,
+  }
+}
 
 describe('text-import-apply', () => {
   it('re-bases safe additive import previews onto a newer document version', async () => {
@@ -11,8 +40,7 @@ describe('text-import-apply', () => {
 
     const result = await applyTextImportPreview(
       newerDocument,
-      {
-        summary: 'Import preview',
+      createPreviewResponse({
         baseDocumentUpdatedAt: document.updatedAt,
         previewNodes: [
           {
@@ -39,7 +67,7 @@ describe('text-import-apply', () => {
         conflicts: [],
         mergeSuggestions: [],
         warnings: [],
-      },
+      }),
       [],
     )
 
@@ -56,8 +84,7 @@ describe('text-import-apply', () => {
 
     const result = await applyTextImportPreview(
       changedDocument,
-      {
-        summary: 'Import preview',
+      createPreviewResponse({
         baseDocumentUpdatedAt: document.updatedAt,
         previewNodes: [
           {
@@ -98,7 +125,7 @@ describe('text-import-apply', () => {
         conflicts: [],
         mergeSuggestions: [],
         warnings: [],
-      },
+      }),
       [],
     )
 
@@ -107,6 +134,201 @@ describe('text-import-apply', () => {
     expect(result.warnings).toEqual(
       expect.arrayContaining([
         expect.stringContaining('Skipped semantic merge'),
+      ]),
+    )
+  })
+
+  it('keeps update_topic operations that target newly created refs without a fingerprint', async () => {
+    const document = createMindMapDocument('Import doc')
+
+    const result = await applyTextImportPreview(
+      document,
+      createPreviewResponse({
+        baseDocumentUpdatedAt: document.updatedAt,
+        previewNodes: [
+          {
+            id: 'preview_root',
+            parentId: null,
+            order: 0,
+            title: 'Imported branch',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+          },
+        ],
+        operations: [
+          {
+            id: 'op_root',
+            type: 'create_child',
+            parent: `topic:${document.rootTopicId}`,
+            title: 'Imported branch',
+            risk: 'low',
+            resultRef: 'preview_root',
+          },
+          {
+            id: 'op_root_update',
+            type: 'update_topic',
+            target: 'ref:preview_root',
+            note: 'Imported note body',
+            risk: 'low',
+          },
+        ],
+        conflicts: [],
+        mergeSuggestions: [],
+        warnings: [],
+      }),
+      [],
+    )
+
+    const importedTopic = Object.values(result.document.topics).find(
+      (topic) => topic.title === 'Imported branch',
+    )
+
+    expect(importedTopic).toBeDefined()
+    expect(importedTopic?.note).toContain('Imported note body')
+  })
+
+  it('does not restore import metadata, style, or presentation hints on created topics', async () => {
+    const document = createMindMapDocument('Import doc')
+
+    const result = await applyTextImportPreview(
+      document,
+      createPreviewResponse({
+        anchorTopicId: document.rootTopicId,
+        baseDocumentUpdatedAt: document.updatedAt,
+        previewNodes: [
+          {
+            id: 'preview_root',
+            parentId: null,
+            order: 0,
+            title: 'Imported action',
+            note: 'Call supplier and confirm lead time',
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'action',
+            confidence: 'high',
+            templateSlot: 'actions',
+          },
+        ],
+        operations: [
+          {
+            id: 'op_root',
+            type: 'create_child',
+            parent: `topic:${document.rootTopicId}`,
+            title: 'Imported action',
+            note: 'Call supplier and confirm lead time',
+            risk: 'low',
+            resultRef: 'preview_root',
+            metadata: {
+              labels: ['action'],
+              type: 'task',
+            },
+            style: {
+              emphasis: 'focus',
+              variant: 'soft',
+            },
+            presentation: {
+              collapsedByDefault: true,
+              groupKey: 'actions',
+              priority: 'primary',
+            },
+          },
+        ],
+      }),
+      [],
+    )
+
+    const importedTopic = Object.values(result.document.topics).find(
+      (topic) => topic.title === 'Imported action',
+    )
+
+    expect(importedTopic).toBeDefined()
+    expect(importedTopic).toMatchObject({
+      note: 'Call supplier and confirm lead time',
+      isCollapsed: false,
+      metadata: {
+        labels: [],
+        markers: [],
+        stickers: [],
+      },
+      style: {
+        emphasis: 'normal',
+        variant: 'default',
+      },
+      layout: {
+        semanticGroupKey: null,
+        priority: null,
+      },
+    })
+    expect(importedTopic?.metadata.type).toBeUndefined()
+  })
+
+  it('applies rebuilt import branches under the stored anchor topic', async () => {
+    const document = createMindMapDocument('Import doc')
+    const anchorTopicId = document.topics[document.rootTopicId].childIds[0]
+
+    const result = await applyTextImportPreview(
+      document,
+      createPreviewResponse({
+        anchorTopicId,
+        baseDocumentUpdatedAt: document.updatedAt,
+        previewNodes: [
+          {
+            id: 'preview_root',
+            parentId: null,
+            order: 0,
+            title: 'Import: anchored',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+          },
+        ],
+      }),
+      [],
+    )
+
+    const importedTopic = Object.values(result.document.topics).find(
+      (topic) => topic.title === 'Import: anchored',
+    )
+
+    expect(importedTopic?.parentId).toBe(anchorTopicId)
+  })
+
+  it('falls back to the document root when the stored anchor no longer exists', async () => {
+    const document = createMindMapDocument('Import doc')
+
+    const result = await applyTextImportPreview(
+      document,
+      createPreviewResponse({
+        anchorTopicId: 'missing_anchor',
+        baseDocumentUpdatedAt: document.updatedAt,
+        previewNodes: [
+          {
+            id: 'preview_root',
+            parentId: null,
+            order: 0,
+            title: 'Import: fallback',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+          },
+        ],
+      }),
+      [],
+    )
+
+    const importedTopic = Object.values(result.document.topics).find(
+      (topic) => topic.title === 'Import: fallback',
+    )
+
+    expect(importedTopic?.parentId).toBe(document.rootTopicId)
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('original import anchor is missing'),
       ]),
     )
   })

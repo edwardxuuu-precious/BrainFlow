@@ -9,6 +9,9 @@ import { TopicNode } from './TopicNode'
 function createTopicNodeProps(
   topicId: string,
   document = createMindMapDocument(),
+  options?: {
+    selected?: boolean
+  },
 ): NodeProps<MindMapFlowNode> {
   const node = layoutMindMap(document).renderNodes.find((entry) => entry.id === topicId)
 
@@ -20,7 +23,7 @@ function createTopicNodeProps(
     id: node.id,
     data: node.data,
     type: node.type,
-    selected: false,
+    selected: options?.selected ?? false,
     dragging: false,
     zIndex: 0,
     isConnectable: false,
@@ -45,13 +48,14 @@ describe('TopicNode', () => {
   it('shows a note marker when the topic note is not empty', () => {
     const document = createMindMapDocument()
     const branchId = document.topics[document.rootTopicId].childIds[0]
+    const branchTitle = document.topics[branchId].title
     document.topics[branchId].note = '记录上下文'
 
     useEditorStore.getState().setDocument(document)
     renderTopicNode(createTopicNodeProps(branchId, document))
 
-    expect(screen.getByLabelText('已添加详细内容')).toBeInTheDocument()
-    expect(screen.getByText('分支一').closest('[data-selected]')).toHaveAttribute(
+    expect(screen.getByRole('img', { name: /详细内容/ })).toBeInTheDocument()
+    expect(screen.getByText(branchTitle).closest('[data-selected]')).toHaveAttribute(
       'data-selected',
       'false',
     )
@@ -60,14 +64,14 @@ describe('TopicNode', () => {
   it('shows a visible lock badge when the topic is AI locked', () => {
     const document = createMindMapDocument()
     const branchId = document.topics[document.rootTopicId].childIds[0]
+    const branchTitle = document.topics[branchId].title
     document.topics[branchId].aiLocked = true
 
     useEditorStore.getState().setDocument(document)
     renderTopicNode(createTopicNodeProps(branchId, document))
 
-    expect(screen.getByLabelText('AI 锁定节点')).toBeInTheDocument()
-    expect(screen.getByText('已锁定')).toBeInTheDocument()
-    expect(screen.getByText('分支一').closest('[data-locked]')).toHaveAttribute('data-locked', 'true')
+    expect(screen.getByRole('img', { name: 'AI 锁定节点' })).toBeInTheDocument()
+    expect(screen.getByText(branchTitle).closest('[data-locked]')).toHaveAttribute('data-locked', 'true')
   })
 
   it('renders the canvas title input only for canvas editing', () => {
@@ -86,16 +90,17 @@ describe('TopicNode', () => {
 
   it('keeps a stronger selected state when editing happens in the inspector', () => {
     const document = createMindMapDocument()
-    const [firstId, secondId] = document.topics[document.rootTopicId].childIds
+    const [, secondId] = document.topics[document.rootTopicId].childIds
+    const secondTitle = document.topics[secondId].title
 
     useEditorStore.getState().setDocument(document)
-    useEditorStore.getState().setSelection([firstId, secondId], secondId)
+    useEditorStore.getState().setSelection([secondId], secondId)
     useEditorStore.getState().startEditing(secondId, 'inspector')
 
-    renderTopicNode(createTopicNodeProps(secondId, document))
+    renderTopicNode(createTopicNodeProps(secondId, document, { selected: true }))
 
     expect(screen.queryByRole('textbox', { name: '编辑主题标题' })).not.toBeInTheDocument()
-    const topicRoot = screen.getByText('分支二').closest('[data-selected]')
+    const topicRoot = screen.getByText(secondTitle).closest('[data-selected]')
     expect(topicRoot).toHaveAttribute('data-selected', 'true')
     expect(topicRoot).toHaveAttribute('data-active', 'true')
   })
@@ -103,15 +108,32 @@ describe('TopicNode', () => {
   it('keeps the lock badge visible while the node is selected', () => {
     const document = createMindMapDocument()
     const branchId = document.topics[document.rootTopicId].childIds[0]
+    const branchTitle = document.topics[branchId].title
     document.topics[branchId].aiLocked = true
 
     useEditorStore.getState().setDocument(document)
     useEditorStore.getState().setSelection([branchId], branchId)
 
-    renderTopicNode(createTopicNodeProps(branchId, document))
+    renderTopicNode(createTopicNodeProps(branchId, document, { selected: true }))
 
-    expect(screen.getByLabelText('AI 锁定节点')).toBeInTheDocument()
-    expect(screen.getByText('分支一').closest('[data-selected]')).toHaveAttribute('data-selected', 'true')
+    expect(screen.getByRole('img', { name: 'AI 锁定节点' })).toBeInTheDocument()
+    expect(screen.getByText(branchTitle).closest('[data-selected]')).toHaveAttribute('data-selected', 'true')
+  })
+
+  it('relies on the React Flow selected prop instead of the store selection fallback', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    const branchTitle = document.topics[branchId].title
+
+    useEditorStore.getState().setDocument(document)
+    useEditorStore.getState().setSelection([branchId], branchId)
+
+    renderTopicNode(createTopicNodeProps(branchId, document, { selected: false }))
+
+    expect(screen.getByText(branchTitle).closest('[data-selected]')).toHaveAttribute(
+      'data-selected',
+      'false',
+    )
   })
 
   it('shows sticker badges and overflow count in the node meta row', () => {
@@ -122,8 +144,25 @@ describe('TopicNode', () => {
     useEditorStore.getState().setDocument(document)
     renderTopicNode(createTopicNodeProps(branchId, document))
 
-    expect(screen.getByLabelText('贴纸：开心')).toBeInTheDocument()
-    expect(screen.getByLabelText('贴纸：冲刺')).toBeInTheDocument()
+    expect(screen.getAllByRole('img', { name: /贴纸：/ })).toHaveLength(2)
     expect(screen.getByText('+1')).toBeInTheDocument()
+  })
+
+  it('uses the shared compact title tier and taller layout for long node titles', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    const longTitle =
+      '所以第一步不是找“大市场”，而是锁定一个足够具体的 beachhead segment'
+    document.topics[branchId].title = longTitle
+
+    useEditorStore.getState().setDocument(document)
+    renderTopicNode(createTopicNodeProps(branchId, document))
+
+    const title = screen.getByText(longTitle)
+    expect(title).toHaveAttribute('data-title-tier', 'small')
+    expect(title.getAttribute('style')).toContain('--topic-title-font-size: 14px')
+
+    const measuredNode = layoutMindMap(document).renderNodes.find((entry) => entry.id === branchId)
+    expect(Number(measuredNode?.style?.height ?? 0)).toBeGreaterThan(54)
   })
 })

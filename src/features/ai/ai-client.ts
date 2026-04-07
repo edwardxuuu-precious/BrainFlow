@@ -7,7 +7,7 @@ import type {
 } from '../../../shared/ai-contract'
 
 const STATUS_REQUEST_TIMEOUT_MS = 8000
-const CHAT_CONNECT_TIMEOUT_MS = 90000
+const CHAT_CONNECT_TIMEOUT_MS = 180000
 const BRIDGE_UNAVAILABLE_MESSAGE =
   '本机 Codex bridge 无响应，请确认本机 bridge 已启动，并检查 8787 端口服务。'
 const BRIDGE_TIMEOUT_MESSAGE = '本机 Codex bridge 响应超时，请确认本机 bridge 已启动后再试。'
@@ -25,6 +25,8 @@ export class CodexRequestError extends Error {
   issues?: CodexApiError['issues']
   kind?: CodexRequestFailureKind
   status?: number
+  rawMessage?: string
+  requestId?: string
 }
 
 function createRequestError(
@@ -73,7 +75,7 @@ async function fetchWithTimeout(
   options?: { timeoutMs?: number; timeoutMessage?: string },
 ): Promise<Response> {
   const controller = new AbortController()
-  const timeoutId = window.setTimeout(
+  const timeoutId = globalThis.setTimeout(
     () => controller.abort(),
     options?.timeoutMs ?? STATUS_REQUEST_TIMEOUT_MS,
   )
@@ -97,7 +99,7 @@ async function fetchWithTimeout(
       kind: 'bridge_unavailable',
     })
   } finally {
-    window.clearTimeout(timeoutId)
+    globalThis.clearTimeout(timeoutId)
   }
 }
 

@@ -43,6 +43,7 @@ function createRequest(
     anchorTopicId: document.rootTopicId,
     sourceName: 'notes.txt',
     sourceType: 'file',
+    intent: 'distill_structure',
     rawText: '# Notes',
     preprocessedHints: [
       {
@@ -56,7 +57,33 @@ function createRequest(
         sourcePath: ['Notes'],
       },
     ],
+    semanticHints: [],
     ...overrides,
+  }
+}
+
+function createBatchFile(overrides: Partial<TextImportRequest> & {
+  sourceName: string
+  rawText: string
+}): {
+  sourceName: string
+  sourceType: 'file'
+  rawText: string
+  preprocessedHints: TextImportRequest['preprocessedHints']
+  semanticHints: TextImportRequest['semanticHints']
+  intent: TextImportRequest['intent']
+  contentProfile?: TextImportRequest['contentProfile']
+  nodeBudget?: TextImportRequest['nodeBudget']
+} {
+  return {
+    sourceName: overrides.sourceName,
+    sourceType: 'file',
+    rawText: overrides.rawText,
+    preprocessedHints: overrides.preprocessedHints ?? [],
+    semanticHints: overrides.semanticHints ?? [],
+    intent: overrides.intent ?? 'distill_structure',
+    contentProfile: overrides.contentProfile,
+    nodeBudget: overrides.nodeBudget,
   }
 }
 
@@ -64,6 +91,48 @@ function createPreviewResponse(rootTitle: string, childTitle: string): TextImpor
   return {
     summary: `Preview for ${rootTitle}`,
     baseDocumentUpdatedAt: 1,
+    anchorTopicId: 'root',
+    classification: {
+      archetype: 'mixed',
+      confidence: 0.6,
+      rationale: 'Fixture response.',
+      secondaryArchetype: null,
+    },
+    templateSummary: {
+      archetype: 'mixed',
+      visibleSlots: ['themes'],
+      foldedSlots: ['summary'],
+    },
+    nodePlans: [
+      {
+        id: 'preview_root',
+        parentId: null,
+        order: 0,
+        title: rootTitle,
+        note: null,
+        semanticRole: 'section',
+        confidence: 'high',
+        sourceAnchors: [],
+        groupKey: 'root',
+        priority: 'primary',
+        collapsedByDefault: false,
+        templateSlot: null,
+      },
+      {
+        id: 'preview_child',
+        parentId: 'preview_root',
+        order: 0,
+        title: childTitle,
+        note: 'Shared note',
+        semanticRole: 'summary',
+        confidence: 'medium',
+        sourceAnchors: [],
+        groupKey: 'items',
+        priority: 'secondary',
+        collapsedByDefault: false,
+        templateSlot: null,
+      },
+    ],
     previewNodes: [
       {
         id: 'preview_root',
@@ -121,7 +190,29 @@ describe('text-import-job', () => {
     vi.unstubAllGlobals()
   })
 
-  it('routes uploaded markdown files to the Codex import pipeline', async () => {
+  it('routes structured markdown files to the local import pipeline', () => {
+    const request = createRequest({
+      sourceName: 'structured.md',
+      rawText: '# Goals\n\n## Next\n\n- Launch',
+      preprocessedHints: [],
+    })
+
+    const handle = startTextImportJob(request, () => {})
+
+    expect(handle.mode).toBe('local_markdown')
+    expect(WorkerStub.instances).toHaveLength(1)
+    expect(WorkerStub.instances[0]?.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'start_single',
+        request,
+      }),
+    )
+    expect(vi.mocked(streamCodexTextImportPreview)).not.toHaveBeenCalled()
+
+    handle.cancel()
+  })
+
+  it('keeps prose-heavy markdown files on the Codex import pipeline', async () => {
     const request = createRequest({
       sourceName: 'conversation.md',
       rawText: 'Plain prose without headings',
@@ -166,15 +257,6 @@ describe('text-import-job', () => {
         requestId: 'import_123',
       })
       onEvent({
-        type: 'runner_observation',
-        attempt: 'primary',
-        phase: 'first_json_event',
-        kind: 'structured',
-        promptLength: 12_400,
-        elapsedSinceSpawnMs: 2_800,
-        requestId: 'import_123',
-      })
-      onEvent({
         type: 'error',
         stage: 'waiting_codex_primary',
         code: 'request_failed',
@@ -201,56 +283,9 @@ describe('text-import-job', () => {
     )
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: 'runner_observation',
-        requestId: 'import_123',
-        promptLength: 12_400,
-      }),
-    )
-    expect(events).toContainEqual(
-      expect.objectContaining({
         type: 'error',
         requestId: 'import_123',
         currentFileName: 'conversation.md',
-      }),
-    )
-  })
-
-  it('forwards Codex CLI live events through import jobs', async () => {
-    const request = createRequest({
-      sourceName: 'conversation.md',
-      rawText: 'Plain prose without headings',
-      preprocessedHints: [],
-    })
-
-    vi.mocked(streamCodexTextImportPreview).mockImplementation(async (_request, onEvent) => {
-      onEvent({
-        type: 'codex_event',
-        attempt: 'primary',
-        eventType: 'turn.started',
-        at: 1_000,
-        summary: 'Codex 已开始分析导入内容',
-        rawJson: '{"type":"turn.started"}',
-        requestId: 'import_live',
-      })
-    })
-
-    const events: TextImportJobEvent[] = []
-    startTextImportJob(request, (event) => {
-      events.push(event)
-    })
-
-    await vi.waitFor(() => {
-      expect(events.some((event) => event.type === 'codex_event')).toBe(true)
-    })
-
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: 'codex_event',
-        attempt: 'primary',
-        eventType: 'turn.started',
-        requestId: 'import_live',
-        mode: 'codex_import',
-        jobType: 'single',
       }),
     )
   })
@@ -311,7 +346,36 @@ describe('text-import-job', () => {
     handle.cancel()
   })
 
-  it('builds batch markdown previews by streaming each file through Codex in order', async () => {
+  it('routes structured markdown-only batches to the local worker', () => {
+    const baseRequest = createRequest()
+    const request = {
+      documentId: baseRequest.documentId,
+      documentTitle: baseRequest.documentTitle,
+      baseDocumentUpdatedAt: baseRequest.baseDocumentUpdatedAt,
+      context: baseRequest.context,
+      anchorTopicId: baseRequest.anchorTopicId,
+      files: [
+        createBatchFile({ sourceName: 'GTM_main.md', rawText: '# Main\n\n- Launch' }),
+        createBatchFile({ sourceName: 'GTM_step1.md', rawText: '# Step 1\n\n- Align' }),
+      ],
+    }
+
+    const handle = startTextImportBatchJob(request, () => {})
+
+    expect(handle.mode).toBe('local_markdown')
+    expect(WorkerStub.instances).toHaveLength(1)
+    expect(WorkerStub.instances[0]?.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'start_batch',
+        request,
+      }),
+    )
+    expect(vi.mocked(streamCodexTextImportPreview)).not.toHaveBeenCalled()
+
+    handle.cancel()
+  })
+
+  it('builds mixed batch previews by streaming only weakly structured files through Codex', async () => {
     const baseRequest = createRequest()
     const request = {
       documentId: baseRequest.documentId,
@@ -321,18 +385,8 @@ describe('text-import-job', () => {
       anchorTopicId: baseRequest.anchorTopicId,
       batchTitle: 'Import batch: Launch',
       files: [
-        {
-          sourceName: 'GTM_main.md',
-          sourceType: 'file' as const,
-          rawText: 'Conversation export A',
-          preprocessedHints: [],
-        },
-        {
-          sourceName: 'GTM_step1.md',
-          sourceType: 'file' as const,
-          rawText: 'Conversation export B',
-          preprocessedHints: [],
-        },
+        createBatchFile({ sourceName: 'GTM_main.md', rawText: '# Main\n\n- Launch plan' }),
+        createBatchFile({ sourceName: 'GTM_step1.md', rawText: 'Conversation export B' }),
       ],
     }
 
@@ -344,10 +398,7 @@ describe('text-import-job', () => {
       })
       onEvent({
         type: 'result',
-        data:
-          singleRequest.sourceName === 'GTM_main.md'
-            ? createPreviewResponse('Import: alpha', 'Launch plan')
-            : createPreviewResponse('Import: beta', 'Launch plan'),
+        data: createPreviewResponse('Import: beta', 'Launch plan'),
       })
     })
 
@@ -376,7 +427,7 @@ describe('text-import-job', () => {
 
     expect(
       vi.mocked(streamCodexTextImportPreview).mock.calls.map(([singleRequest]) => singleRequest.sourceName),
-    ).toEqual(['GTM_main.md', 'GTM_step1.md'])
+    ).toEqual(['GTM_step1.md'])
     expect(resultEvent.mode).toBe('codex_import')
     expect(resultEvent.data.batch).toEqual(
       expect.objectContaining({
@@ -389,13 +440,7 @@ describe('text-import-job', () => {
         ],
       }),
     )
-    expect(resultEvent.data.crossFileMergeSuggestions).toEqual([
-      expect.objectContaining({
-        sourceName: 'GTM_main.md',
-        matchedSourceName: 'GTM_step1.md',
-        confidence: 'medium',
-      }),
-    ])
+    expect(resultEvent.data.crossFileMergeSuggestions).toEqual([])
   })
 
   it('fails fast on batch markdown errors and includes the failing file name', async () => {
@@ -407,18 +452,8 @@ describe('text-import-job', () => {
       context: baseRequest.context,
       anchorTopicId: baseRequest.anchorTopicId,
       files: [
-        {
-          sourceName: 'GTM_main.md',
-          sourceType: 'file' as const,
-          rawText: 'Conversation export A',
-          preprocessedHints: [],
-        },
-        {
-          sourceName: 'GTM_step1.md',
-          sourceType: 'file' as const,
-          rawText: 'Conversation export B',
-          preprocessedHints: [],
-        },
+        createBatchFile({ sourceName: 'GTM_main.md', rawText: 'Conversation export A' }),
+        createBatchFile({ sourceName: 'GTM_step1.md', rawText: 'Conversation export B' }),
       ],
     }
 

@@ -21,6 +21,48 @@ describe('text-import-store', () => {
     const preview: TextImportResponse = {
       summary: 'Import preview ready',
       baseDocumentUpdatedAt: document.updatedAt,
+      anchorTopicId: document.rootTopicId,
+      classification: {
+        archetype: 'report',
+        confidence: 0.78,
+        rationale: 'Fixture classification.',
+        secondaryArchetype: 'plan',
+      },
+      templateSummary: {
+        archetype: 'report',
+        visibleSlots: ['summary', 'next_steps'],
+        foldedSlots: ['metrics'],
+      },
+      nodePlans: [
+        {
+          id: 'preview_root',
+          parentId: null,
+          order: 0,
+          title: 'Import: GTM_main',
+          note: null,
+          semanticRole: 'section',
+          confidence: 'high',
+          sourceAnchors: [],
+          groupKey: 'root',
+          priority: 'primary',
+          collapsedByDefault: false,
+          templateSlot: null,
+        },
+        {
+          id: 'preview_child',
+          parentId: 'preview_root',
+          order: 0,
+          title: 'Launch',
+          note: null,
+          semanticRole: 'action',
+          confidence: 'high',
+          sourceAnchors: [],
+          groupKey: 'steps',
+          priority: 'primary',
+          collapsedByDefault: false,
+          templateSlot: 'steps',
+        },
+      ],
       previewNodes: [
         {
           id: 'preview_root',
@@ -108,13 +150,26 @@ describe('text-import-store', () => {
       },
     )
 
-    expect(useTextImportStore.getState().preview).toEqual(preview)
+    expect(useTextImportStore.getState().preview).toMatchObject({
+      summary: preview.summary,
+      anchorTopicId: preview.anchorTopicId,
+      classification: preview.classification,
+      templateSummary: preview.templateSummary,
+      nodePlans: preview.nodePlans,
+    })
+    expect(useTextImportStore.getState().draftTree).toEqual([
+      expect.objectContaining({
+        id: 'preview_root',
+        children: [expect.objectContaining({ id: 'preview_child', title: 'Launch' })],
+      }),
+    ])
     expect(useTextImportStore.getState().previewTree).toEqual([
       expect.objectContaining({
         id: 'preview_root',
         children: [expect.objectContaining({ id: 'preview_child', title: 'Launch' })],
       }),
     ])
+    expect(useTextImportStore.getState().draftConfirmed).toBe(false)
     expect(useTextImportStore.getState().progress).toBe(100)
     expect(useTextImportStore.getState().progressIndeterminate).toBe(false)
     expect(useTextImportStore.getState().modeHint).toContain('Codex import pipeline')
@@ -176,37 +231,15 @@ describe('text-import-store', () => {
     expect(useTextImportStore.getState().isPreviewing).toBe(false)
   })
 
-  it('captures runner observations in the status timeline for Codex imports', async () => {
+  it('uses the automatic planning resolver when no overrides are set', async () => {
     const document = createMindMapDocument('Import doc')
 
-    vi.mocked(startTextImportJob).mockImplementation((_request, onEvent) => {
-      onEvent({
-        type: 'status',
-        stage: 'waiting_codex_primary',
-        message: 'Waiting for Codex',
-        progress: 56,
-        mode: 'codex_import',
-        jobType: 'single',
-      })
-      onEvent({
-        type: 'runner_observation',
-        attempt: 'primary',
-        phase: 'first_json_event',
-        kind: 'structured',
-        promptLength: 12_000,
-        elapsedSinceSpawnMs: 2_450,
-        mode: 'codex_import',
-        jobType: 'single',
-        requestId: 'import_456',
-      })
-
-      return {
-        jobId: 'job_runner',
-        mode: 'codex_import',
-        jobType: 'single',
-        cancel: vi.fn(),
-      }
-    })
+    vi.mocked(startTextImportJob).mockImplementation((_request, _onEvent) => ({
+      jobId: 'job_auto',
+      mode: 'local_markdown',
+      jobType: 'single',
+      cancel: vi.fn(),
+    }))
 
     await useTextImportStore.getState().previewText(
       document,
@@ -215,68 +248,39 @@ describe('text-import-store', () => {
         selectedTopicIds: [document.rootTopicId],
       },
       {
-        sourceName: 'GTM_main.md',
-        sourceType: 'file',
-        rawText: '# Launch',
+        sourceName: 'launch_runbook.md',
+        sourceType: 'paste',
+        rawText: '# Launch runbook\n## Steps\n1. Warm the audience\n2. Ship the sequence',
       },
     )
 
-    const state = useTextImportStore.getState()
-    expect(state.progressIndeterminate).toBe(true)
-    expect(state.currentStatus).toEqual(
+    expect(startTextImportJob).toHaveBeenCalledWith(
       expect.objectContaining({
-        kind: 'runner_observation',
-        phase: 'first_json_event',
-        promptLength: 12_000,
+        intent: 'preserve_structure',
+        archetype: undefined,
+        archetypeMode: 'auto',
       }),
+      expect.any(Function),
     )
-    expect(state.statusTimeline.at(-1)).toEqual(
-      expect.objectContaining({
-        stage: 'waiting_codex_primary',
-        runnerObservations: [
-          expect.objectContaining({
-            phase: 'first_json_event',
-            promptLength: 12_000,
-            requestId: 'import_456',
-          }),
-        ],
-      }),
-    )
+    expect(useTextImportStore.getState().presetOverride).toBeNull()
+    expect(useTextImportStore.getState().planningSummaries[0]).toMatchObject({
+      resolvedPreset: 'preserve',
+      resolvedArchetype: 'method',
+      isManual: false,
+    })
   })
 
-  it('captures heartbeat diagnostics in the status timeline for Codex imports', async () => {
+  it('keeps manual overrides in reruns and request construction', async () => {
     const document = createMindMapDocument('Import doc')
+    useTextImportStore.getState().setPresetOverride('action_first')
+    useTextImportStore.getState().setArchetypeOverride('plan')
 
-    vi.mocked(startTextImportJob).mockImplementation((_request, onEvent) => {
-      onEvent({
-        type: 'status',
-        stage: 'waiting_codex_primary',
-        message: 'Waiting for Codex',
-        progress: 56,
-        mode: 'codex_import',
-        jobType: 'single',
-      })
-      onEvent({
-        type: 'runner_observation',
-        attempt: 'primary',
-        phase: 'heartbeat',
-        kind: 'structured',
-        promptLength: 49_301,
-        elapsedSinceSpawnMs: 8_000,
-        elapsedSinceLastEventMs: 8_000,
-        hadJsonEvent: false,
-        mode: 'codex_import',
-        jobType: 'single',
-        requestId: 'import_heartbeat',
-      })
-
-      return {
-        jobId: 'job_heartbeat',
-        mode: 'codex_import',
-        jobType: 'single',
-        cancel: vi.fn(),
-      }
-    })
+    vi.mocked(startTextImportJob).mockImplementation((_request, _onEvent) => ({
+      jobId: 'job_manual',
+      mode: 'local_markdown',
+      jobType: 'single',
+      cancel: vi.fn(),
+    }))
 
     await useTextImportStore.getState().previewText(
       document,
@@ -285,113 +289,25 @@ describe('text-import-store', () => {
         selectedTopicIds: [document.rootTopicId],
       },
       {
-        sourceName: 'GTM_main.md',
-        sourceType: 'file',
-        rawText: '# Launch',
+        sourceName: 'launch_notes.md',
+        sourceType: 'paste',
+        rawText: '- [ ] Assign owner\n- [ ] Publish timeline\nDecision: launch on Tuesday',
       },
     )
 
-    const state = useTextImportStore.getState()
-    expect(state.currentStatus).toEqual(
+    expect(startTextImportJob).toHaveBeenCalledWith(
       expect.objectContaining({
-        kind: 'runner_observation',
-        phase: 'heartbeat',
-        elapsedSinceLastEventMs: 8_000,
-        requestId: 'import_heartbeat',
+        intent: 'distill_structure',
+        archetype: 'plan',
+        archetypeMode: 'manual',
       }),
+      expect.any(Function),
     )
-    expect(state.statusTimeline.at(-1)).toEqual(
-      expect.objectContaining({
-        stage: 'waiting_codex_primary',
-        runnerObservations: [
-          expect.objectContaining({
-            phase: 'heartbeat',
-            elapsedSinceLastEventMs: 8_000,
-            requestId: 'import_heartbeat',
-          }),
-        ],
-      }),
-    )
-  })
-
-  it('stores Codex live events separately from runner heartbeat diagnostics', async () => {
-    const document = createMindMapDocument('Import doc')
-
-    vi.mocked(startTextImportJob).mockImplementation((_request, onEvent) => {
-      onEvent({
-        type: 'status',
-        stage: 'waiting_codex_primary',
-        message: 'Waiting for Codex',
-        progress: 56,
-        mode: 'codex_import',
-        jobType: 'single',
-      })
-      onEvent({
-        type: 'runner_observation',
-        attempt: 'primary',
-        phase: 'heartbeat',
-        kind: 'structured',
-        promptLength: 49_301,
-        elapsedSinceSpawnMs: 8_000,
-        elapsedSinceLastEventMs: 8_000,
-        hadJsonEvent: false,
-        mode: 'codex_import',
-        jobType: 'single',
-        requestId: 'import_live',
-      })
-      onEvent({
-        type: 'codex_event',
-        attempt: 'primary',
-        eventType: 'turn.started',
-        at: 1_000,
-        summary: 'Codex 已开始分析导入内容',
-        rawJson: '{"type":"turn.started"}',
-        mode: 'codex_import',
-        jobType: 'single',
-        requestId: 'import_live',
-      })
-
-      return {
-        jobId: 'job_live',
-        mode: 'codex_import',
-        jobType: 'single',
-        cancel: vi.fn(),
-      }
+    expect(useTextImportStore.getState().planningSummaries[0]).toMatchObject({
+      resolvedPreset: 'action_first',
+      resolvedArchetype: 'plan',
+      isManual: true,
     })
-
-    await useTextImportStore.getState().previewText(
-      document,
-      {
-        activeTopicId: document.rootTopicId,
-        selectedTopicIds: [document.rootTopicId],
-      },
-      {
-        sourceName: 'GTM_main.md',
-        sourceType: 'file',
-        rawText: '# Launch',
-      },
-    )
-
-    const state = useTextImportStore.getState()
-    expect(state.latestCodexEvent).toEqual({
-      attempt: 'primary',
-      eventType: 'turn.started',
-      at: 1_000,
-      summary: 'Codex 已开始分析导入内容',
-      rawJson: '{"type":"turn.started"}',
-      requestId: 'import_live',
-    })
-    expect(state.codexEventFeed).toEqual([
-      {
-        attempt: 'primary',
-        eventType: 'turn.started',
-        at: 1_000,
-        summary: 'Codex 已开始分析导入内容',
-        rawJson: '{"type":"turn.started"}',
-        requestId: 'import_live',
-      },
-    ])
-    expect(state.statusTimeline.at(-1)?.runnerObservations).toHaveLength(1)
   })
 
   it('tracks batch progress and preserves state when the dialog closes', async () => {
@@ -439,5 +355,171 @@ describe('text-import-store', () => {
     expect(useTextImportStore.getState().fileCount).toBe(2)
     expect(useTextImportStore.getState().completedFileCount).toBe(1)
     expect(useTextImportStore.getState().currentFileName).toBe('GTM_step1.md')
+  })
+
+  it('stores per-file automatic planning summaries for batch imports', async () => {
+    const document = createMindMapDocument('Import doc')
+    const fileA = new File(['# Launch runbook\n1. Prep\n2. Ship'], 'launch_runbook.md', {
+      type: 'text/markdown',
+    })
+    const fileB = new File(
+      ['Agenda\n- [ ] Assign owner\n- [ ] Confirm blockers\nDecision: move the release'],
+      'team_meeting.md',
+      { type: 'text/markdown' },
+    )
+
+    vi.mocked(startTextImportBatchJob).mockImplementation((_request, _onEvent) => ({
+      jobId: 'job_batch_summary',
+      mode: 'local_markdown',
+      jobType: 'batch',
+      cancel: vi.fn(),
+    }))
+
+    await useTextImportStore.getState().previewFiles(
+      document,
+      {
+        activeTopicId: document.rootTopicId,
+        selectedTopicIds: [document.rootTopicId],
+      },
+      [fileA, fileB],
+    )
+
+    expect(useTextImportStore.getState().planningSummaries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceName: 'launch_runbook.md',
+          resolvedPreset: 'preserve',
+        }),
+        expect.objectContaining({
+          sourceName: 'team_meeting.md',
+          resolvedPreset: 'action_first',
+        }),
+      ]),
+    )
+  })
+
+  it('requires draft confirmation after manual draft edits', async () => {
+    const document = createMindMapDocument('Import doc')
+    const preview: TextImportResponse = {
+      summary: 'Import preview ready',
+      baseDocumentUpdatedAt: document.updatedAt,
+      anchorTopicId: document.rootTopicId,
+      classification: {
+        archetype: 'method',
+        confidence: 0.84,
+        rationale: 'Fixture classification.',
+        secondaryArchetype: null,
+      },
+      templateSummary: {
+        archetype: 'method',
+        visibleSlots: ['steps'],
+        foldedSlots: ['goal'],
+      },
+      nodePlans: [
+        {
+          id: 'preview_root',
+          parentId: null,
+          order: 0,
+          title: 'Import: launch',
+          note: null,
+          semanticRole: 'section',
+          confidence: 'high',
+          sourceAnchors: [],
+          groupKey: 'root',
+          priority: 'primary',
+          collapsedByDefault: false,
+          templateSlot: null,
+        },
+        {
+          id: 'preview_child',
+          parentId: 'preview_root',
+          order: 0,
+          title: 'Step 1',
+          note: 'Launch the campaign',
+          semanticRole: 'action',
+          confidence: 'high',
+          sourceAnchors: [],
+          groupKey: 'steps',
+          priority: 'primary',
+          collapsedByDefault: false,
+          templateSlot: 'steps',
+        },
+      ],
+      previewNodes: [
+        {
+          id: 'preview_root',
+          parentId: null,
+          order: 0,
+          title: 'Import: launch',
+          note: null,
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+        {
+          id: 'preview_child',
+          parentId: 'preview_root',
+          order: 0,
+          title: 'Step 1',
+          note: 'Launch the campaign',
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+          semanticRole: 'action',
+          confidence: 'high',
+          templateSlot: 'steps',
+        },
+      ],
+      operations: [
+        {
+          id: 'import_root',
+          type: 'create_child',
+          parent: `topic:${document.rootTopicId}`,
+          title: 'Import: launch',
+          risk: 'low',
+          resultRef: 'preview_root',
+        },
+      ],
+      conflicts: [],
+      mergeSuggestions: [],
+      crossFileMergeSuggestions: [],
+      warnings: [],
+    }
+
+    vi.mocked(startTextImportJob).mockImplementation((_request, onEvent) => {
+      onEvent({
+        type: 'result',
+        data: preview,
+        mode: 'codex_import',
+        jobType: 'single',
+      })
+
+      return {
+        jobId: 'job_confirm',
+        mode: 'codex_import',
+        jobType: 'single',
+        cancel: vi.fn(),
+      }
+    })
+
+    await useTextImportStore.getState().previewText(
+      document,
+      {
+        activeTopicId: document.rootTopicId,
+        selectedTopicIds: [document.rootTopicId],
+      },
+      {
+        sourceName: 'launch.md',
+        sourceType: 'file',
+        rawText: '# Launch',
+      },
+    )
+
+    useTextImportStore.getState().confirmDraft()
+    expect(useTextImportStore.getState().draftConfirmed).toBe(true)
+
+    useTextImportStore.getState().renamePreviewNode('preview_child', 'Reframed step')
+    expect(useTextImportStore.getState().draftConfirmed).toBe(false)
+    expect(useTextImportStore.getState().preview?.nodePlans[1]?.title).toBe('Reframed step')
   })
 })

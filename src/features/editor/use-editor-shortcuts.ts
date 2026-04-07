@@ -16,11 +16,12 @@ function isTypingElement(element: EventTarget | null): boolean {
 export function useEditorShortcuts(): void {
   const addChild = useEditorStore((state) => state.addChild)
   const addSibling = useEditorStore((state) => state.addSibling)
-  const removeTopic = useEditorStore((state) => state.removeTopic)
+  const removeTopics = useEditorStore((state) => state.removeTopics)
   const setTopicsAiLocked = useEditorStore((state) => state.setTopicsAiLocked)
   const startEditing = useEditorStore((state) => state.startEditing)
   const undo = useEditorStore((state) => state.undo)
   const redo = useEditorStore((state) => state.redo)
+  const selectAll = useEditorStore((state) => state.selectAll)
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -47,6 +48,12 @@ export function useEditorShortcuts(): void {
         return
       }
 
+      if (modifierPressed && event.key.toLowerCase() === 'a') {
+        event.preventDefault()
+        selectAll()
+        return
+      }
+
       if (modifierPressed && event.shiftKey && event.key.toLowerCase() === 'l') {
         const selectedTopicIds = snapshot.selectedTopicIds.filter((topicId) => doc.topics[topicId])
         if (selectedTopicIds.length === 0) {
@@ -62,29 +69,50 @@ export function useEditorShortcuts(): void {
         return
       }
 
+      switch (event.key) {
+        case 'Backspace':
+        case 'Delete': {
+          const selectedIds = snapshot.selectedTopicIds.filter((topicId) => doc.topics[topicId])
+          if (selectedIds.length === 0) {
+            return
+          }
+
+          event.preventDefault()
+          removeTopics(selectedIds)
+          return
+        }
+        default:
+          break
+      }
+
       if (!activeTopicId) {
         return
       }
 
+      const activeTopic = doc.topics[activeTopicId]
+      const activeTopicLocked = !!activeTopic?.aiLocked
+
       switch (event.key) {
         case 'Tab':
+          if (activeTopicLocked) {
+            break
+          }
           event.preventDefault()
           addChild(activeTopicId)
           break
         case 'Enter':
+          if (activeTopicLocked) {
+            break
+          }
           event.preventDefault()
           addSibling(activeTopicId)
           break
         case 'F2':
+          if (activeTopicLocked) {
+            break
+          }
           event.preventDefault()
           startEditing(activeTopicId, 'canvas')
-          break
-        case 'Backspace':
-        case 'Delete':
-          if (activeTopicId !== doc.rootTopicId) {
-            event.preventDefault()
-            removeTopic(activeTopicId)
-          }
           break
         default:
           break
@@ -93,5 +121,5 @@ export function useEditorShortcuts(): void {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [addChild, addSibling, redo, removeTopic, setTopicsAiLocked, startEditing, undo])
+  }, [addChild, addSibling, redo, removeTopics, selectAll, setTopicsAiLocked, startEditing, undo])
 }

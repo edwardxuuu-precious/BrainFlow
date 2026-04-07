@@ -16,7 +16,7 @@ import { AiSettingsDialog } from './AiSettingsDialog'
 
 import styles from './AiSidebar.module.css'
 
-interface SelectedTopicChip {
+interface TopicChip {
   topicId: string
   title: string
   isActive: boolean
@@ -28,13 +28,17 @@ interface Topic {
 }
 
 interface AiSidebarProps {
-  selectedTopics: SelectedTopicChip[]
+  effectiveTopics?: TopicChip[]
+  manualTopics?: TopicChip[]
+  canvasTopics?: TopicChip[]
+  selectedTopics?: TopicChip[]
   allTopics?: Topic[]
   useFullDocument?: boolean
   onToggleFullDocument?: () => void
   onAddContextTopic?: (topicId: string) => void
   onRemoveContextTopic?: (topicId: string) => void
   onCanvasPick?: () => void
+  onCancelCanvasPick?: () => void
   sessionList: AiSessionSummary[]
   activeSessionId: string | null
   archivedSessions: AiSessionSummary[]
@@ -83,13 +87,17 @@ function classNames(...values: Array<string | false | null | undefined>) {
 }
 
 export function AiSidebar({
-  selectedTopics,
+  effectiveTopics = [],
+  manualTopics = [],
+  canvasTopics = [],
+  selectedTopics = [],
   allTopics,
   useFullDocument = true,
   onToggleFullDocument,
   onAddContextTopic,
   onRemoveContextTopic,
   onCanvasPick,
+  onCancelCanvasPick,
   sessionList,
   activeSessionId,
   archivedSessions,
@@ -131,6 +139,10 @@ export function AiSidebar({
   className,
   mode = 'docked',
 }: AiSidebarProps) {
+  const resolvedEffectiveTopics = effectiveTopics.length > 0 ? effectiveTopics : selectedTopics
+  const resolvedManualTopics =
+    manualTopics.length > 0 ? manualTopics : selectedTopics.filter((topic) => !canvasTopics.some((canvasTopic) => canvasTopic.topicId === topic.topicId))
+  const resolvedCanvasTopics = canvasTopics
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [settingsDraft, setSettingsDraft] = useState('')
   const [hasEditedSettingsDraft, setHasEditedSettingsDraft] = useState(false)
@@ -197,21 +209,21 @@ export function AiSidebar({
 
   const getStatusButtonState = () => {
     if (isCheckingStatus) {
-      return { label: '检查中', tone: 'secondary' as const, icon: 'loading' as const }
+      return { label: '检查中', tone: 'primary' as const, icon: 'loading' as const }
     }
     if (isReady) {
-      return { label: '已连接', tone: 'secondary' as const, icon: 'check' as const }
+      return { label: '已连接', tone: 'primary' as const, icon: 'check' as const }
     }
     if (isServiceDisconnected) {
-      return { label: '未连接服务', tone: 'secondary' as const, icon: 'error' as const }
+      return { label: '未连接服务', tone: 'primary' as const, icon: 'error' as const }
     }
     if (hasInternalStatusFailure) {
-      return { label: '状态检查失败', tone: 'secondary' as const, icon: 'error' as const }
+      return { label: '状态检查失败', tone: 'primary' as const, icon: 'error' as const }
     }
     if (hasCliMissingIssue) {
-      return { label: 'CLI 不可用', tone: 'secondary' as const, icon: 'error' as const }
+      return { label: 'CLI 不可用', tone: 'primary' as const, icon: 'error' as const }
     }
-    return { label: '需要验证', tone: 'secondary' as const, icon: 'warning' as const }
+    return { label: '需要验证', tone: 'primary' as const, icon: 'warning' as const }
   }
 
   const statusButtonState = getStatusButtonState()
@@ -309,14 +321,6 @@ export function AiSidebar({
     <>
       <section id={id} className={classNames(styles.panel, className)} data-mode={mode}>
         <div className={styles.header}>
-          <div className={styles.chrome}>
-            <div className={styles.modeIntro}>
-              <span className={styles.modeLabel}>AI</span>
-              <h2 className={styles.modeHeading}>智能协作</h2>
-              <p className={styles.modeDescription}>基于当前脑图上下文发起对话、检查状态并应用结果。</p>
-            </div>
-          </div>
-
           <div className={styles.toolbarRow1}>
             <div className={styles.dropdownWrapper}>
               <button
@@ -432,7 +436,7 @@ export function AiSidebar({
               ) : null}
             </div>
 
-            <IconButton label="新建聊天" icon="chat" tone="secondary" size="sm" onClick={onCreateSession} />
+            <IconButton label="新建聊天" icon="chat" tone="primary" size="sm" onClick={onCreateSession} />
           </div>
 
           <div className={styles.actionsRow}>
@@ -455,7 +459,7 @@ export function AiSidebar({
               {statusButtonState.label}
             </Button>
 
-            <IconButton label="AI 设置" icon="settings" tone="ghost" size="sm" onClick={handleOpenSettings} />
+            <IconButton label="AI 设置" icon="settings" tone="primary" size="sm" onClick={handleOpenSettings} />
           </div>
 
           {isStatusExpanded ? (
@@ -615,13 +619,16 @@ export function AiSidebar({
         <div className={styles.body}>
           <div className={styles.infoSection}>
             <AiContextTray
-              selectedTopics={selectedTopics}
+              effectiveTopics={resolvedEffectiveTopics}
+              manualTopics={resolvedManualTopics}
+              canvasTopics={resolvedCanvasTopics}
               allTopics={allTopics}
               useFullDocument={useFullDocument}
               onToggleFullDocument={onToggleFullDocument || (() => {})}
               onAddTopic={onAddContextTopic || (() => {})}
               onRemoveTopic={onRemoveContextTopic || (() => {})}
               onCanvasPick={onCanvasPick}
+              onCancelCanvasPick={onCancelCanvasPick}
             />
 
             {lastAppliedSummary ? (
@@ -632,7 +639,7 @@ export function AiSidebar({
                 </div>
                 <div className={styles.appliedActions}>
                   <Button
-                    tone="secondary"
+                    tone="primary"
                     size="sm"
                     iconStart="undo"
                     onClick={onUndoLastApplied}

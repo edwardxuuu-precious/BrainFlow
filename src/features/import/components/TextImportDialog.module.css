@@ -166,6 +166,146 @@
   gap: 6px;
 }
 
+.autoSetupPanel {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: var(--dialog-surface);
+  border: 1px solid color-mix(in srgb, var(--document-accent) 14%, white 86%);
+}
+
+.autoSetupHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.autoSetupTitle {
+  margin: 4px 0 0;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.autoSetupBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--document-accent) 12%, white 88%);
+  color: var(--document-text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.autoSetupHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--document-accent) 62%, var(--document-text) 38%);
+}
+
+.advancedPanel {
+  display: grid;
+  gap: 10px;
+}
+
+.advancedToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
+  border-radius: 14px;
+  background: var(--dialog-panel);
+  color: var(--document-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.advancedContent {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--dialog-surface) 86%, var(--dialog-panel) 14%);
+  border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
+}
+
+.select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 40px 0 14px;
+  border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
+  border-radius: 14px;
+  background-color: var(--dialog-surface);
+  color: var(--document-text);
+  font-size: 13px;
+  line-height: 1.3;
+  appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='M3.5 5.5L7 9L10.5 5.5' stroke='%23666' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+
+.selectDescription {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--document-muted);
+}
+
+.presetList {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.presetChip {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
+  border-radius: 16px;
+  background: var(--dialog-surface);
+  color: var(--document-text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.presetChip strong {
+  font-size: 13px;
+}
+
+.presetChip span {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--document-muted);
+}
+
+.presetChip:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--document-accent) 24%, white 76%);
+  background: var(--dialog-panel-muted);
+}
+
+.presetChip[data-active='true'] {
+  border-color: color-mix(in srgb, var(--document-accent) 34%, white 66%);
+  background: color-mix(in srgb, var(--document-accent) 10%, white 90%);
+}
+
+.presetChip:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
 .fileList {
   display: grid;
   gap: 8px;
@@ -238,6 +378,12 @@
   background: var(--dialog-panel);
 }
 
+.fileListCopy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
 .fileName {
   font-size: 13px;
   font-weight: 500;
@@ -245,6 +391,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.filePlanningMeta {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--document-muted);
 }
 
 .fileLength {
@@ -830,6 +982,11 @@
   background: var(--dialog-surface);
 }
 
+.treeTitleEditor {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .treeCard[data-relation='new'] {
   border-color: rgba(32, 128, 92, 0.26);
 }
@@ -850,6 +1007,36 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--document-accent) 14%, white 86%);
   font-size: 12px;
+}
+
+.treeBadgeRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.treeActionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.treeSemanticBadge,
+.treeConfidenceBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--dialog-panel);
+  color: var(--document-text);
+}
+
+.treeConfidenceBadge {
+  text-transform: capitalize;
+  color: var(--document-muted);
 }
 
 .treeReason,
@@ -909,7 +1096,8 @@
   }
 
   .inputGrid,
-  .metaGrid {
+  .metaGrid,
+  .presetList {
     grid-template-columns: 1fr;
   }
 

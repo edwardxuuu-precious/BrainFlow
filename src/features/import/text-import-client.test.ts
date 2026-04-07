@@ -10,6 +10,7 @@ function createRequest(): TextImportRequest {
     context: {
       documentTitle: 'Import doc',
       rootTopicId: 'root',
+      scope: 'full_document',
       topicCount: 1,
       topics: [
         {
@@ -19,9 +20,6 @@ function createRequest(): TextImportRequest {
           metadata: {
             labels: [],
             markers: [],
-            task: null,
-            links: [],
-            attachments: [],
           },
           style: {},
           parentTopicId: null,
@@ -38,8 +36,10 @@ function createRequest(): TextImportRequest {
     anchorTopicId: 'root',
     sourceName: 'GTM_step1.md',
     sourceType: 'file',
+    intent: 'distill_structure',
     rawText: '# GTM Step 1',
     preprocessedHints: [],
+    semanticHints: [],
   }
 }
 
@@ -237,51 +237,6 @@ describe('text-import-client transport handling', () => {
     })
   })
 
-  it('passes through Codex live events from the NDJSON stream', async () => {
-    const encoder = new TextEncoder()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        body: {
-          getReader: () => ({
-            read: vi
-              .fn()
-              .mockResolvedValueOnce({
-                done: false,
-                value: encoder.encode(
-                  `${JSON.stringify({
-                    type: 'codex_event',
-                    attempt: 'primary',
-                    eventType: 'turn.started',
-                    at: 1_000,
-                    summary: 'Codex 已开始分析导入内容',
-                    rawJson: '{"type":"turn.started"}',
-                    requestId: 'import_stream_3',
-                  })}\n`,
-                ),
-              })
-              .mockResolvedValueOnce({
-                done: true,
-                value: undefined,
-              }),
-          }),
-        },
-      }),
-    )
-
-    const onEvent = vi.fn()
-    await streamCodexTextImportPreview(createRequest(), onEvent)
-
-    expect(onEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'codex_event',
-        attempt: 'primary',
-        eventType: 'turn.started',
-        requestId: 'import_stream_3',
-      }),
-    )
-  })
 
   it('maps generic fetch failures to a bridge unavailable message', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))

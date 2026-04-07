@@ -9,6 +9,7 @@ import type {
   DocumentService,
   DocumentSummary,
   MindMapDocument,
+  MindMapTheme,
   MindMapEditorChromeState,
   MindMapViewport,
   MindMapWorkspaceState,
@@ -147,28 +148,191 @@ function normalizeWorkspace(doc: MindMapDocument): MindMapWorkspaceState {
   }
 }
 
-function normalizeTopic(topic: TopicNode): TopicNode {
-  const noteRich = normalizeTopicRichText(topic.noteRich)
+function createFallbackTopic(topicId: string, title: string, parentId: string | null): TopicNode {
+  return {
+    id: topicId,
+    parentId,
+    childIds: [],
+    title,
+    note: '',
+    noteRich: null,
+    aiLocked: false,
+    isCollapsed: false,
+    branchSide: 'auto',
+    layout: {
+      offsetX: 0,
+      offsetY: 0,
+      semanticGroupKey: null,
+      priority: null,
+    },
+    metadata: normalizeTopicMetadata(),
+    style: normalizeTopicStyle(),
+  }
+}
+
+function normalizeTopic(topicId: string, topic: Partial<TopicNode> | undefined, fallbackTitle: string): TopicNode {
+  const noteRich = normalizeTopicRichText(topic?.noteRich)
+  const title = typeof topic?.title === 'string' && topic.title.trim().length > 0
+    ? topic.title
+    : fallbackTitle
+  const branchSide =
+    topic?.branchSide === 'left' || topic?.branchSide === 'right' || topic?.branchSide === 'auto'
+      ? topic.branchSide
+      : 'auto'
 
   return {
-    ...topic,
-    note: noteRich ? extractPlainTextFromTopicRichText(noteRich) : topic.note ?? '',
+    id: topicId,
+    parentId: typeof topic?.parentId === 'string' ? topic.parentId : null,
+    childIds: Array.isArray(topic?.childIds)
+      ? topic.childIds.filter((childId): childId is string => typeof childId === 'string')
+      : [],
+    title,
+    note: noteRich ? extractPlainTextFromTopicRichText(noteRich) : topic?.note ?? '',
     noteRich,
-    aiLocked: topic.aiLocked ?? false,
-    metadata: normalizeTopicMetadata(topic.metadata),
-    style: normalizeTopicStyle(topic.style),
+    aiLocked: topic?.aiLocked ?? false,
+    isCollapsed: topic?.isCollapsed ?? false,
+    branchSide,
+    layout: {
+      offsetX: topic?.layout?.offsetX ?? 0,
+      offsetY: topic?.layout?.offsetY ?? 0,
+      semanticGroupKey: topic?.layout?.semanticGroupKey ?? null,
+      priority: topic?.layout?.priority ?? null,
+    },
+    metadata: normalizeTopicMetadata(topic?.metadata),
+    style: normalizeTopicStyle(topic?.style),
+  }
+}
+
+function normalizeTheme(theme: MindMapDocument['theme'] | undefined): MindMapTheme {
+  return normalizeMindMapTheme(theme ?? defaultTheme)
+}
+
+function repairTopicTree(
+  rawTopics: Record<string, Partial<TopicNode> | undefined> | undefined,
+  requestedRootTopicId: string | undefined,
+): { topics: Record<string, TopicNode>; rootTopicId: string } {
+  const topicEntries = Object.entries(rawTopics ?? {}).filter(
+    ([topicId, topic]) => topicId.trim().length > 0 && !!topic,
+  )
+  const normalizedTopics = Object.fromEntries(
+    topicEntries.map(([topicId, topic]) => [
+      topicId,
+      normalizeTopic(topicId, topic, topicId === requestedRootTopicId ? '中心主题' : '新主题'),
+    ]),
+  ) as Record<string, TopicNode>
+  const topicIds = Object.keys(normalizedTopics)
+  const fallbackRootTopicId =
+    typeof requestedRootTopicId === 'string' && requestedRootTopicId.trim().length > 0
+      ? requestedRootTopicId
+      : 'topic_recovered_root'
+  const rootTopicId = normalizedTopics[fallbackRootTopicId]
+    ? fallbackRootTopicId
+    : (topicIds[0] ?? fallbackRootTopicId)
+
+  if (!normalizedTopics[rootTopicId]) {
+    normalizedTopics[rootTopicId] = createFallbackTopic(rootTopicId, '中心主题', null)
+  }
+
+  Object.values(normalizedTopics).forEach((topic) => {
+    topic.childIds = Array.from(new Set(topic.childIds)).filter(
+      (childId) => childId !== topic.id && !!normalizedTopics[childId],
+    )
+  })
+
+  const visitQueue = [{ topicId: rootTopicId, parentId: null as string | null }]
+  const visited = new Set<string>()
+
+  while (visitQueue.length > 0) {
+    const current = visitQueue.shift()
+    if (!current) {
+      continue
+    }
+
+    const topic = normalizedTopics[current.topicId]
+    if (!topic || visited.has(current.topicId)) {
+      continue
+    }
+
+    visited.add(current.topicId)
+    topic.parentId = current.parentId
+    topic.childIds = topic.childIds.filter((childId) => !visited.has(childId))
+
+    topic.childIds.forEach((childId) => {
+      const child = normalizedTopics[childId]
+      if (!child) {
+        return
+      }
+
+      child.parentId = topic.id
+      visitQueue.push({ topicId: childId, parentId: topic.id })
+    })
+  }
+
+  const root = normalizedTopics[rootTopicId]
+  Object.keys(normalizedTopics).forEach((topicId) => {
+    if (visited.has(topicId)) {
+      return
+    }
+
+    if (!root.childIds.includes(topicId)) {
+      root.childIds.push(topicId)
+    }
+
+    visitQueue.push({ topicId, parentId: rootTopicId })
+
+    while (visitQueue.length > 0) {
+      const current = visitQueue.shift()
+      if (!current) {
+        continue
+      }
+
+      const topic = normalizedTopics[current.topicId]
+      if (!topic || visited.has(current.topicId)) {
+        continue
+      }
+
+      visited.add(current.topicId)
+      topic.parentId = current.parentId
+      topic.childIds = topic.childIds.filter((childId) => !visited.has(childId))
+
+      topic.childIds.forEach((childId) => {
+        const child = normalizedTopics[childId]
+        if (!child) {
+          return
+        }
+
+        child.parentId = topic.id
+        visitQueue.push({ topicId: childId, parentId: topic.id })
+      })
+    }
+  })
+
+  root.parentId = null
+
+  Object.values(normalizedTopics).forEach((topic) => {
+    topic.isCollapsed = topic.isCollapsed && topic.childIds.length > 0
+  })
+
+  return {
+    topics: normalizedTopics,
+    rootTopicId,
   }
 }
 
 function normalizeDocument(doc: MindMapDocument): MindMapDocument {
+  const repairedTree = repairTopicTree(doc.topics, doc.rootTopicId)
+
   return {
     ...doc,
-    topics: Object.fromEntries(
-      Object.entries(doc.topics).map(([topicId, topic]) => [topicId, normalizeTopic(topic)]),
-    ),
+    rootTopicId: repairedTree.rootTopicId,
+    topics: repairedTree.topics,
     viewport: normalizeViewport(doc.viewport),
-    workspace: normalizeWorkspace(doc),
-    theme: normalizeMindMapTheme(doc.theme),
+    workspace: normalizeWorkspace({
+      ...doc,
+      rootTopicId: repairedTree.rootTopicId,
+      topics: repairedTree.topics,
+    }),
+    theme: normalizeTheme(doc.theme),
   }
 }
 

@@ -1,24 +1,27 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  TextImportConflict,
+  TextImportArchetype,
   TextImportCrossFileMergeSuggestion,
   TextImportMergeSuggestion,
+  TextImportPreset,
   TextImportPreviewNode,
   TextImportPreprocessHint,
+  TextImportResponse,
   TextImportSourceType,
 } from '../../../../shared/ai-contract'
+import {
+  formatTextImportArchetypeLabel,
+  formatTextImportClassificationConfidence,
+  formatTextImportPresetLabel,
+  formatTextImportTemplateSlotLabel,
+  resolveTextImportPlanningOptions,
+  type TextImportSourcePlanningSummary,
+} from '../../../../shared/text-import-semantics'
 import { Button, IconButton, Input, SurfacePanel, TextArea } from '../../../components/ui'
 import type { SemanticMergeStage } from '../local-text-import-core'
 import type { TextImportJobMode, TextImportJobType } from '../text-import-job'
-import type {
-  TextImportCurrentStatus,
-  TextImportCodexDiagnosticState,
-  TextImportCodexEventState,
-  TextImportCodexExplainerState,
-  TextImportErrorState,
-  TextImportRunnerObservationState,
-  TextImportStatusTimelineEntry,
-} from '../text-import-store'
+import type { TextImportErrorState } from '../text-import-store'
+import { preprocessTextToImportHints } from '../text-import-preprocess'
 import styles from './TextImportDialog.module.css'
 
 interface TextImportSourceFileState {
@@ -36,14 +39,11 @@ interface TextImportDialogProps {
   draftSourceName: string
   draftText: string
   preprocessedHints: TextImportPreprocessHint[]
-  preview: {
-    summary: string
-    conflicts: TextImportConflict[]
-    operations: Array<{ risk: 'low' | 'high' }>
-    mergeSuggestions?: TextImportMergeSuggestion[]
-    warnings?: string[]
-  } | null
+  preview: TextImportResponse | null
+  draftTree: TextImportPreviewNode[]
   previewTree: TextImportPreviewNode[]
+  draftConfirmed: boolean
+  planningSummaries: TextImportSourcePlanningSummary[]
   crossFileMergeSuggestions: TextImportCrossFileMergeSuggestion[]
   approvedConflictIds: string[]
   statusText: string
@@ -57,12 +57,7 @@ interface TextImportDialogProps {
   previewFinishedAt: number | null
   jobMode: TextImportJobMode | null
   jobType: TextImportJobType | null
-  currentStatus: TextImportCurrentStatus | null
-  latestCodexExplainer: TextImportCodexExplainerState | null
-  latestCodexEvent: TextImportCodexEventState | null
-  codexEventFeed: TextImportCodexEventState[]
-  codexDiagnostics: TextImportCodexDiagnosticState[]
-  statusTimeline: TextImportStatusTimelineEntry[]
+
   fileCount: number
   completedFileCount: number
   currentFileName: string | null
@@ -74,22 +69,159 @@ interface TextImportDialogProps {
   appliedCount: number
   totalOperations: number
   currentApplyLabel: string | null
+  presetOverride: TextImportPreset | null
+  archetypeOverride?: TextImportArchetype | null
   onClose: () => void
   onChooseFile: () => void
+  onPresetChange: (value: TextImportPreset | null) => void
+  onArchetypeChange?: (value: TextImportArchetype | null) => void
   onDraftSourceNameChange: (value: string) => void
   onDraftTextChange: (value: string) => void
   onGenerateFromText: () => void
   onToggleConflict: (conflictId: string) => void
+  onConfirmDraft: () => void
+  onRenamePreviewNode: (nodeId: string, title: string) => void
+  onPromotePreviewNode: (nodeId: string) => void
+  onDemotePreviewNode: (nodeId: string) => void
+  onDeletePreviewNode: (nodeId: string) => void
   onApply: () => void
 }
 
 const DIALOG_STEPS = [
   { id: 'source', label: 'Import source' },
-  { id: 'structured', label: 'Structured preview' },
+  { id: 'structured', label: 'Draft review' },
   { id: 'merge', label: 'Merge review' },
 ] as const
 
 type DialogStep = (typeof DIALOG_STEPS)[number]['id']
+
+/*
+const IMPORT_PRESETS: Array<{ id: TextImportPreset; label: string; description: string }> = [
+  { id: 'preserve', label: '保真导入', description: '尽量保留原文层级和措辞。' },
+  { id: 'distill', label: '智能提炼', description: '默认推荐，抽出摘要、决策、行动项和风险。' },
+  { id: 'action_first', label: '行动项优先', description: '压缩结构，优先保留待办、决策和阻塞。' },
+]
+
+*/
+
+function formatSemanticRole(role: TextImportPreviewNode['semanticRole']): string | null {
+  switch (role) {
+    case 'summary':
+      return 'Summary'
+    case 'decision':
+      return 'Decision'
+    case 'action':
+      return 'Action'
+    case 'risk':
+      return 'Risk'
+    case 'question':
+      return 'Question'
+    case 'metric':
+      return 'Metric'
+    case 'timeline':
+      return 'Timeline'
+    case 'evidence':
+      return 'Evidence'
+    case 'section':
+      return 'Section'
+    default:
+      return null
+  }
+}
+function formatTemplateSlot(slot: TextImportPreviewNode['templateSlot']): string | null {
+  return formatTextImportTemplateSlotLabel(slot)
+}
+
+function formatPlanningConfidence(value: TextImportSourcePlanningSummary['confidence']): string {
+  switch (value) {
+    case 'high':
+      return 'High confidence'
+    case 'medium':
+      return 'Medium confidence'
+    case 'low':
+    default:
+      return 'Low confidence'
+  }
+}
+
+const IMPORT_PRESET_OPTIONS: Array<{
+  id: TextImportPreset | null
+  label: string
+  description: string
+}> = [
+  {
+    id: null,
+    label: 'Automatic',
+    description: 'Default. Pick the import strategy from the source structure and semantic signals.',
+  },
+  {
+    id: 'preserve',
+    label: 'Preserve structure',
+    description: 'Keep the original hierarchy and wording as much as possible.',
+  },
+  {
+    id: 'distill',
+    label: 'Smart distill',
+    description: 'Default. Distill summaries, decisions, actions, and risks into a cleaner branch.',
+  },
+  {
+    id: 'action_first',
+    label: 'Action first',
+    description: 'Compress structure and prioritize action items, decisions, and blockers.',
+  },
+]
+
+const ARCHETYPE_OPTIONS: Array<{
+  id: TextImportArchetype | null
+  label: string
+  description: string
+}> = [
+  {
+    id: null,
+    label: 'Auto detect',
+    description: 'Use the local scorer first and only escalate when the content type is ambiguous.',
+  },
+  {
+    id: 'method',
+    label: 'Method',
+    description: 'Extract goals, steps, criteria, prerequisites, and common mistakes.',
+  },
+  {
+    id: 'argument',
+    label: 'Argument',
+    description: 'List viewpoints first, then attach supporting evidence and data.',
+  },
+  {
+    id: 'plan',
+    label: 'Plan',
+    description: 'Focus on goals, strategy, actions, owners, timelines, risks, and success metrics.',
+  },
+  {
+    id: 'report',
+    label: 'Report',
+    description: 'Group by summary, key results, progress, metrics, blockers, and next steps.',
+  },
+  {
+    id: 'meeting',
+    label: 'Meeting',
+    description: 'Surface agenda, decisions, action items, owners, open questions, and risks.',
+  },
+  {
+    id: 'postmortem',
+    label: 'Postmortem',
+    description: 'Extract issues, causes, impacts, evidence, fixes, and preventive actions.',
+  },
+  {
+    id: 'knowledge',
+    label: 'Knowledge',
+    description: 'Organize definitions, components, mechanisms, comparisons, examples, and cautions.',
+  },
+  {
+    id: 'mixed',
+    label: 'Mixed',
+    description: 'Keep a generic summary/themes/actions structure when the content type is blended.',
+  },
+]
 
 function PreviewTree({ nodes }: { nodes: TextImportPreviewNode[] }) {
   if (nodes.length === 0) {
@@ -103,19 +235,204 @@ function PreviewTree({ nodes }: { nodes: TextImportPreviewNode[] }) {
           <div className={styles.treeCard} data-relation={node.relation}>
             <div className={styles.treeTitleRow}>
               <strong>{node.title}</strong>
-              <span className={styles.treeBadge}>
-                {node.relation === 'new'
-                  ? 'New branch'
-                  : node.relation === 'merge'
-                    ? 'Semantic merge'
-                    : 'Conflict'}
-              </span>
+              <div className={styles.treeBadgeRow}>
+                {formatSemanticRole(node.semanticRole) ? (
+                  <span className={styles.treeSemanticBadge}>{formatSemanticRole(node.semanticRole)}</span>
+                ) : null}
+                {formatTemplateSlot(node.templateSlot) ? (
+                  <span className={styles.treeBadge}>{formatTemplateSlot(node.templateSlot)}</span>
+                ) : null}
+                {node.confidence ? (
+                  <span className={styles.treeConfidenceBadge}>{node.confidence}</span>
+                ) : null}
+                <span className={styles.treeBadge}>
+                  {node.relation === 'new'
+                    ? 'New branch'
+                    : node.relation === 'merge'
+                      ? 'Semantic merge'
+                      : 'Conflict'}
+                </span>
+              </div>
             </div>
             {node.reason ? <p className={styles.treeReason}>{node.reason}</p> : null}
             {node.note ? <p className={styles.treeNote}>{node.note}</p> : null}
           </div>
           {node.children.length > 0 ? <PreviewTree nodes={node.children} /> : null}
         </li>
+      ))}
+    </ul>
+  )
+}
+
+interface EditablePreviewTreeProps {
+  nodes: TextImportPreviewNode[]
+  disabled?: boolean
+  onRenameNode: (nodeId: string, title: string) => void
+  onPromoteNode: (nodeId: string) => void
+  onDemoteNode: (nodeId: string) => void
+  onDeleteNode: (nodeId: string) => void
+}
+
+function EditablePreviewTreeNode({
+  node,
+  disabled = false,
+  onRenameNode,
+  onPromoteNode,
+  onDemoteNode,
+  onDeleteNode,
+}: {
+  node: TextImportPreviewNode
+  disabled?: boolean
+  onRenameNode: (nodeId: string, title: string) => void
+  onPromoteNode: (nodeId: string) => void
+  onDemoteNode: (nodeId: string) => void
+  onDeleteNode: (nodeId: string) => void
+}) {
+  const [isEditingTitle, setIsEditingTitle] = useState(false)
+  const [draftTitle, setDraftTitle] = useState(node.title)
+
+  useEffect(() => {
+    setDraftTitle(node.title)
+  }, [node.title])
+
+  const commitRename = () => {
+    const nextTitle = draftTitle.trim()
+    if (!nextTitle) {
+      setDraftTitle(node.title)
+      setIsEditingTitle(false)
+      return
+    }
+
+    if (nextTitle !== node.title) {
+      onRenameNode(node.id, nextTitle)
+    }
+    setIsEditingTitle(false)
+  }
+
+  return (
+    <li className={styles.treeItem}>
+      <div className={styles.treeCard} data-relation={node.relation}>
+        <div className={styles.treeTitleRow}>
+          {isEditingTitle ? (
+            <div className={styles.treeTitleEditor}>
+              <Input
+                value={draftTitle}
+                disabled={disabled}
+                onChange={(event) => setDraftTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    commitRename()
+                  }
+                  if (event.key === 'Escape') {
+                    setDraftTitle(node.title)
+                    setIsEditingTitle(false)
+                  }
+                }}
+                onBlur={commitRename}
+              />
+            </div>
+          ) : (
+            <strong>{node.title}</strong>
+          )}
+          <div className={styles.treeBadgeRow}>
+            {formatSemanticRole(node.semanticRole) ? (
+              <span className={styles.treeSemanticBadge}>{formatSemanticRole(node.semanticRole)}</span>
+            ) : null}
+            {formatTemplateSlot(node.templateSlot) ? (
+              <span className={styles.treeBadge}>{formatTemplateSlot(node.templateSlot)}</span>
+            ) : null}
+            {node.confidence ? (
+              <span className={styles.treeConfidenceBadge}>{node.confidence}</span>
+            ) : null}
+            <span className={styles.treeBadge}>
+              {node.relation === 'new'
+                ? 'New branch'
+                : node.relation === 'merge'
+                  ? 'Semantic merge'
+                  : 'Conflict'}
+            </span>
+          </div>
+        </div>
+        {node.reason ? <p className={styles.treeReason}>{node.reason}</p> : null}
+        {node.note ? <p className={styles.treeNote}>{node.note}</p> : null}
+        <div className={styles.treeActionRow}>
+          <Button
+            tone="ghost"
+            size="xs"
+            iconStart="edit"
+            disabled={disabled}
+            onClick={() => {
+              setDraftTitle(node.title)
+              setIsEditingTitle(true)
+            }}
+          >
+            Rename
+          </Button>
+          <Button
+            tone="ghost"
+            size="xs"
+            disabled={disabled || node.parentId === null}
+            onClick={() => onPromoteNode(node.id)}
+          >
+            Promote
+          </Button>
+          <Button
+            tone="ghost"
+            size="xs"
+            disabled={disabled || node.parentId === null || node.order === 0}
+            onClick={() => onDemoteNode(node.id)}
+          >
+            Nest under previous
+          </Button>
+          <Button
+            tone="danger"
+            size="xs"
+            iconStart="delete"
+            disabled={disabled}
+            onClick={() => onDeleteNode(node.id)}
+          >
+            Delete
+          </Button>
+        </div>
+      </div>
+      {node.children.length > 0 ? (
+        <EditablePreviewTree
+          nodes={node.children}
+          disabled={disabled}
+          onRenameNode={onRenameNode}
+          onPromoteNode={onPromoteNode}
+          onDemoteNode={onDemoteNode}
+          onDeleteNode={onDeleteNode}
+        />
+      ) : null}
+    </li>
+  )
+}
+
+function EditablePreviewTree({
+  nodes,
+  disabled = false,
+  onRenameNode,
+  onPromoteNode,
+  onDemoteNode,
+  onDeleteNode,
+}: EditablePreviewTreeProps) {
+  if (nodes.length === 0) {
+    return <p className={styles.empty}>No structured preview is available yet.</p>
+  }
+
+  return (
+    <ul className={styles.treeList}>
+      {nodes.map((node) => (
+        <EditablePreviewTreeNode
+          key={node.id}
+          node={node}
+          disabled={disabled}
+          onRenameNode={onRenameNode}
+          onPromoteNode={onPromoteNode}
+          onDemoteNode={onDemoteNode}
+          onDeleteNode={onDeleteNode}
+        />
       ))}
     </ul>
   )
@@ -157,263 +474,6 @@ function describeSemanticStage(stage: SemanticMergeStage): string {
 
 function describePipeline(mode: TextImportJobMode | null): string {
   return mode === 'codex_import' ? 'Codex pipeline' : 'Local pipeline'
-}
-
-function describeStage(stage: TextImportStatusTimelineEntry['stage']): string {
-  switch (stage) {
-    case 'extracting_input':
-      return 'Extract input'
-    case 'analyzing_source':
-      return 'Build context'
-    case 'loading_prompt':
-      return 'Load prompt'
-    case 'starting_codex_primary':
-      return 'Start Codex'
-    case 'waiting_codex_primary':
-      return 'Primary run'
-    case 'parsing_primary_result':
-      return 'Parse primary result'
-    case 'repairing_structure':
-      return 'Prepare repair'
-    case 'starting_codex_repair':
-      return 'Start repair'
-    case 'waiting_codex_repair':
-      return 'Repair run'
-    case 'parsing_repair_result':
-      return 'Parse repair result'
-    case 'resolving_conflicts':
-      return 'Resolve conflicts'
-    case 'building_preview':
-      return 'Build preview'
-    case 'parsing_markdown':
-      return 'Parse Markdown'
-    case 'analyzing_import':
-      return 'Analyze import'
-    case 'semantic_candidate_generation':
-      return 'Generate semantic candidates'
-    case 'semantic_adjudication':
-      return 'Adjudicate semantic matches'
-    case 'semantic_merge_review':
-      return 'Finalize semantic review'
-    default:
-      return stage
-  }
-}
-
-function describeRunnerPhase(
-  observation: Pick<
-    TextImportRunnerObservationState,
-    'phase' | 'elapsedSinceSpawnMs' | 'elapsedSinceLastEventMs' | 'hadJsonEvent'
-  >,
-): string {
-  switch (observation.phase) {
-    case 'spawn_started':
-      return 'Spawn started'
-    case 'heartbeat':
-      if (observation.hadJsonEvent === false) {
-        return observation.elapsedSinceSpawnMs !== undefined
-          ? `Waiting for first event after ${formatElapsed(observation.elapsedSinceSpawnMs)}`
-          : 'Waiting for first event'
-      }
-
-      return observation.elapsedSinceLastEventMs !== undefined
-        ? `Still running after ${formatElapsed(observation.elapsedSinceSpawnMs ?? 0)} | No new events for ${formatElapsed(observation.elapsedSinceLastEventMs)}`
-        : observation.elapsedSinceSpawnMs !== undefined
-          ? `Still running after ${formatElapsed(observation.elapsedSinceSpawnMs)}`
-          : 'Still running'
-    case 'first_json_event':
-      return observation.elapsedSinceSpawnMs !== undefined
-        ? `First event after ${formatElapsed(observation.elapsedSinceSpawnMs)}`
-        : 'First event received'
-    case 'completed':
-      return observation.hadJsonEvent === false
-        ? 'Runner completed without JSON events'
-        : observation.elapsedSinceSpawnMs !== undefined
-          ? `Runner completed in ${formatElapsed(observation.elapsedSinceSpawnMs)}`
-          : 'Runner completed'
-    default:
-      return observation.phase
-  }
-}
-
-function describeRunnerStatus(
-  currentStatus: TextImportCurrentStatus | null,
-  statusTimeline: TextImportStatusTimelineEntry[],
-): string {
-  const latestObservation = getLatestRunnerObservation(currentStatus, statusTimeline)
-
-  if (!latestObservation) {
-    return 'Waiting for Codex runner observations'
-  }
-
-  const promptSummary = `${latestObservation.promptLength.toLocaleString()} chars`
-  const phaseSummary = describeRunnerPhase(latestObservation)
-  return `${phaseSummary} | Prompt ${promptSummary}`
-}
-
-function getLatestRunnerObservation(
-  currentStatus: TextImportCurrentStatus | null,
-  statusTimeline: TextImportStatusTimelineEntry[],
-):
-  | (Pick<TextImportRunnerObservationState, 'phase' | 'elapsedSinceSpawnMs' | 'elapsedSinceLastEventMs' | 'hadJsonEvent' | 'promptLength' | 'attempt' | 'requestId'> & {
-      at: number
-    })
-  | null {
-  if (currentStatus?.kind === 'runner_observation') {
-    return currentStatus
-  }
-
-  const latestObservation = statusTimeline
-    .flatMap((entry) => entry.runnerObservations)
-    .at(-1)
-
-  if (!latestObservation) {
-    return null
-  }
-
-  return {
-    ...latestObservation,
-    at: latestObservation.observedAt,
-  }
-}
-
-function describeCodexAttempt(attempt: TextImportCodexEventState['attempt']): string {
-  return attempt === 'repair' ? 'Repair run' : 'Primary run'
-}
-
-function describeCodexFeedHeadline(
-  latestCodexEvent: TextImportCodexEventState | null,
-  latestObservation: ReturnType<typeof getLatestRunnerObservation>,
-): string {
-  if (latestCodexEvent) {
-    return latestCodexEvent.summary
-  }
-
-  if (latestObservation) {
-    return 'Codex 已开始，但暂时没有新的 CLI 事件。'
-  }
-
-  return '正在等待 Codex CLI 事件…'
-}
-
-function describeCodexFeedSilence(
-  latestCodexEvent: TextImportCodexEventState | null,
-  latestObservation: ReturnType<typeof getLatestRunnerObservation>,
-  nowMs: number,
-): string | null {
-  if (latestCodexEvent) {
-    return `No new Codex events for ${formatElapsed(Math.max(0, nowMs - latestCodexEvent.at))}`
-  }
-
-  if (latestObservation?.phase === 'heartbeat' && latestObservation.elapsedSinceLastEventMs !== undefined) {
-    return latestObservation.hadJsonEvent === false
-      ? `Waiting for first CLI event for ${formatElapsed(latestObservation.elapsedSinceLastEventMs)}`
-      : `No new Codex events for ${formatElapsed(latestObservation.elapsedSinceLastEventMs)}`
-  }
-
-  if (latestObservation?.phase === 'spawn_started') {
-    return 'Waiting for first CLI event'
-  }
-
-  return null
-}
-
-function describeTimelineDuration(
-  entry: TextImportStatusTimelineEntry,
-  nowMs: number,
-): string {
-  const endAt = entry.completedAt ?? nowMs
-  const duration = Math.max(0, endAt - entry.startedAt)
-  if (entry.completedAt !== null && duration < 1_000) {
-    return '<1s'
-  }
-  return entry.completedAt === null ? `${formatElapsed(duration)} active` : formatElapsed(duration)
-}
-
-function createCodexFeedHeadlineText(
-  latestCodexEvent: TextImportCodexEventState | null,
-  latestObservation: ReturnType<typeof getLatestRunnerObservation>,
-): string {
-  if (latestCodexEvent) {
-    return latestCodexEvent.summary
-  }
-
-  if (latestObservation) {
-    return 'Codex has started, but no new CLI events have arrived yet.'
-  }
-
-  return 'Waiting for Codex CLI events...'
-}
-
-function createExplainerFallback(
-  latestObservation: ReturnType<typeof getLatestRunnerObservation>,
-): {
-  attempt?: TextImportCodexEventState['attempt']
-  headline: string
-  reason: string
-  evidence: string[]
-} {
-  if (!latestObservation) {
-    return {
-      headline: 'Waiting for runtime explanation',
-      reason: 'Codex has not produced enough runtime signals yet.',
-      evidence: ['Waiting for the first runner observation or CLI event'],
-    }
-  }
-
-  if (latestObservation.hadJsonEvent === false) {
-    return {
-      attempt: latestObservation.attempt,
-      headline: 'Waiting for the first Codex CLI event',
-      reason:
-        'The runner has started, but no real CLI event has arrived yet, so the explanation is still based on runner state only.',
-      evidence: [
-        `Attempt ${latestObservation.attempt === 'repair' ? 'repair' : 'primary'}`,
-        `Prompt ${latestObservation.promptLength.toLocaleString()} chars`,
-      ],
-    }
-  }
-
-  return {
-    attempt: latestObservation.attempt,
-    headline: 'Waiting for the latest runtime explanation',
-    reason: 'The runner is active, but the explainer has not published a newer inference yet.',
-    evidence: [
-      `Attempt ${latestObservation.attempt === 'repair' ? 'repair' : 'primary'}`,
-      `Prompt ${latestObservation.promptLength.toLocaleString()} chars`,
-    ],
-  }
-}
-
-function describeDiagnosticCategory(
-  category: TextImportCodexDiagnosticState['category'],
-): string {
-  switch (category) {
-    case 'actionable':
-      return 'Actionable diagnostics'
-    case 'capability_gap':
-      return 'Capability gaps'
-    case 'noise':
-      return 'Noise diagnostics'
-    default:
-      return category
-  }
-}
-
-function groupCodexDiagnostics(
-  diagnostics: TextImportCodexDiagnosticState[] | undefined,
-): Record<TextImportCodexDiagnosticState['category'], TextImportCodexDiagnosticState[]> {
-  return (diagnostics ?? []).reduce(
-    (groups, diagnostic) => {
-      groups[diagnostic.category].push(diagnostic)
-      return groups
-    },
-    {
-      actionable: [] as TextImportCodexDiagnosticState[],
-      capability_gap: [] as TextImportCodexDiagnosticState[],
-      noise: [] as TextImportCodexDiagnosticState[],
-    },
-  )
 }
 
 function createPrimaryErrorSummary(error: TextImportErrorState): string {
@@ -483,7 +543,9 @@ export function TextImportDialog({
   draftSourceName,
   draftText,
   preview,
-  previewTree,
+  draftTree,
+  draftConfirmed,
+  planningSummaries,
   crossFileMergeSuggestions,
   approvedConflictIds,
   statusText,
@@ -497,12 +559,7 @@ export function TextImportDialog({
   previewFinishedAt,
   jobMode,
   jobType,
-  currentStatus,
-  latestCodexExplainer,
-  latestCodexEvent,
-  codexEventFeed,
-  codexDiagnostics,
-  statusTimeline,
+
   fileCount,
   completedFileCount,
   currentFileName,
@@ -514,16 +571,26 @@ export function TextImportDialog({
   appliedCount,
   totalOperations,
   currentApplyLabel,
+  presetOverride,
+  archetypeOverride = null,
   onClose,
   onChooseFile,
+  onPresetChange,
+  onArchetypeChange = () => {},
   onDraftSourceNameChange,
   onDraftTextChange,
   onGenerateFromText,
   onToggleConflict,
+  onConfirmDraft,
+  onRenamePreviewNode,
+  onPromotePreviewNode,
+  onDemotePreviewNode,
+  onDeletePreviewNode,
   onApply,
 }: TextImportDialogProps) {
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [showFileDetails, setShowFileDetails] = useState(false)
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
   const [currentStep, setCurrentStep] = useState<DialogStep>(() => (isApplying ? 'merge' : 'source'))
   const previousPreviewingRef = useRef(isPreviewing)
 
@@ -540,6 +607,7 @@ export function TextImportDialog({
     if (!open) {
       setCurrentStep('source')
       setShowFileDetails(false)
+      setShowAdvancedSettings(false)
       previousPreviewingRef.current = isPreviewing
     }
   }, [open, isPreviewing])
@@ -567,35 +635,20 @@ export function TextImportDialog({
     }
   }, [open, isApplying])
 
-  if (!open) {
-    return null
-  }
-
   const isFileImportSource =
     sourceType === 'file' || (sourceFiles.length > 0 && sourceFiles.every((file) => file.sourceType === 'file'))
   const showGenerateAction = !isFileImportSource
   const showSourceEditor = !isFileImportSource
-  const showPipelinePanel = Boolean(modeHint || statusText || preview?.summary || isPreviewing || isApplying || statusTimeline.length > 0)
+  const showPipelinePanel = Boolean(modeHint || statusText || preview?.summary || isPreviewing || isApplying)
   const sourceSnapshotTitle = sourceFiles.length > 1 ? `${sourceFiles.length} files selected` : `${sourceFiles.length} file selected`
   const elapsedMs =
     previewStartedAt === null
       ? 0
       : (isPreviewing ? nowMs : (previewFinishedAt ?? nowMs)) - previewStartedAt
   const displayProgress = isApplying ? applyProgress : progress
-  const runnerStatus = describeRunnerStatus(currentStatus, statusTimeline)
-  const latestRunnerObservation = getLatestRunnerObservation(currentStatus, statusTimeline)
-  const showTimeline = statusTimeline.length > 0
-  const showCodexLiveFeed = jobMode === 'codex_import'
-  const codexFeedHeadline =
-    createCodexFeedHeadlineText(latestCodexEvent, latestRunnerObservation) ||
-    describeCodexFeedHeadline(latestCodexEvent, latestRunnerObservation)
-  const codexFeedSilence = describeCodexFeedSilence(latestCodexEvent, latestRunnerObservation, nowMs)
-  const codexExplainer =
-    latestCodexExplainer ?? createExplainerFallback(latestRunnerObservation)
-  const codexFeedItems = [...codexEventFeed].reverse()
-  const groupedCodexDiagnostics = groupCodexDiagnostics(codexDiagnostics)
-  const showDiagnosticsPanel = showTimeline || codexDiagnostics.length > 0
+
   const previewReady = Boolean(preview)
+  const mergeReviewReady = Boolean(preview && draftConfirmed)
   const statusSummary = isApplying
     ? `Progress ${displayProgress}%`
     : progressIndeterminate
@@ -604,7 +657,7 @@ export function TextImportDialog({
   const errorDisplay = error ? createErrorDiagnostics(error, currentFileName) : null
   const sourceError = error?.stage === 'applying_changes' ? null : errorDisplay
   const applyError = error?.stage === 'applying_changes' ? errorDisplay : null
-  const hasStructuredPreview = previewTree.length > 0
+  const hasStructuredPreview = draftTree.length > 0
   const hasMergeReviewContent = Boolean(
     preview?.mergeSuggestions?.length ||
       crossFileMergeSuggestions.length ||
@@ -613,11 +666,58 @@ export function TextImportDialog({
   )
   const showStructuredGeneratingState = isPreviewing && !hasStructuredPreview
   const showStructuredEmptyState = !isPreviewing && !hasStructuredPreview
-  const showMergeGeneratingState = isPreviewing && !previewReady
+  const showMergeGeneratingState = isPreviewing && !mergeReviewReady
   const showMergeIdleState = !isPreviewing && !previewReady
-  const showMergeNoReviewNeededState = previewReady && !hasMergeReviewContent
+  const showMergeBlockedState = !isPreviewing && previewReady && !mergeReviewReady
+  const showMergeNoReviewNeededState = mergeReviewReady && !hasMergeReviewContent
+  const classification = preview?.classification ?? null
+  const templateSummary = preview?.templateSummary ?? null
+  const classificationConfidence = classification
+    ? formatTextImportClassificationConfidence(classification.confidence)
+    : null
+  const draftPlanningSummary = useMemo(() => {
+    if (planningSummaries.length > 0 || isFileImportSource) {
+      return null
+    }
+
+    const normalizedDraftText = draftText.replace(/\r\n?/g, '\n').trim()
+    if (!normalizedDraftText) {
+      return null
+    }
+
+    const draftSource = draftSourceName.trim() || 'Pasted text'
+    return resolveTextImportPlanningOptions({
+      sourceName: draftSource,
+      sourceType: 'paste',
+      preprocessedHints: preprocessTextToImportHints(normalizedDraftText),
+      presetOverride,
+      archetypeOverride,
+    }).summary
+  }, [
+    planningSummaries,
+    isFileImportSource,
+    draftText,
+    draftSourceName,
+    presetOverride,
+    archetypeOverride,
+  ])
+  const effectivePlanningSummaries =
+    planningSummaries.length > 0 ? planningSummaries : draftPlanningSummary ? [draftPlanningSummary] : []
+  const hasPlanningSummary = effectivePlanningSummaries.length > 0
+  const hasLowConfidencePlanning = effectivePlanningSummaries.some(
+    (summary) => !summary.isManual && summary.confidence === 'low',
+  )
+  const isBatchPlanning = effectivePlanningSummaries.length > 1
+  const primaryPlanningSummary = effectivePlanningSummaries[0] ?? null
+  const selectedPresetOption =
+    IMPORT_PRESET_OPTIONS.find((option) => option.id === presetOverride) ?? IMPORT_PRESET_OPTIONS[0]
+  const selectedArchetypeOption =
+    ARCHETYPE_OPTIONS.find((option) => option.id === archetypeOverride) ?? ARCHETYPE_OPTIONS[0]
 
   function canNavigateToStep(step: DialogStep): boolean {
+    if (step === 'merge' && !isApplying && !draftConfirmed) {
+      return false
+    }
     return step !== currentStep
   }
 
@@ -646,6 +746,7 @@ export function TextImportDialog({
     }
 
     if (currentStep === 'structured') {
+      onConfirmDraft()
       setCurrentStep('merge')
     }
   }
@@ -653,6 +754,12 @@ export function TextImportDialog({
   const showCloseAction = currentStep === 'source'
   const showBackAction = currentStep !== 'source'
   const showNextAction = currentStep === 'source' || currentStep === 'structured'
+  const nextActionLabel =
+    currentStep === 'structured' && !draftConfirmed ? 'Confirm draft' : 'Next'
+
+  if (!open) {
+    return null
+  }
 
   return (
     <div className={styles.overlay} role="presentation">
@@ -666,10 +773,10 @@ export function TextImportDialog({
           <div>
             <p className={styles.eyebrow}>Smart Import</p>
             <h2 id="text-import-title" className={styles.title}>
-              Markdown import preview
+              Smart import draft
             </h2>
           </div>
-          <IconButton label="Close import preview" icon="close" tone="primary" size="sm" onClick={onClose} />
+          <IconButton label="Close import draft" icon="close" tone="primary" size="sm" onClick={onClose} />
         </div>
 
         <nav className={styles.stepper} aria-label="Import steps">
@@ -710,6 +817,142 @@ export function TextImportDialog({
                     Choose Files
                   </Button>
                 </div>
+
+                {hasPlanningSummary ? (
+                  <section className={styles.autoSetupPanel} aria-label="Automatic import setup">
+                    <div className={styles.autoSetupHeader}>
+                      <div>
+                        <span className={styles.metaLabel}>Automatic import setup</span>
+                        <h4 className={styles.autoSetupTitle}>
+                          {isBatchPlanning ? 'Per-file automatic selection' : 'Automatic import setup'}
+                        </h4>
+                      </div>
+                      <span className={styles.autoSetupBadge}>
+                        {primaryPlanningSummary?.isManual ? 'Manual override' : 'Auto selected'}
+                      </span>
+                    </div>
+
+                    {isBatchPlanning ? (
+                      <>
+                        <div className={styles.metaGrid}>
+                          <div className={styles.metaCard}>
+                            <span className={styles.metaLabel}>Strategy</span>
+                            <strong>Per file</strong>
+                          </div>
+                          <div className={styles.metaCard}>
+                            <span className={styles.metaLabel}>Archetype</span>
+                            <strong>Per file</strong>
+                          </div>
+                          <div className={styles.metaCard}>
+                            <span className={styles.metaLabel}>Confidence</span>
+                            <strong>{hasLowConfidencePlanning ? 'Mixed confidence' : 'Stable'}</strong>
+                          </div>
+                        </div>
+                        <p className={styles.summaryText}>
+                          Each file is classified independently before building the batch preview.
+                          {hasLowConfidencePlanning
+                            ? ' Some files are low-confidence, so you can adjust the defaults in Advanced settings.'
+                            : ''}
+                        </p>
+                      </>
+                    ) : primaryPlanningSummary ? (
+                      <>
+                        <div className={styles.metaGrid}>
+                          <div className={styles.metaCard}>
+                            <span className={styles.metaLabel}>Strategy</span>
+                            <strong>{formatTextImportPresetLabel(primaryPlanningSummary.resolvedPreset)}</strong>
+                          </div>
+                          <div className={styles.metaCard}>
+                            <span className={styles.metaLabel}>Archetype</span>
+                            <strong>{formatTextImportArchetypeLabel(primaryPlanningSummary.resolvedArchetype)}</strong>
+                          </div>
+                          <div className={styles.metaCard}>
+                            <span className={styles.metaLabel}>
+                              {primaryPlanningSummary.isManual ? 'Status' : 'Confidence'}
+                            </span>
+                            <strong>
+                              {primaryPlanningSummary.isManual
+                                ? 'Manual override'
+                                : formatPlanningConfidence(primaryPlanningSummary.confidence)}
+                            </strong>
+                          </div>
+                        </div>
+                        <p className={styles.summaryText}>{primaryPlanningSummary.rationale}</p>
+                        {!primaryPlanningSummary.isManual && primaryPlanningSummary.confidence === 'low' ? (
+                          <p className={styles.autoSetupHint}>
+                            The system already chose a default setup. You can refine it in Advanced settings.
+                          </p>
+                        ) : null}
+                      </>
+                    ) : null}
+
+                    <div className={styles.advancedPanel}>
+                      <button
+                        type="button"
+                        className={styles.advancedToggle}
+                        aria-expanded={showAdvancedSettings}
+                        onClick={() => setShowAdvancedSettings((value) => !value)}
+                      >
+                        <span>Advanced settings</span>
+                        <ChevronIcon expanded={showAdvancedSettings} />
+                      </button>
+                      {showAdvancedSettings ? (
+                        <div className={styles.advancedContent}>
+                          <div className={styles.inputGrid}>
+                            <label className={styles.sourceField}>
+                              <span className={styles.metaLabel}>Import strategy</span>
+                              <select
+                                className={styles.select}
+                                value={presetOverride ?? 'auto'}
+                                onChange={(event) =>
+                                  onPresetChange(
+                                    event.target.value === 'auto'
+                                      ? null
+                                      : (event.target.value as TextImportPreset),
+                                  )
+                                }
+                                disabled={isPreviewing || isApplying}
+                              >
+                                {IMPORT_PRESET_OPTIONS.map((option) => (
+                                  <option key={option.id ?? 'auto'} value={option.id ?? 'auto'}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <span className={styles.selectDescription}>
+                                {selectedPresetOption.description}
+                              </span>
+                            </label>
+                            <label className={styles.sourceField}>
+                              <span className={styles.metaLabel}>Content archetype</span>
+                              <select
+                                className={styles.select}
+                                value={archetypeOverride ?? 'auto'}
+                                onChange={(event) =>
+                                  onArchetypeChange(
+                                    event.target.value === 'auto'
+                                      ? null
+                                      : (event.target.value as TextImportArchetype),
+                                  )
+                                }
+                                disabled={isPreviewing || isApplying}
+                              >
+                                {ARCHETYPE_OPTIONS.map((option) => (
+                                  <option key={option.id ?? 'auto'} value={option.id ?? 'auto'}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <span className={styles.selectDescription}>
+                                {selectedArchetypeOption.description}
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </section>
+                ) : null}
 
                 {showSourceEditor ? (
                   <>
@@ -753,12 +996,31 @@ export function TextImportDialog({
                     </div>
                     {showFileDetails && (
                       <div className={styles.fileListInline}>
-                        {sourceFiles.map((file) => (
-                          <div key={file.sourceName} className={styles.fileListItem}>
-                            <span className={styles.fileName}>{file.sourceName}</span>
-                            <span className={styles.fileLength}>{file.textLength} chars</span>
-                          </div>
-                        ))}
+                        {sourceFiles.map((file) => {
+                          const planningSummary = effectivePlanningSummaries.find(
+                            (summary) => summary.sourceName === file.sourceName,
+                          )
+
+                          return (
+                            <div key={file.sourceName} className={styles.fileListItem}>
+                              <div className={styles.fileListCopy}>
+                                <span className={styles.fileName}>{file.sourceName}</span>
+                                {planningSummary ? (
+                                  <span className={styles.filePlanningMeta}>
+                                    {formatTextImportPresetLabel(planningSummary.resolvedPreset)}
+                                    {' · '}
+                                    {formatTextImportArchetypeLabel(planningSummary.resolvedArchetype)}
+                                    {' · '}
+                                    {planningSummary.isManual
+                                      ? 'Manual override'
+                                      : formatPlanningConfidence(planningSummary.confidence)}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <span className={styles.fileLength}>{file.textLength} chars</span>
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -771,7 +1033,7 @@ export function TextImportDialog({
                       onClick={onGenerateFromText}
                       disabled={isPreviewing || isApplying || !draftText.trim() || jobType === 'batch'}
                     >
-                      {isPreviewing ? 'Generating preview...' : 'Generate preview'}
+                      {isPreviewing ? 'Generating draft...' : 'Generate draft'}
                     </Button>
                   </div>
                 ) : null}
@@ -782,7 +1044,7 @@ export function TextImportDialog({
                   <div className={styles.progressPanelHeader}>
                     <div>
                       <h3 className={styles.sectionTitle}>Import progress</h3>
-                      <p className={styles.empty}>Follow the current pipeline status, runner activity, and review timeline.</p>
+                      <p className={styles.empty}>Follow the current pipeline status and review progress.</p>
                     </div>
                   </div>
 
@@ -793,7 +1055,7 @@ export function TextImportDialog({
                         <p className={styles.statusHint}>{modeHint}</p>
                       </div>
                     ) : null}
-                    {statusText && !showCodexLiveFeed ? <p className={styles.status}>{statusText}</p> : null}
+                    {statusText ? <p className={styles.status}>{statusText}</p> : null}
                     {(isPreviewing || statusText) ? (
                       <>
                         <div
@@ -825,209 +1087,34 @@ export function TextImportDialog({
                             ) : null}
                           </div>
                         ) : null}
-                        {showCodexLiveFeed ? (
-                          <div className={styles.codexFeedSection}>
-                            <div className={styles.explainerCard}>
-                              <div className={styles.explainerHeader}>
-                                <div>
-                                  <p className={styles.explainerTitle}>Runtime explainer</p>
-                                  <p className={styles.explainerEyebrow}>Inferred runtime explanation</p>
-                                </div>
-                                <div className={styles.codexFeedMetaBlock}>
-                                  <span className={styles.codexFeedPill}>
-                                    {describeCodexAttempt(
-                                      codexExplainer.attempt ??
-                                        latestCodexEvent?.attempt ??
-                                        latestRunnerObservation?.attempt ??
-                                        'primary',
-                                    )}
-                                  </span>
-                                  {codexFeedSilence ? (
-                                    <span className={styles.codexFeedIdle}>{codexFeedSilence}</span>
-                                  ) : null}
-                                </div>
-                              </div>
-                              <div className={styles.explainerGrid}>
-                                <div className={styles.explainerSection}>
-                                  <span className={styles.explainerLabel}>Now</span>
-                                  <p className={styles.explainerValue}>{codexExplainer.headline}</p>
-                                </div>
-                                <div className={styles.explainerSection}>
-                                  <span className={styles.explainerLabel}>Why not done</span>
-                                  <p className={styles.explainerValue}>{codexExplainer.reason}</p>
-                                </div>
-                                <div className={styles.explainerSection}>
-                                  <span className={styles.explainerLabel}>Based on</span>
-                                  <ul className={styles.explainerEvidenceList}>
-                                    {codexExplainer.evidence.map((item) => (
-                                      <li key={item} className={styles.explainerEvidenceItem}>
-                                        {item}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              </div>
-                            </div>
-                            <div className={styles.codexFeedHeader}>
-                              <div>
-                                <p className={styles.codexFeedTitle}>Codex live feed</p>
-                                <p className={styles.codexFeedLead}>{codexFeedHeadline}</p>
-                              </div>
-                              <div className={styles.codexFeedMetaBlock}>
-                                <span className={styles.codexFeedPill}>
-                                  {describeCodexAttempt(
-                                    latestCodexEvent?.attempt ??
-                                      latestRunnerObservation?.attempt ??
-                                      'primary',
-                                  )}
-                                </span>
-                                {codexFeedSilence ? (
-                                  <span className={styles.codexFeedIdle}>{codexFeedSilence}</span>
-                                ) : null}
-                              </div>
-                            </div>
-                            {codexFeedItems.length > 0 ? (
-                              <ol className={styles.codexFeedList}>
-                                {codexFeedItems.map((event, index) => (
-                                  <li
-                                    key={`${event.attempt}_${event.at}_${event.eventType}_${index}`}
-                                    className={styles.codexFeedItem}
-                                  >
-                                    <div className={styles.codexFeedItemHeader}>
-                                      <span className={styles.codexFeedAttempt}>
-                                        {describeCodexAttempt(event.attempt)}
-                                      </span>
-                                      <span className={styles.codexFeedType}>{event.eventType}</span>
-                                    </div>
-                                    <p className={styles.codexFeedSummary}>{event.summary}</p>
-                                    <details className={styles.codexFeedRaw}>
-                                      <summary>查看原始 JSON</summary>
-                                      <pre>{event.rawJson}</pre>
-                                    </details>
-                                  </li>
-                                ))}
-                              </ol>
-                            ) : (
-                              <p className={styles.codexFeedEmpty}>
-                                真实 CLI 事件会在这里持续追加。
-                              </p>
-                            )}
-                            {showDiagnosticsPanel ? (
-                              <details className={styles.diagnosticsPanel}>
-                                <summary className={styles.diagnosticsSummary}>
-                                  Import diagnostics
-                                </summary>
-                                <div className={styles.diagnosticsBody}>
-                                  <p className={styles.statusMeta}>Runner status: {runnerStatus}</p>
-                                  {groupedCodexDiagnostics.actionable.length > 0 ? (
-                                    <div className={styles.diagnosticGroup} data-category="actionable">
-                                      <p className={styles.diagnosticGroupTitle}>
-                                        {describeDiagnosticCategory('actionable')}
-                                      </p>
-                                      <ol className={styles.diagnosticList}>
-                                        {groupedCodexDiagnostics.actionable
-                                          .slice()
-                                          .reverse()
-                                          .map((diagnostic, index) => (
-                                            <li
-                                              key={`${diagnostic.category}_${diagnostic.at}_${index}`}
-                                              className={styles.diagnosticItem}
-                                            >
-                                              <p className={styles.diagnosticMessage}>{diagnostic.message}</p>
-                                              <details className={styles.codexFeedRaw}>
-                                                <summary>View raw stderr</summary>
-                                                <pre>{diagnostic.rawLine}</pre>
-                                              </details>
-                                            </li>
-                                          ))}
-                                      </ol>
-                                    </div>
-                                  ) : null}
-                                  {groupedCodexDiagnostics.capability_gap.length > 0 ? (
-                                    <div className={styles.diagnosticGroup}>
-                                      <p className={styles.diagnosticGroupTitle}>
-                                        {describeDiagnosticCategory('capability_gap')}
-                                      </p>
-                                      <ol className={styles.diagnosticList}>
-                                        {groupedCodexDiagnostics.capability_gap
-                                          .slice()
-                                          .reverse()
-                                          .map((diagnostic, index) => (
-                                            <li
-                                              key={`${diagnostic.category}_${diagnostic.at}_${index}`}
-                                              className={styles.diagnosticItem}
-                                            >
-                                              <p className={styles.diagnosticMessage}>{diagnostic.message}</p>
-                                              <details className={styles.codexFeedRaw}>
-                                                <summary>View raw stderr</summary>
-                                                <pre>{diagnostic.rawLine}</pre>
-                                              </details>
-                                            </li>
-                                          ))}
-                                      </ol>
-                                    </div>
-                                  ) : null}
-                                  {groupedCodexDiagnostics.noise.length > 0 ? (
-                                    <details className={styles.diagnosticGroup}>
-                                      <summary className={styles.diagnosticsSummary}>
-                                        {describeDiagnosticCategory('noise')}
-                                      </summary>
-                                      <ol className={styles.diagnosticList}>
-                                        {groupedCodexDiagnostics.noise
-                                          .slice()
-                                          .reverse()
-                                          .map((diagnostic, index) => (
-                                            <li
-                                              key={`${diagnostic.category}_${diagnostic.at}_${index}`}
-                                              className={styles.diagnosticItem}
-                                            >
-                                              <p className={styles.diagnosticMessage}>{diagnostic.message}</p>
-                                              <details className={styles.codexFeedRaw}>
-                                                <summary>View raw stderr</summary>
-                                                <pre>{diagnostic.rawLine}</pre>
-                                              </details>
-                                            </li>
-                                          ))}
-                                      </ol>
-                                    </details>
-                                  ) : null}
-                                  <ol className={styles.timelineList}>
-                                    {statusTimeline.map((entry) => (
-                                      <li
-                                        key={entry.id}
-                                        className={styles.timelineItem}
-                                        data-active={entry.completedAt === null}
-                                      >
-                                        <div className={styles.timelineHeader}>
-                                          <strong>{describeStage(entry.stage)}</strong>
-                                          <span className={styles.timelineDuration}>
-                                            {describeTimelineDuration(entry, nowMs)}
-                                          </span>
-                                        </div>
-                                        <p className={styles.timelineMessage}>{entry.message}</p>
-                                        {entry.runnerObservations.length > 0 ? (
-                                          <div className={styles.timelineObservations}>
-                                            {entry.runnerObservations.map((observation, index) => (
-                                              <p
-                                                key={`${entry.id}_${observation.phase}_${index}`}
-                                                className={styles.timelineObservation}
-                                              >
-                                                {observation.attempt === 'repair' ? 'Repair' : 'Primary'}: {describeRunnerPhase(observation)}
-                                              </p>
-                                            ))}
-                                          </div>
-                                        ) : null}
-                                      </li>
-                                    ))}
-                                  </ol>
-                                </div>
-                              </details>
-                            ) : null}
-                          </div>
-                        ) : null}
+
                       </>
                     ) : null}
                     {preview?.summary ? <p className={styles.summaryText}>{preview.summary}</p> : null}
+                    {classification ? (
+                      <div className={styles.metaGrid}>
+                        <div className={styles.metaCard}>
+                          <span className={styles.metaLabel}>Detected archetype</span>
+                          <strong>{formatTextImportArchetypeLabel(classification.archetype)}</strong>
+                        </div>
+                        <div className={styles.metaCard}>
+                          <span className={styles.metaLabel}>Confidence</span>
+                          <strong>
+                            {classificationConfidence ?? 'low'} ({Math.round(classification.confidence * 100)}%)
+                          </strong>
+                        </div>
+                        {classification.secondaryArchetype ? (
+                          <div className={styles.metaCard}>
+                            <span className={styles.metaLabel}>Secondary signal</span>
+                            <strong>{formatTextImportArchetypeLabel(classification.secondaryArchetype)}</strong>
+                          </div>
+                        ) : null}
+                        <div className={styles.metaCard}>
+                          <span className={styles.metaLabel}>Why this template</span>
+                          <span>{classification.rationale}</span>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </section>
               ) : null}
@@ -1044,19 +1131,58 @@ export function TextImportDialog({
 
           {currentStep === 'structured' ? (
             <section className={`${styles.section} ${styles.pageSection}`}>
-              <h3 className={styles.sectionTitle}>Structured preview</h3>
+              <h3 className={styles.sectionTitle}>Structure draft</h3>
+              {classification ? (
+                <div className={styles.metaGrid}>
+                  <div className={styles.metaCard}>
+                    <span className={styles.metaLabel}>Template</span>
+                    <strong>{formatTextImportArchetypeLabel(classification.archetype)}</strong>
+                  </div>
+                  <div className={styles.metaCard}>
+                    <span className={styles.metaLabel}>Confidence</span>
+                    <strong>
+                      {classificationConfidence ?? 'low'} ({Math.round(classification.confidence * 100)}%)
+                    </strong>
+                  </div>
+                  {templateSummary ? (
+                    <div className={styles.metaCard}>
+                      <span className={styles.metaLabel}>Visible slots</span>
+                      <span>
+                        {templateSummary.visibleSlots.map((slot) => formatTextImportTemplateSlotLabel(slot)).join(', ') || 'None'}
+                      </span>
+                    </div>
+                  ) : null}
+                  {templateSummary ? (
+                    <div className={styles.metaCard}>
+                      <span className={styles.metaLabel}>Folded slots</span>
+                      <span>
+                        {templateSummary.foldedSlots.map((slot) => formatTextImportTemplateSlotLabel(slot)).join(', ') || 'None'}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {showStructuredGeneratingState ? (
                 <EmptyState
-                  title="Generating structured preview"
-                  description="The import structure is still being generated. Keep this step open or switch back later to review the result."
+                  title="Generating structure draft"
+                  description="The structure draft is still being generated. Keep this step open or switch back later to review the result."
                 />
               ) : showStructuredEmptyState ? (
                 <EmptyState
-                  title="No structured preview yet"
-                  description="Generate an import preview from Step 1 to see the imported hierarchy here."
+                  title="No structure draft yet"
+                  description="Generate a draft from Step 1 to review the organized hierarchy here."
                 />
+              ) : isPreviewing || isApplying ? (
+                <PreviewTree nodes={draftTree} />
               ) : (
-                <PreviewTree nodes={previewTree} />
+                <EditablePreviewTree
+                  nodes={draftTree}
+                  disabled={isPreviewing || isApplying}
+                  onRenameNode={onRenamePreviewNode}
+                  onPromoteNode={onPromotePreviewNode}
+                  onDemoteNode={onDemotePreviewNode}
+                  onDeleteNode={onDeletePreviewNode}
+                />
               )}
             </section>
           ) : null}
@@ -1095,12 +1221,17 @@ export function TextImportDialog({
                 {showMergeGeneratingState ? (
                   <EmptyState
                     title="Generating merge review"
-                    description="Merge suggestions and conflicts will appear here once the preview finishes generating."
+                    description="Merge suggestions and conflicts will appear here once the draft is confirmed."
                   />
                 ) : showMergeIdleState ? (
                   <EmptyState
                     title="No merge review content yet"
-                    description="Generate an import preview from Step 1 to review merge suggestions and conflicts here."
+                    description="Generate a draft from Step 1 to review merge suggestions and conflicts here."
+                  />
+                ) : showMergeBlockedState ? (
+                  <EmptyState
+                    title="Confirm the draft first"
+                    description="Review and confirm the structure draft in Step 2 before opening merge review."
                   />
                 ) : showMergeNoReviewNeededState ? (
                   <EmptyState
@@ -1189,8 +1320,17 @@ export function TextImportDialog({
           </div>
           <div className={styles.footerGroup}>
             {showNextAction ? (
-              <Button tone="primary" iconEnd="chevronRight" onClick={handleNext}>
-                Next
+              <Button
+                tone="primary"
+                iconEnd="chevronRight"
+                onClick={handleNext}
+                disabled={
+                  isApplying ||
+                  (currentStep === 'structured' && !hasStructuredPreview) ||
+                  (currentStep === 'source' && isPreviewing)
+                }
+              >
+                {nextActionLabel}
               </Button>
             ) : null}
             {currentStep === 'merge' ? (
@@ -1198,7 +1338,7 @@ export function TextImportDialog({
                 tone="primary"
                 iconStart="document"
                 onClick={onApply}
-                disabled={!preview || isPreviewing || isApplying}
+                disabled={!preview || !draftConfirmed || isPreviewing || isApplying}
               >
                 {isApplying ? 'Applying...' : 'Apply to canvas'}
               </Button>

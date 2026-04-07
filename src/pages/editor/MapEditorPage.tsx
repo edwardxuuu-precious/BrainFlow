@@ -1,6 +1,7 @@
 ﻿import {
   ReactFlow,
   SelectionMode,
+  type NodeChange,
   type NodeMouseHandler,
   type ReactFlowInstance,
   useNodesState,
@@ -8,15 +9,17 @@
 import {
   type ChangeEvent,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopicNode } from '../../components/topic-node/TopicNode'
-import { Icon, IconButton, ToolbarGroup } from '../../components/ui'
+import { IconButton, ToolbarGroup } from '../../components/ui'
 import { SaveIndicator } from '../../components/SaveIndicator'
 import { AiSidebar } from '../../features/ai/components/AiSidebar'
 import { useAiStore } from '../../features/ai/ai-store'
@@ -44,6 +47,12 @@ import { layoutMindMap, type MindMapFlowNode } from '../../features/editor/layou
 import { getTopicAncestorIds, getTopicLayout } from '../../features/editor/tree-operations'
 import { useEditorShortcuts } from '../../features/editor/use-editor-shortcuts'
 import styles from './MapEditorPage.module.css'
+import revertIcon from '/revert.png'
+import contentIcon from '/content.png'
+import nodeIcon from '/node.png'
+import symbolIcon from '/symbol.png'
+import designIcon from '/design.png'
+import agentsIcon from '/agents.png'
 
 interface MapEditorPageProps {
   service?: DocumentService
@@ -52,8 +61,12 @@ interface MapEditorPageProps {
 const SAVE_DEBOUNCE_MS = 320
 const DESKTOP_BREAKPOINT = 1200
 const TABLET_BREAKPOINT = 780
+const HOVER_SUBMENU_MEDIA_QUERY = '(hover: hover) and (pointer: fine)'
 const RIGHT_SIDEBAR_ID = 'editor-right-sidebar'
 const nodeTypes = { topic: TopicNode }
+const reactFlowProOptions = { hideAttribution: true }
+const reactFlowMultiSelectionKeyCode = ['Meta', 'Control', 'Shift']
+const reactFlowMiddleMousePanButtons = [1]
 
 interface DragSnapshot {
   topicId: string
@@ -64,6 +77,16 @@ interface DragSnapshot {
 interface RenameDraft {
   topicId: string | null
   value: string
+}
+
+interface BoxSelectionSession {
+  isBoxSelecting: boolean
+  selectionStartedAt: number
+  baseSelectedTopicIds: string[]
+  baseActiveTopicId: string | null
+  isAdditive: boolean
+  pendingSelectedTopicIds: string[]
+  pendingActiveTopicId: string | null
 }
 
 type ViewportMode = 'desktop' | 'tablet' | 'mobile'
@@ -77,6 +100,7 @@ function areFlowNodesEquivalent(
 ): boolean {
   return (
     currentNode.id === nextNode.id &&
+    currentNode.selected === nextNode.selected &&
     currentNode.position.x === nextNode.position.x &&
     currentNode.position.y === nextNode.position.y &&
     currentNode.draggable === nextNode.draggable &&
@@ -114,6 +138,34 @@ function mergeTopicSelection(currentTopicIds: string[], nextTopicIds: string[]):
   return Array.from(new Set([...currentTopicIds, ...nextTopicIds]))
 }
 
+function haveSameTopicIdSet(currentTopicIds: string[], nextTopicIds: string[]): boolean {
+  if (currentTopicIds.length !== nextTopicIds.length) {
+    return false
+  }
+
+  const nextTopicIdSet = new Set(nextTopicIds)
+  return currentTopicIds.every((topicId) => nextTopicIdSet.has(topicId))
+}
+
+function resolveCanvasSelection(
+  baseSelectedTopicIds: string[],
+  baseActiveTopicId: string | null,
+  selectedFromCanvas: string[],
+  isAdditiveSelection: boolean,
+) {
+  const nextSelectedTopicIds = isAdditiveSelection
+    ? mergeTopicSelection(baseSelectedTopicIds, selectedFromCanvas)
+    : selectedFromCanvas
+  const nextActiveTopicId = nextSelectedTopicIds.includes(baseActiveTopicId ?? '')
+    ? baseActiveTopicId
+    : selectedFromCanvas.at(-1) ?? null
+
+  return {
+    nextSelectedTopicIds,
+    nextActiveTopicId,
+  }
+}
+
 function isSameViewport(
   current: MindMapDocument['viewport'] | null,
   next: MindMapDocument['viewport'],
@@ -139,6 +191,22 @@ function getViewportMode(width: number): ViewportMode {
   }
 
   return 'mobile'
+}
+
+function canUseHoverSubmenu(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia(HOVER_SUBMENU_MEDIA_QUERY).matches
+  )
+}
+
+function buildLayoutCacheKey(document: MindMapDocument): string {
+  return JSON.stringify({
+    rootTopicId: document.rootTopicId,
+    topics: document.topics,
+    theme: document.theme,
+  })
 }
 
 function collectSubtreeIds(document: MindMapDocument, topicId: string) {
@@ -170,6 +238,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const additiveSelectionUntilRef = useRef(0)
   const dragSnapshotRef = useRef<DragSnapshot | null>(null)
   const nodesRef = useRef<MindMapFlowNode[]>([])
+  const boxSelectionSessionRef = useRef<BoxSelectionSession | null>(null)
+  const layoutCacheRef = useRef<{ key: string; layout: ReturnType<typeof layoutMindMap> } | null>(null)
   const documentTitleInputRef = useRef<HTMLInputElement>(null)
   const skipDocumentTitleBlurRef = useRef(false)
   const [isSpacePressed, setIsSpacePressed] = useState(false)
@@ -184,6 +254,34 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const [mainMenuOpen, setMainMenuOpen] = useState(false)
   const [exportSubmenuOpen, setExportSubmenuOpen] = useState(false)
   const mainMenuRef = useRef<HTMLDivElement>(null)
+  const mainMenuDropdownRef = useRef<HTMLDivElement>(null)
+  const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(null)
+  const [supportsHoverSubmenu, setSupportsHoverSubmenu] = useState(() => canUseHoverSubmenu())
+
+  useEffect(() => {
+    setPortalContainer(window.document.body)
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return
+    }
+
+    const mediaQuery = window.matchMedia(HOVER_SUBMENU_MEDIA_QUERY)
+    const syncSupportsHoverSubmenu = () => {
+      setSupportsHoverSubmenu(mediaQuery.matches)
+    }
+
+    syncSupportsHoverSubmenu()
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', syncSupportsHoverSubmenu)
+      return () => mediaQuery.removeEventListener('change', syncSupportsHoverSubmenu)
+    }
+
+    mediaQuery.addListener(syncSupportsHoverSubmenu)
+    return () => mediaQuery.removeListener(syncSupportsHoverSubmenu)
+  }, [])
 
   const [useFullDocument, setUseFullDocument] = useState(true)
   const [aiContextTopicIds, setAiContextTopicIds] = useState<string[]>([])
@@ -273,9 +371,21 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const textImportPreviewText = useTextImportStore((state) => state.previewText)
   const textImportSetDraftSourceName = useTextImportStore((state) => state.setDraftSourceName)
   const textImportSetDraftText = useTextImportStore((state) => state.setDraftText)
+  const textImportPlanningSummaries = useTextImportStore((state) => state.planningSummaries)
+  const textImportPresetOverride = useTextImportStore((state) => state.presetOverride)
+  const textImportSetPresetOverride = useTextImportStore((state) => state.setPresetOverride)
+  const textImportArchetypeOverride = useTextImportStore((state) => state.archetypeOverride)
+  const textImportRerunPreviewWithPreset = useTextImportStore((state) => state.rerunPreviewWithPreset)
+  const textImportSetArchetypeOverride = useTextImportStore((state) => state.setArchetypeOverride)
+  const textImportRerunPreviewWithArchetype = useTextImportStore((state) => state.rerunPreviewWithArchetype)
   const textImportToggleConflictApproval = useTextImportStore(
     (state) => state.toggleConflictApproval,
   )
+  const textImportConfirmDraft = useTextImportStore((state) => state.confirmDraft)
+  const textImportRenamePreviewNode = useTextImportStore((state) => state.renamePreviewNode)
+  const textImportPromotePreviewNode = useTextImportStore((state) => state.promotePreviewNode)
+  const textImportDemotePreviewNode = useTextImportStore((state) => state.demotePreviewNode)
+  const textImportDeletePreviewNode = useTextImportStore((state) => state.deletePreviewNode)
   const textImportApplyPreview = useTextImportStore((state) => state.applyPreview)
   const textImportIsOpen = useTextImportStore((state) => state.isOpen)
   const textImportSourceName = useTextImportStore((state) => state.sourceName)
@@ -286,7 +396,9 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const textImportDraftText = useTextImportStore((state) => state.draftText)
   const textImportPreprocessedHints = useTextImportStore((state) => state.preprocessedHints)
   const textImportPreview = useTextImportStore((state) => state.preview)
+  const textImportDraftTree = useTextImportStore((state) => state.draftTree)
   const textImportPreviewTree = useTextImportStore((state) => state.previewTree)
+  const textImportDraftConfirmed = useTextImportStore((state) => state.draftConfirmed)
   const textImportCrossFileMergeSuggestions = useTextImportStore(
     (state) => state.crossFileMergeSuggestions,
   )
@@ -298,12 +410,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const textImportProgressIndeterminate = useTextImportStore((state) => state.progressIndeterminate)
   const textImportActiveJobMode = useTextImportStore((state) => state.activeJobMode)
   const textImportActiveJobType = useTextImportStore((state) => state.activeJobType)
-  const textImportCurrentStatus = useTextImportStore((state) => state.currentStatus)
-  const textImportLatestCodexExplainer = useTextImportStore((state) => state.latestCodexExplainer)
-  const textImportLatestCodexEvent = useTextImportStore((state) => state.latestCodexEvent)
-  const textImportCodexEventFeed = useTextImportStore((state) => state.codexEventFeed)
-  const textImportCodexDiagnostics = useTextImportStore((state) => state.codexDiagnostics)
-  const textImportStatusTimeline = useTextImportStore((state) => state.statusTimeline)
   const textImportFileCount = useTextImportStore((state) => state.fileCount)
   const textImportCompletedFileCount = useTextImportStore(
     (state) => state.completedFileCount,
@@ -334,7 +440,33 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
 
   useEditorShortcuts()
 
-  const layout = useMemo(() => (document ? layoutMindMap(document) : null), [document])
+  const { layout, layoutError } = useMemo(() => {
+    if (!document) {
+      return { layout: null, layoutError: null as Error | null }
+    }
+
+    try {
+      const layoutCacheKey = buildLayoutCacheKey(document)
+      if (layoutCacheRef.current?.key === layoutCacheKey) {
+        return { layout: layoutCacheRef.current.layout, layoutError: null as Error | null }
+      }
+
+      const nextLayout = layoutMindMap(document)
+      layoutCacheRef.current = {
+        key: layoutCacheKey,
+        layout: nextLayout,
+      }
+      return { layout: nextLayout, layoutError: null as Error | null }
+    } catch (error) {
+      layoutCacheRef.current = null
+      const resolvedError = error instanceof Error ? error : new Error('Unknown layout error')
+      console.error('Failed to render mind map layout.', {
+        documentId: document.id,
+        error: resolvedError,
+      })
+      return { layout: null, layoutError: resolvedError }
+    }
+  }, [document])
   const selectedTopic = activeTopicId && document ? document.topics[activeTopicId] ?? null : null
   const selectedTopics = useMemo(
     () =>
@@ -366,21 +498,45 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const isDesktop = viewportMode === 'desktop'
   const isTablet = viewportMode === 'tablet'
   const isMobile = viewportMode === 'mobile'
+  const useHoverExportSubmenu = isDesktop && supportsHoverSubmenu
   const isRightDrawerOpen = isTablet && rightSidebarOpen
   const isAnyDrawerOpen = isRightDrawerOpen
   const isInspectorEditing =
     editingSurface === 'inspector' && editingTopicId === activeTopicId && !!activeTopicId
   const draftTitle =
     renameDraft.topicId === selectedTopic?.id ? renameDraft.value : (selectedTopic?.title ?? '')
-  const aiSelectedTopics = useMemo(
+  const aiCanvasSelectedTopics = useMemo(
     () =>
-      aiContextTopicIds.map((topicId) => ({
-        topicId,
-        title: document?.topics[topicId]?.title ?? '已删除节点',
-        isActive: topicId === activeTopicId,
-      })),
+      selectedTopicIds
+        .filter((topicId) => Boolean(document?.topics[topicId]))
+        .map((topicId) => ({
+          topicId,
+          title: document?.topics[topicId]?.title ?? '已删除节点',
+          isActive: topicId === activeTopicId,
+        })),
+    [activeTopicId, document, selectedTopicIds],
+  )
+  const aiManualSelectedTopics = useMemo(
+    () =>
+      aiContextTopicIds
+        .filter((topicId) => Boolean(document?.topics[topicId]))
+        .map((topicId) => ({
+          topicId,
+          title: document?.topics[topicId]?.title ?? '已删除节点',
+          isActive: topicId === activeTopicId,
+        })),
     [activeTopicId, document, aiContextTopicIds],
   )
+  const aiEffectiveTopics = useMemo(() => {
+    const seen = new Set<string>()
+    return [...aiCanvasSelectedTopics, ...aiManualSelectedTopics].filter((topic) => {
+      if (seen.has(topic.topicId)) {
+        return false
+      }
+      seen.add(topic.topicId)
+      return true
+    })
+  }, [aiCanvasSelectedTopics, aiManualSelectedTopics])
   const aiAllTopics = useMemo(
     () =>
       document
@@ -404,6 +560,59 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const handleAddContextTopic = useCallback((topicId: string) => {
     setAiContextTopicIds((prev) => [...new Set([...prev, topicId])])
   }, [])
+  const closeMainMenu = useCallback(() => {
+    setExportSubmenuOpen(false)
+    setMainMenuOpen(false)
+  }, [])
+  const handleMainMenuToggle = useCallback(() => {
+    setExportSubmenuOpen(false)
+    setMainMenuOpen((previous) => !previous)
+  }, [])
+  const handleExportMenuClick = useCallback(() => {
+    if (useHoverExportSubmenu) {
+      setExportSubmenuOpen(true)
+      return
+    }
+
+    setExportSubmenuOpen((previous) => !previous)
+  }, [useHoverExportSubmenu])
+  const handleExportMenuPointerEnter = useCallback(() => {
+    if (!useHoverExportSubmenu) {
+      return
+    }
+
+    setExportSubmenuOpen(true)
+  }, [useHoverExportSubmenu])
+  const handleExportMenuPointerLeave = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!useHoverExportSubmenu) {
+        return
+      }
+
+      const nextTarget = event.relatedTarget
+      if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+        return
+      }
+
+      setExportSubmenuOpen(false)
+    },
+    [useHoverExportSubmenu],
+  )
+  const handleExportMenuBlur = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+    const nextTarget = event.relatedTarget
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return
+    }
+
+    setExportSubmenuOpen(false)
+  }, [])
+  const handleExportMenuFocus = useCallback(() => {
+    if (!useHoverExportSubmenu) {
+      return
+    }
+
+    setExportSubmenuOpen(true)
+  }, [useHoverExportSubmenu])
   const handleRemoveContextTopic = useCallback((topicId: string) => {
     setAiContextTopicIds((prev) => prev.filter((id) => id !== topicId))
   }, [])
@@ -412,6 +621,9 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   }, [])
   const handleStartCanvasPick = useCallback(() => {
     setIsPickingCanvasNode(true)
+  }, [])
+  const handleStopCanvasPick = useCallback(() => {
+    setIsPickingCanvasNode(false)
   }, [])
 
   // Resize handlers for right sidebar
@@ -540,15 +752,30 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   // Close main menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (mainMenuRef.current && !mainMenuRef.current.contains(event.target as Node)) {
-        setMainMenuOpen(false)
-        setExportSubmenuOpen(false)
+      const eventPath = typeof event.composedPath === 'function' ? event.composedPath() : null
+      const clickedInsideTrigger =
+        !!mainMenuRef.current &&
+        (eventPath ? eventPath.includes(mainMenuRef.current) : mainMenuRef.current.contains(event.target as Node))
+      const clickedInsideDropdown =
+        !!mainMenuDropdownRef.current &&
+        (eventPath
+          ? eventPath.includes(mainMenuDropdownRef.current)
+          : mainMenuDropdownRef.current.contains(event.target as Node))
+
+      if (!clickedInsideTrigger && !clickedInsideDropdown) {
+        closeMainMenu()
       }
     }
 
     if (mainMenuOpen) {
       window.document.addEventListener('mousedown', handleClickOutside)
       return () => window.document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [closeMainMenu, mainMenuOpen])
+
+  useEffect(() => {
+    if (!mainMenuOpen) {
+      setExportSubmenuOpen(false)
     }
   }, [mainMenuOpen])
 
@@ -571,9 +798,15 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     }
 
     setNodes((currentNodes) => {
+      const currentNodeLookup = new Map(currentNodes.map((node) => [node.id, node]))
+      const selectedSet = new Set(selectedTopicIds)
+      const isBoxSelecting = boxSelectionSessionRef.current?.isBoxSelecting ?? false
       const nextNodes = layout.renderNodes.map((node) => ({
         ...node,
         draggable: !(editingSurface === 'canvas' && node.id === editingTopicId),
+        selected: isBoxSelecting
+          ? currentNodeLookup.get(node.id)?.selected ?? false
+          : selectedSet.has(node.id),
       }))
 
       if (
@@ -587,7 +820,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
 
       return nextNodes
     })
-  }, [editingSurface, editingTopicId, layout, setNodes])
+  }, [editingSurface, editingTopicId, layout, selectedTopicIds, setNodes])
 
   useEffect(() => {
     nodesRef.current = nodes
@@ -645,6 +878,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     const handleBlur = () => {
       additiveSelectionRef.current = false
       additiveSelectionUntilRef.current = 0
+      boxSelectionSessionRef.current = null
       resetSpaceMode()
     }
 
@@ -677,6 +911,261 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isAnyDrawerOpen, isRightDrawerOpen, isTablet, setSidebarOpen])
+
+  const layoutRenderNodes = layout?.renderNodes ?? []
+
+  const handleNodeClick = useCallback<NodeMouseHandler<MindMapFlowNode>>((event, node) => {
+    // If in canvas picking mode for AI context, add the node to context
+    if (isPickingCanvasNode) {
+      handleAddContextTopic(node.id)
+      // Don't exit picking mode if holding Ctrl/Shift, allow multi-select
+      if (!hasMultiSelectModifier(event)) {
+        setIsPickingCanvasNode(false)
+      }
+      return
+    }
+
+    if (hasMultiSelectModifier(event)) {
+      toggleTopicSelection(node.id)
+      return
+    }
+
+    setSelection([node.id], node.id)
+  }, [handleAddContextTopic, isPickingCanvasNode, setSelection, toggleTopicSelection])
+
+  const handleReactFlowInit = useCallback((instance: ReactFlowInstance<MindMapFlowNode>) => {
+    reactFlowRef.current = instance
+    setReactFlowInstance(instance)
+  }, [])
+
+  const handleCanvasNodesChange = useCallback(
+    (changes: NodeChange<MindMapFlowNode>[]) => {
+      const filteredChanges = changes.filter((change) => change.type !== 'remove')
+      if (filteredChanges.length === 0) {
+        return
+      }
+
+      onNodesChange(filteredChanges)
+    },
+    [onNodesChange],
+  )
+
+  const handleCanvasSelectionStart = useCallback((event: ReactMouseEvent) => {
+    const snapshot = getEditorSnapshot()
+    const isAdditiveSelection =
+      hasMultiSelectModifier(event) ||
+      additiveSelectionRef.current ||
+      Date.now() < additiveSelectionUntilRef.current
+    const initialSelection = isAdditiveSelection ? snapshot.selectedTopicIds : []
+    const initialActiveTopicId =
+      isAdditiveSelection && initialSelection.includes(snapshot.activeTopicId ?? '')
+        ? snapshot.activeTopicId
+        : null
+
+    boxSelectionSessionRef.current = {
+      isBoxSelecting: true,
+      selectionStartedAt: Date.now(),
+      baseSelectedTopicIds: snapshot.selectedTopicIds,
+      baseActiveTopicId: snapshot.activeTopicId,
+      isAdditive: isAdditiveSelection,
+      pendingSelectedTopicIds: initialSelection,
+      pendingActiveTopicId: initialActiveTopicId,
+    }
+  }, [])
+
+  const handleCanvasSelectionChange = useCallback(
+    ({ nodes: selectedNodes }: { nodes: Array<{ id: string }> }) => {
+      const selectedFromCanvas = selectedNodes.map((node) => node.id)
+      const selectionSession = boxSelectionSessionRef.current
+
+      if (selectionSession?.isBoxSelecting) {
+        const { nextSelectedTopicIds, nextActiveTopicId } = resolveCanvasSelection(
+          selectionSession.baseSelectedTopicIds,
+          selectionSession.baseActiveTopicId,
+          selectedFromCanvas,
+          selectionSession.isAdditive,
+        )
+
+        boxSelectionSessionRef.current = {
+          ...selectionSession,
+          pendingSelectedTopicIds: nextSelectedTopicIds,
+          pendingActiveTopicId: nextActiveTopicId,
+        }
+        return
+      }
+
+      if (selectedFromCanvas.length === 0) {
+        return
+      }
+
+      const snapshot = getEditorSnapshot()
+      const isAdditiveSelection =
+        additiveSelectionRef.current || Date.now() < additiveSelectionUntilRef.current
+      const { nextSelectedTopicIds, nextActiveTopicId } = resolveCanvasSelection(
+        snapshot.selectedTopicIds,
+        snapshot.activeTopicId,
+        selectedFromCanvas,
+        isAdditiveSelection,
+      )
+      const hasSameSelection = haveSameTopicIdSet(
+        snapshot.selectedTopicIds,
+        nextSelectedTopicIds,
+      )
+
+      if (hasSameSelection && snapshot.activeTopicId === nextActiveTopicId) {
+        return
+      }
+
+      setSelection(nextSelectedTopicIds, nextActiveTopicId)
+    },
+    [setSelection],
+  )
+
+  const handleCanvasSelectionEnd = useCallback(() => {
+    const selectionSession = boxSelectionSessionRef.current
+    boxSelectionSessionRef.current = null
+
+    if (!selectionSession?.isBoxSelecting) {
+      return
+    }
+
+    const snapshot = getEditorSnapshot()
+    const hasSameSelection = haveSameTopicIdSet(
+      snapshot.selectedTopicIds,
+      selectionSession.pendingSelectedTopicIds,
+    )
+
+    if (
+      selectionSession.pendingSelectedTopicIds.length === 0 &&
+      !selectionSession.isAdditive
+    ) {
+      if (snapshot.selectedTopicIds.length > 0 || snapshot.activeTopicId !== null) {
+        clearSelection()
+      }
+      return
+    }
+
+    if (hasSameSelection && snapshot.activeTopicId === selectionSession.pendingActiveTopicId) {
+      return
+    }
+
+    setSelection(
+      selectionSession.pendingSelectedTopicIds,
+      selectionSession.pendingActiveTopicId,
+    )
+  }, [clearSelection, setSelection])
+
+  const handleCanvasPaneClick = useCallback(() => {
+    const snapshot = getEditorSnapshot()
+    const isAdditiveSelection =
+      additiveSelectionRef.current || Date.now() < additiveSelectionUntilRef.current
+
+    if (!isAdditiveSelection && snapshot.selectedTopicIds.length > 0) {
+      clearSelection()
+    }
+  }, [clearSelection])
+
+  const handleCanvasNodeDragStart = useCallback(
+    (_: React.MouseEvent, node: MindMapFlowNode) => {
+      dragSnapshotRef.current = {
+        topicId: node.id,
+        positions: new Map(layoutRenderNodes.map((item) => [item.id, { ...item.position }])),
+        movingIds: collectSubtreeIds(document!, node.id),
+      }
+      setSelection([node.id], node.id)
+    },
+    [document, layoutRenderNodes, setSelection],
+  )
+
+  const handleCanvasNodeDrag = useCallback(
+    (_: React.MouseEvent, node: MindMapFlowNode) => {
+      const snapshot = dragSnapshotRef.current
+      if (!snapshot || snapshot.topicId !== node.id) {
+        return
+      }
+
+      const origin = snapshot.positions.get(node.id)
+      if (!origin) {
+        return
+      }
+
+      const deltaX = node.position.x - origin.x
+      const deltaY = node.position.y - origin.y
+
+      setNodes((currentNodes) =>
+        currentNodes.map((currentNode) => {
+          const basePosition = snapshot.positions.get(currentNode.id) ?? currentNode.position
+          const isMovingNode = snapshot.movingIds.has(currentNode.id)
+
+          return {
+            ...currentNode,
+            position: isMovingNode
+              ? {
+                  x: basePosition.x + deltaX,
+                  y: basePosition.y + deltaY,
+                }
+              : basePosition,
+          }
+        }),
+      )
+    },
+    [setNodes],
+  )
+
+  const handleCanvasNodeDragStop = useCallback(
+    (_: React.MouseEvent, node: MindMapFlowNode) => {
+      const snapshot = dragSnapshotRef.current
+      dragSnapshotRef.current = null
+
+      if (!snapshot || snapshot.topicId !== node.id) {
+        return
+      }
+
+      const origin = snapshot.positions.get(node.id)
+      if (!origin) {
+        return
+      }
+
+      const currentNode =
+        nodesRef.current.find((currentItem) => currentItem.id === node.id) ?? node
+      const deltaX = Math.round(currentNode.position.x - origin.x)
+      const deltaY = Math.round(currentNode.position.y - origin.y)
+      const currentOffset = getTopicLayout(document!.topics[node.id])
+
+      setTopicOffset(node.id, currentOffset.offsetX + deltaX, currentOffset.offsetY + deltaY)
+    },
+    [document, setTopicOffset],
+  )
+
+  const handleCanvasMoveEnd = useCallback(
+    (_: MouseEvent | TouchEvent | null, viewport: MindMapDocument['viewport']) => {
+      if (isSameViewport(lastViewportRef.current, viewport)) {
+        return
+      }
+
+      lastViewportRef.current = viewport
+      setViewport(viewport)
+    },
+    [setViewport],
+  )
+
+  if (layoutError) {
+    return (
+      <main className={styles.page}>
+        <div className={styles.errorState}>
+          <h1 className={styles.errorTitle}>脑图暂时无法打开</h1>
+          <p className={styles.errorDescription}>
+            当前文档数据存在异常，页面已阻止白屏。请先返回首页，再重新打开或复制这份文档。
+          </p>
+          <div className={styles.errorActions}>
+            <button type="button" className={styles.errorButton} onClick={() => navigate('/', { replace: true })}>
+              返回首页
+            </button>
+          </div>
+        </div>
+      </main>
+    )
+  }
 
   if (!document || !layout) {
     return (
@@ -745,6 +1234,44 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
       activeTopicId,
       selectedTopicIds,
     })
+  }
+
+  const shouldRerunTextImportSettings = Boolean(
+    textImportSourceFiles.length > 0 || textImportPreview || textImportIsPreviewing,
+  )
+
+  const handleChangeTextImportPreset = async (
+    preset: Parameters<typeof textImportRerunPreviewWithPreset>[2],
+  ) => {
+    if (!document) {
+      return
+    }
+
+    if (!shouldRerunTextImportSettings) {
+      textImportSetPresetOverride(preset)
+      return
+    }
+
+    await textImportRerunPreviewWithPreset(document, {
+      activeTopicId,
+      selectedTopicIds,
+    }, preset)
+  }
+
+  const handleChangeTextImportArchetype = async (archetype: Parameters<typeof textImportRerunPreviewWithArchetype>[2]) => {
+    if (!document) {
+      return
+    }
+
+    if (!shouldRerunTextImportSettings) {
+      textImportSetArchetypeOverride(archetype)
+      return
+    }
+
+    await textImportRerunPreviewWithArchetype(document, {
+      activeTopicId,
+      selectedTopicIds,
+    }, archetype)
   }
 
   const handleApplyTextImport = async () => {
@@ -823,6 +1350,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
       {
         activeTopicId,
         selectedTopicIds,
+        useFullDocument,
+        manualContextTopicIds: aiContextTopicIds,
       },
       nextDraft,
     )
@@ -853,25 +1382,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     toggleTopicSticker(selectedTopicIds, sticker)
   }
 
-  const handleNodeClick: NodeMouseHandler<MindMapFlowNode> = (event, node) => {
-    // If in canvas picking mode for AI context, add the node to context
-    if (isPickingCanvasNode) {
-      handleAddContextTopic(node.id)
-      // Don't exit picking mode if holding Ctrl/Shift, allow multi-select
-      if (!hasMultiSelectModifier(event)) {
-        setIsPickingCanvasNode(false)
-      }
-      return
-    }
-
-    if (hasMultiSelectModifier(event)) {
-      toggleTopicSelection(node.id)
-      return
-    }
-
-    setSelection([node.id], node.id)
-  }
-
   const renderRightSidebar = (
     mode: 'docked' | 'drawer',
     className: string,
@@ -894,13 +1404,16 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         id={RIGHT_SIDEBAR_ID}
         className={className}
         mode={mode}
-        selectedTopics={aiSelectedTopics}
+        effectiveTopics={aiEffectiveTopics}
+        manualTopics={aiManualSelectedTopics}
+        canvasTopics={aiCanvasSelectedTopics}
         allTopics={aiAllTopics}
         useFullDocument={useFullDocument}
         onToggleFullDocument={handleToggleFullDocument}
         onAddContextTopic={handleAddContextTopic}
         onRemoveContextTopic={handleRemoveContextTopic}
         onCanvasPick={handleStartCanvasPick}
+        onCancelCanvasPick={handleStopCanvasPick}
         sessionList={aiSessionList}
         activeSessionId={aiActiveSessionId}
         archivedSessions={aiArchivedSessions}
@@ -1013,7 +1526,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             <button
               type="button"
               className={styles.hamburgerButton}
-              onClick={() => setMainMenuOpen(!mainMenuOpen)}
+              onClick={handleMainMenuToggle}
               aria-expanded={mainMenuOpen}
               aria-label="打开菜单"
             >
@@ -1021,54 +1534,68 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
                 <path d="M3 5H17M3 10H17M3 15H17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
               </svg>
             </button>
-            {mainMenuOpen && (
-              <div className={styles.mainMenuDropdown}>
-                <div className={styles.menuItemWithSubmenu}>
-                  <button
-                    type="button"
-                    className={styles.menuItem}
-                    onClick={() => setExportSubmenuOpen(!exportSubmenuOpen)}
-                    aria-expanded={exportSubmenuOpen}
+            {mainMenuOpen && portalContainer && (
+              createPortal(
+                <div
+                  ref={mainMenuDropdownRef}
+                  className={styles.mainMenuDropdown}
+                  style={{ position: 'fixed', top: '48px', left: '12px', zIndex: 100000 }}
+                >
+                  <div
+                    className={styles.menuItemWithSubmenu}
+                    onPointerEnter={handleExportMenuPointerEnter}
+                    onPointerLeave={handleExportMenuPointerLeave}
+                    onFocus={handleExportMenuFocus}
+                    onBlur={handleExportMenuBlur}
                   >
-                    <span>导出</span>
-                    <svg
-                      className={`${styles.submenuArrow} ${exportSubmenuOpen ? styles.submenuArrowOpen : ''}`}
-                      width="12"
-                      height="12"
-                      viewBox="0 0 12 12"
-                      fill="none"
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      onClick={handleExportMenuClick}
+                      aria-expanded={exportSubmenuOpen}
+                      aria-haspopup="menu"
                     >
-                      <path d="M4.5 2L8 6L4.5 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  </button>
-                  {exportSubmenuOpen && (
-                    <div className={styles.submenu}>
-                      <button
-                        type="button"
-                        className={styles.submenuItem}
-                        onClick={() => {
-                          exportDocumentAsJson(document)
-                          setMainMenuOpen(false)
-                          setExportSubmenuOpen(false)
-                        }}
+                      <span>导出</span>
+                      <svg
+                        className={`${styles.submenuArrow} ${exportSubmenuOpen ? styles.submenuArrowOpen : ''}`}
+                        width="12"
+                        height="12"
+                        viewBox="0 0 12 12"
+                        fill="none"
                       >
-                        导出 JSON
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.submenuItem}
-                        onClick={() => {
-                          void handleExportPng()
-                          setMainMenuOpen(false)
-                          setExportSubmenuOpen(false)
-                        }}
-                      >
-                        导出 PNG
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
+                        <path d="M4.5 2L8 6L4.5 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </button>
+                    {exportSubmenuOpen && (
+                      <div className={styles.submenu} role="menu" aria-label="导出格式">
+                        <button
+                          type="button"
+                          className={styles.submenuItem}
+                          role="menuitem"
+                          onClick={() => {
+                            exportDocumentAsJson(document)
+                            closeMainMenu()
+                          }}
+                        >
+                          导出 JSON
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.submenuItem}
+                          role="menuitem"
+                          onClick={() => {
+                            void handleExportPng()
+                            closeMainMenu()
+                          }}
+                        >
+                          导出 PNG
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>,
+                portalContainer
+              )
             )}
           </div>
           <button type="button" className={styles.brandBlock} onClick={() => navigate('/')}>
@@ -1133,29 +1660,31 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
               multiple
               onChange={(event) => void handleTextImportFileSelected(event)}
             />
-          <IconButton
-            label="撤销"
-            icon="undo"
-            tone="secondary"
-            size="sm"
+          <button
+            type="button"
+            className={styles.iconButton}
             onClick={undo}
             disabled={history.length === 0}
-          />
-          <IconButton
-            label="重做"
-            icon="redo"
-            tone="secondary"
-            size="sm"
+            aria-label="撤销"
+          >
+            <img src={revertIcon} alt="撤销" style={{ width: 16, height: 16, display: 'block' }} />
+          </button>
+          <button
+            type="button"
+            className={styles.iconButton}
             onClick={redo}
             disabled={future.length === 0}
-          />
+            aria-label="重做"
+          >
+            <img src={revertIcon} alt="重做" style={{ width: 16, height: 16, display: 'block', transform: 'scaleX(-1)' }} />
+          </button>
           <button
             type="button"
             className={styles.topbarToolButton}
             data-active={rightSidebarOpen && rightPanelMode === 'outline'}
             onClick={() => handleTopbarModeClick('outline')}
           >
-            <Icon name="tree" size={16} strokeWidth={1.9} />
+            <img src={contentIcon} alt="目录" style={{ width: 20, height: 20, display: 'block' }} />
             <span>目录</span>
           </button>
           <button
@@ -1164,8 +1693,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             data-active={rightSidebarOpen && rightPanelMode === 'details'}
             onClick={() => handleTopbarModeClick('details')}
           >
-            <Icon name="note" size={16} strokeWidth={1.9} />
-            <span>详情</span>
+            <img src={nodeIcon} alt="节点" style={{ width: 20, height: 20, display: 'block' }} />
+            <span>节点</span>
           </button>
           <button
             type="button"
@@ -1173,7 +1702,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             data-active={rightSidebarOpen && rightPanelMode === 'markers'}
             onClick={() => handleTopbarModeClick('markers')}
           >
-            <Icon name="tag" size={16} strokeWidth={1.9} />
+            <img src={symbolIcon} alt="标记" style={{ width: 20, height: 20, display: 'block' }} />
             <span>标记</span>
           </button>
           <button
@@ -1182,7 +1711,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             data-active={rightSidebarOpen && rightPanelMode === 'format'}
             onClick={() => handleTopbarModeClick('format')}
           >
-            <Icon name="palette" size={16} strokeWidth={1.9} />
+            <img src={designIcon} alt="格式" style={{ width: 20, height: 20, display: 'block' }} />
             <span>格式</span>
           </button>
           <button
@@ -1191,7 +1720,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             data-active={rightSidebarOpen && rightPanelMode === 'ai'}
             onClick={() => handleTopbarModeClick('ai')}
           >
-            <Icon name="chat" size={16} strokeWidth={1.9} />
+            <img src={agentsIcon} alt="AI" style={{ width: 20, height: 20, display: 'block' }} />
             <span>AI</span>
           </button>
           <button
@@ -1230,122 +1759,25 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
               nodeTypes={nodeTypes}
               nodesConnectable={false}
               panActivationKeyCode="Space"
-              panOnDrag={isSpacePressed ? true : [1]}
+              panOnDrag={isSpacePressed ? true : reactFlowMiddleMousePanButtons}
               selectionOnDrag
               selectionMode={SelectionMode.Partial}
-              multiSelectionKeyCode={['Meta', 'Control', 'Shift']}
+              multiSelectionKeyCode={reactFlowMultiSelectionKeyCode}
               zoomOnScroll
               zoomOnDoubleClick={false}
               deleteKeyCode={null}
-              proOptions={{ hideAttribution: true }}
-              onInit={(instance) => {
-                reactFlowRef.current = instance
-                setReactFlowInstance(instance)
-              }}
-              onNodesChange={(changes) => {
-                // Filter out remove changes - we handle deletion via keyboard shortcuts
-                const filteredChanges = changes.filter((change) => change.type !== 'remove')
-                if (filteredChanges.length > 0) {
-                  onNodesChange(filteredChanges)
-                }
-              }}
-              onSelectionChange={({ nodes: selectedNodes }) => {
-                const selectedFromCanvas = selectedNodes.map((node) => node.id)
-                if (selectedFromCanvas.length === 0) {
-                  return
-                }
-
-                const snapshot = getEditorSnapshot()
-                const isAdditiveSelection =
-                  additiveSelectionRef.current || Date.now() < additiveSelectionUntilRef.current
-                const nextSelectedTopicIds = isAdditiveSelection
-                  ? mergeTopicSelection(snapshot.selectedTopicIds, selectedFromCanvas)
-                  : selectedFromCanvas
-                const nextActiveTopicId = nextSelectedTopicIds.includes(snapshot.activeTopicId ?? '')
-                  ? snapshot.activeTopicId
-                  : selectedFromCanvas.at(-1) ?? null
-                const hasSameSelection =
-                  snapshot.selectedTopicIds.length === nextSelectedTopicIds.length &&
-                  snapshot.selectedTopicIds.every(
-                    (topicId, index) => topicId === nextSelectedTopicIds[index],
-                  )
-
-                if (hasSameSelection && snapshot.activeTopicId === nextActiveTopicId) {
-                  return
-                }
-
-                setSelection(nextSelectedTopicIds, nextActiveTopicId)
-              }}
-              onPaneClick={() => clearSelection()}
+              proOptions={reactFlowProOptions}
+              onInit={handleReactFlowInit}
+              onNodesChange={handleCanvasNodesChange}
+              onSelectionStart={handleCanvasSelectionStart}
+              onSelectionChange={handleCanvasSelectionChange}
+              onSelectionEnd={handleCanvasSelectionEnd}
+              onPaneClick={handleCanvasPaneClick}
               onNodeClick={handleNodeClick}
-              onNodeDragStart={(_, node) => {
-                dragSnapshotRef.current = {
-                  topicId: node.id,
-                  positions: new Map(layout.renderNodes.map((item) => [item.id, { ...item.position }])),
-                  movingIds: collectSubtreeIds(document, node.id),
-                }
-                setSelection([node.id], node.id)
-              }}
-              onNodeDrag={(_, node) => {
-                const snapshot = dragSnapshotRef.current
-                if (!snapshot || snapshot.topicId !== node.id) {
-                  return
-                }
-
-                const origin = snapshot.positions.get(node.id)
-                if (!origin) {
-                  return
-                }
-
-                const deltaX = node.position.x - origin.x
-                const deltaY = node.position.y - origin.y
-
-                setNodes((currentNodes) =>
-                  currentNodes.map((currentNode) => {
-                    const basePosition = snapshot.positions.get(currentNode.id) ?? currentNode.position
-                    const isMovingNode = snapshot.movingIds.has(currentNode.id)
-
-                    return {
-                      ...currentNode,
-                      position: isMovingNode
-                        ? {
-                            x: basePosition.x + deltaX,
-                            y: basePosition.y + deltaY,
-                          }
-                        : basePosition,
-                    }
-                  }),
-                )
-              }}
-              onNodeDragStop={(_, node) => {
-                const snapshot = dragSnapshotRef.current
-                dragSnapshotRef.current = null
-
-                if (!snapshot || snapshot.topicId !== node.id) {
-                  return
-                }
-
-                const origin = snapshot.positions.get(node.id)
-                if (!origin) {
-                  return
-                }
-
-                const currentNode =
-                  nodesRef.current.find((currentItem) => currentItem.id === node.id) ?? node
-                const deltaX = Math.round(currentNode.position.x - origin.x)
-                const deltaY = Math.round(currentNode.position.y - origin.y)
-                const currentOffset = getTopicLayout(document.topics[node.id])
-
-                setTopicOffset(node.id, currentOffset.offsetX + deltaX, currentOffset.offsetY + deltaY)
-              }}
-              onMoveEnd={(_, viewport) => {
-                if (isSameViewport(lastViewportRef.current, viewport)) {
-                  return
-                }
-
-                lastViewportRef.current = viewport
-                setViewport(viewport)
-              }}
+              onNodeDragStart={handleCanvasNodeDragStart}
+              onNodeDrag={handleCanvasNodeDrag}
+              onNodeDragStop={handleCanvasNodeDragStop}
+              onMoveEnd={handleCanvasMoveEnd}
               fitView={false}
             />
             <div className={styles.canvasControls}>
@@ -1413,7 +1845,9 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
           draftText={textImportDraftText}
           preprocessedHints={textImportPreprocessedHints}
           preview={textImportPreview}
+          draftTree={textImportDraftTree}
           previewTree={textImportPreviewTree}
+          draftConfirmed={textImportDraftConfirmed}
           crossFileMergeSuggestions={textImportCrossFileMergeSuggestions}
           approvedConflictIds={textImportApprovedConflictIds}
           statusText={textImportStatusText}
@@ -1427,12 +1861,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
           previewFinishedAt={textImportPreviewFinishedAt}
           jobMode={textImportActiveJobMode}
           jobType={textImportActiveJobType}
-          currentStatus={textImportCurrentStatus}
-          latestCodexExplainer={textImportLatestCodexExplainer}
-          latestCodexEvent={textImportLatestCodexEvent}
-          codexEventFeed={textImportCodexEventFeed}
-          codexDiagnostics={textImportCodexDiagnostics}
-          statusTimeline={textImportStatusTimeline}
           fileCount={textImportFileCount}
           completedFileCount={textImportCompletedFileCount}
           currentFileName={textImportCurrentFileName}
@@ -1444,12 +1872,22 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
           appliedCount={textImportAppliedCount}
           totalOperations={textImportTotalOperations}
           currentApplyLabel={textImportCurrentApplyLabel}
+          planningSummaries={textImportPlanningSummaries}
+          presetOverride={textImportPresetOverride}
+          archetypeOverride={textImportArchetypeOverride}
           onClose={textImportClose}
           onChooseFile={() => textImportInputRef.current?.click()}
+          onPresetChange={(value) => void handleChangeTextImportPreset(value)}
+          onArchetypeChange={(value) => void handleChangeTextImportArchetype(value)}
           onDraftSourceNameChange={textImportSetDraftSourceName}
           onDraftTextChange={textImportSetDraftText}
           onGenerateFromText={() => void handleGenerateTextImportPreview()}
           onToggleConflict={textImportToggleConflictApproval}
+          onConfirmDraft={textImportConfirmDraft}
+          onRenamePreviewNode={textImportRenamePreviewNode}
+          onPromotePreviewNode={textImportPromotePreviewNode}
+          onDemotePreviewNode={textImportDemotePreviewNode}
+          onDeletePreviewNode={textImportDeletePreviewNode}
           onApply={() => void handleApplyTextImport()}
         />
     </main>

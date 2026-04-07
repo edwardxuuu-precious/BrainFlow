@@ -1,0 +1,5 @@
+# This directory is a Syncthing folder marker.
+# Do not delete.
+
+folderID: rwgb6-hpjme
+created: 2026-04-05T11:06:21+08:00

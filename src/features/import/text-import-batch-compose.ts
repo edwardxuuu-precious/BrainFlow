@@ -1,5 +1,4 @@
 import type {
-  AiCanvasTarget,
   AiImportOperation,
   TextImportMergeSuggestion,
   TextImportPreviewItem,
@@ -12,10 +11,15 @@ import {
   type LocalTextImportBatchRequest,
   type LocalTextImportSourceInput,
 } from './local-text-import-core'
+import {
+  compileTextImportPreviewNodesToOperations,
+  deriveTextImportNodePlansFromPreviewNodes,
+} from '../../../shared/text-import-semantics'
 import { deriveTextImportTitle } from './text-import-preprocess'
 import { buildTextImportPreviewTree } from './text-import-preview-tree'
 
 export interface BatchTextImportPreviewSource extends LocalTextImportSourceInput {
+  route: 'local_markdown' | 'codex_import'
   response: TextImportResponse
 }
 
@@ -29,6 +33,9 @@ function createBatchRoot(title: string): TextImportPreviewNode {
     relation: 'new',
     matchedTopicId: null,
     reason: null,
+    semanticRole: 'section',
+    confidence: 'high',
+    sourceAnchors: [],
     children: [],
   }
 }
@@ -59,6 +66,9 @@ function createFallbackFileRoot(file: Pick<LocalTextImportSourceInput, 'sourceNa
     relation: 'new',
     matchedTopicId: null,
     reason: null,
+    semanticRole: 'section',
+    confidence: 'medium',
+    sourceAnchors: [],
     children: [],
   }
 }
@@ -99,6 +109,10 @@ function flattenPreviewTree(root: TextImportPreviewNode): TextImportPreviewItem[
       relation: node.relation,
       matchedTopicId: node.matchedTopicId,
       reason: node.reason,
+      semanticRole: node.semanticRole,
+      confidence: node.confidence,
+      sourceAnchors: node.sourceAnchors?.map((anchor) => ({ ...anchor })),
+      templateSlot: node.templateSlot ?? null,
     })
     node.children.forEach(visit)
   }
@@ -119,37 +133,6 @@ function countTreeNodes(root: TextImportPreviewNode): number {
     queue.push(...current.children)
   }
   return count
-}
-
-function buildCreateChildOperations(
-  roots: TextImportPreviewNode[],
-  rootTopicId: string,
-): AiImportOperation[] {
-  const operations: AiImportOperation[] = []
-
-  const visit = (node: TextImportPreviewNode, parentRef: string) => {
-    operations.push({
-      id: `op_${node.id}`,
-      type: 'create_child',
-      parent: (
-        parentRef.startsWith('topic:') || parentRef.startsWith('ref:')
-          ? parentRef
-          : `ref:${parentRef}`
-      ) as AiCanvasTarget,
-      title: node.title,
-      note: node.note ?? undefined,
-      risk: 'low',
-      reason:
-        node.relation === 'merge'
-          ? 'Imported as a source branch. Semantic merge stays rebase-safe.'
-          : 'Safe additive import.',
-      resultRef: node.id,
-    })
-    node.children.forEach((child) => visit(child, node.id))
-  }
-
-  roots.forEach((root) => visit(root, `topic:${rootTopicId}`))
-  return operations
 }
 
 function remapMergeSuggestions(
@@ -204,11 +187,30 @@ export function composeTextImportBatchPreview(
 
   batchRoot.children = fileRoots
   const previewNodes = flattenPreviewTree(batchRoot)
-  const structuralOperations = buildCreateChildOperations([batchRoot], request.context.rootTopicId)
+  const nodePlans = deriveTextImportNodePlansFromPreviewNodes({
+    previewNodes,
+  })
+  const structuralOperations = compileTextImportPreviewNodesToOperations({
+    insertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+    previewNodes,
+  })
 
   return {
     summary: `Created a batch import tree with ${sortedFiles.length} files and ${previewNodes.length} preview nodes.`,
     baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
+    anchorTopicId: request.anchorTopicId,
+    classification: {
+      archetype: 'mixed',
+      confidence: 0.4,
+      rationale: 'Batch imports preserve per-file archetypes and use a mixed top-level container.',
+      secondaryArchetype: null,
+    },
+    templateSummary: {
+      archetype: 'mixed',
+      visibleSlots: ['themes', 'actions'],
+      foldedSlots: ['summary', 'evidence', 'open_questions'],
+    },
+    nodePlans,
     previewNodes,
     operations: [...structuralOperations, ...semanticUpdates],
     conflicts: [],
@@ -236,6 +238,8 @@ export function composeTextImportBatchPreview(
         nodeCount: countTreeNodes(fileRoots[index] ?? createFallbackFileRoot(file)),
         mergeSuggestionCount: (file.response.mergeSuggestions ?? []).length,
         warningCount: (file.response.warnings ?? []).length,
+        classification: file.response.classification,
+        templateSummary: file.response.templateSummary,
       })),
     },
   }

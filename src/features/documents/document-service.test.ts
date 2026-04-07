@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { layoutMindMap } from '../editor/layout'
 import { createMindMapDocument } from './document-factory'
 import {
   documentService,
@@ -7,12 +8,63 @@ import {
 } from './document-service'
 import { defaultTheme, normalizeMindMapTheme } from './theme'
 
+const DB_NAME = 'brainflow-documents-v1'
+const STORE_NAME = 'documents'
+
 async function resetDatabase(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const request = indexedDB.deleteDatabase('brainflow-documents-v1')
+    const request = indexedDB.deleteDatabase(DB_NAME)
     request.onerror = () => reject(request.error)
     request.onsuccess = () => resolve()
     request.onblocked = () => resolve()
+  })
+}
+
+async function writeRawDocument(value: unknown): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1)
+    request.onerror = () => reject(request.error)
+    request.onupgradeneeded = () => {
+      const db = request.result
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'id' })
+      }
+    }
+    request.onsuccess = () => {
+      const db = request.result
+      const transaction = db.transaction(STORE_NAME, 'readwrite')
+      const store = transaction.objectStore(STORE_NAME)
+      store.put(value)
+      transaction.oncomplete = () => {
+        db.close()
+        resolve()
+      }
+      transaction.onerror = () => reject(transaction.error)
+    }
+  })
+}
+
+async function readRawDocument(id: string): Promise<Record<string, unknown> | null> {
+  return new Promise<Record<string, unknown> | null>((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1)
+    request.onerror = () => reject(request.error)
+    request.onupgradeneeded = () => {
+      const db = request.result
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'id' })
+      }
+    }
+    request.onsuccess = () => {
+      const db = request.result
+      const transaction = db.transaction(STORE_NAME, 'readonly')
+      const store = transaction.objectStore(STORE_NAME)
+      const getRequest = store.get(id)
+      getRequest.onerror = () => reject(getRequest.error)
+      getRequest.onsuccess = () => {
+        db.close()
+        resolve((getRequest.result as Record<string, unknown> | undefined) ?? null)
+      }
+    }
   })
 }
 
@@ -103,6 +155,59 @@ describe('documentService', () => {
     expect(loadedInvalidSelection?.workspace.hierarchyCollapsedTopicIds).toEqual([legacy.rootTopicId])
   })
 
+  it('drops legacy task, link, and attachment metadata when loading and saving old documents', async () => {
+    const legacy = createMindMapDocument('旧元数据兼容')
+    const branchId = legacy.topics[legacy.rootTopicId].childIds[0]
+    const legacyPayload = structuredClone(legacy) as unknown as Record<string, unknown>
+    const legacyTopics = legacyPayload.topics as Record<string, Record<string, unknown>>
+    const branch = legacyTopics[branchId]
+    const metadata = branch.metadata as Record<string, unknown>
+
+    metadata.task = {
+      status: 'todo',
+      priority: 'high',
+      dueDate: '2026-04-06',
+    }
+    metadata.links = [
+      {
+        id: 'legacy_link_1',
+        type: 'web',
+        label: 'Legacy link',
+        href: 'https://example.com',
+      },
+    ]
+    metadata.attachments = [
+      {
+        id: 'legacy_attachment_1',
+        name: 'Legacy attachment',
+        uri: 'https://example.com/file',
+        source: 'url',
+      },
+    ]
+
+    await writeRawDocument(legacyPayload)
+
+    const loaded = await documentService.getDocument(legacy.id)
+    const loadedMetadata = loaded?.topics[branchId].metadata as Record<string, unknown> | undefined
+
+    expect(loaded).not.toBeNull()
+    expect(loadedMetadata).not.toBeNull()
+    expect('task' in (loadedMetadata ?? {})).toBe(false)
+    expect('links' in (loadedMetadata ?? {})).toBe(false)
+    expect('attachments' in (loadedMetadata ?? {})).toBe(false)
+
+    await documentService.saveDocument(loaded!)
+
+    const rawStored = await readRawDocument(legacy.id)
+    const rawTopics = rawStored?.topics as Record<string, Record<string, unknown>> | undefined
+    const rawMetadata = rawTopics?.[branchId]?.metadata as Record<string, unknown> | undefined
+
+    expect(rawMetadata).not.toBeNull()
+    expect('task' in (rawMetadata ?? {})).toBe(false)
+    expect('links' in (rawMetadata ?? {})).toBe(false)
+    expect('attachments' in (rawMetadata ?? {})).toBe(false)
+  })
+
   it('preserves updatedAt when only workspace state changes', async () => {
     const doc = await documentService.createDocument('工作台持久化')
     const selectedTopicId = doc.topics[doc.rootTopicId].childIds[0]
@@ -188,9 +293,6 @@ describe('documentService', () => {
         labels: [],
         markers: [],
         stickers: [],
-        task: null,
-        links: [],
-        attachments: [],
       },
       style: {
         emphasis: 'normal',
@@ -209,6 +311,76 @@ describe('documentService', () => {
     const loaded = await documentService.getDocument(document.id)
 
     expect(loaded?.workspace.hierarchyCollapsedTopicIds).toEqual([branchId])
+  })
+
+  it('repairs broken topic references so stored documents still render', async () => {
+    const document = createMindMapDocument('Repair broken tree')
+    const rootId = document.rootTopicId
+    const [leftBranchId, rightBranchId] = document.topics[rootId].childIds
+    const nestedId = 'topic_broken_nested'
+    const detachedId = 'topic_broken_detached'
+
+    document.topics[leftBranchId].childIds = ['missing-topic', rootId, nestedId, nestedId]
+    document.topics[nestedId] = {
+      id: nestedId,
+      parentId: 'ghost-parent',
+      childIds: [leftBranchId],
+      title: 'Nested orphan',
+      note: '',
+      noteRich: null,
+      aiLocked: false,
+      isCollapsed: false,
+      branchSide: 'auto',
+      layout: {
+        offsetX: 0,
+        offsetY: 0,
+      },
+      metadata: {
+        labels: [],
+        markers: [],
+        stickers: [],
+      },
+      style: {
+        emphasis: 'normal',
+        variant: 'default',
+      },
+    }
+    document.topics[detachedId] = {
+      id: detachedId,
+      parentId: 'ghost-parent',
+      childIds: [],
+      title: 'Detached orphan',
+      note: '',
+      noteRich: null,
+      aiLocked: false,
+      isCollapsed: false,
+      branchSide: 'left',
+      layout: {
+        offsetX: 0,
+        offsetY: 0,
+      },
+      metadata: {
+        labels: [],
+        markers: [],
+        stickers: [],
+      },
+      style: {
+        emphasis: 'normal',
+        variant: 'default',
+      },
+    }
+
+    await writeRawDocument(document)
+
+    const loaded = await documentService.getDocument(document.id)
+
+    expect(loaded).not.toBeNull()
+    expect(loaded?.topics[leftBranchId].childIds).toEqual([nestedId])
+    expect(loaded?.topics[nestedId].parentId).toBe(leftBranchId)
+    expect(loaded?.topics[nestedId].childIds).toEqual([])
+    expect(loaded?.topics[rootId].childIds).toEqual([leftBranchId, rightBranchId, detachedId])
+    expect(loaded?.topics[detachedId].parentId).toBe(rootId)
+    expect(() => layoutMindMap(loaded!)).not.toThrow()
   })
 
   it('deletes documents and updates the recent pointer', async () => {

@@ -2,18 +2,20 @@ import { create } from 'zustand'
 import type {
   AiRunStage,
   CodexApiError,
-  TextImportCodexDiagnostic,
-  TextImportCodexEvent,
-  TextImportCodexExplainer,
+  TextImportArchetype,
   TextImportCrossFileMergeSuggestion,
+  TextImportPreset,
   TextImportPreprocessHint,
   TextImportPreviewNode,
   TextImportResponse,
   TextImportRunStage,
-  TextImportRunnerAttempt,
-  TextImportRunnerObservationPhase,
   TextImportSourceType,
 } from '../../../shared/ai-contract'
+import {
+  formatTextImportClassificationConfidence,
+  resolveTextImportPlanningOptions,
+  type TextImportSourcePlanningSummary,
+} from '../../../shared/text-import-semantics'
 import type { CodexRequestFailureKind } from '../ai/ai-client'
 import type { MindMapDocument } from '../documents/types'
 import { buildAiContext } from '../ai/ai-context'
@@ -21,6 +23,11 @@ import {
   applyTextImportPreview,
   getInitialApprovedConflictIds,
 } from './text-import-apply'
+import {
+  applyTextImportPreviewEdit,
+  buildTextImportDraftTree,
+  recompileTextImportDraft,
+} from './text-import-preview-edit'
 import {
   startTextImportBatchJob,
   startTextImportJob,
@@ -55,6 +62,12 @@ interface TextImportSourceFileState {
   textLength: number
 }
 
+interface CachedTextImportSource {
+  sourceName: string
+  sourceType: TextImportSourceType
+  rawText: string
+}
+
 export interface TextImportErrorState {
   message: string
   rawMessage?: string
@@ -64,47 +77,6 @@ export interface TextImportErrorState {
   stage?: AiRunStage
   requestId?: string
 }
-
-export interface TextImportRunnerObservationState {
-  attempt: TextImportRunnerAttempt
-  phase: TextImportRunnerObservationPhase
-  promptLength: number
-  elapsedSinceSpawnMs?: number
-  elapsedSinceLastEventMs?: number
-  exitCode?: number
-  hadJsonEvent?: boolean
-  observedAt: number
-  requestId?: string
-}
-
-export type TextImportCodexEventState = TextImportCodexEvent
-export type TextImportCodexExplainerState = TextImportCodexExplainer
-export type TextImportCodexDiagnosticState = TextImportCodexDiagnostic
-
-export interface TextImportStatusTimelineEntry {
-  id: string
-  stage: TextImportRunStage
-  message: string
-  progress: number
-  startedAt: number
-  completedAt: number | null
-  requestId?: string
-  runnerObservations: TextImportRunnerObservationState[]
-}
-
-export type TextImportCurrentStatus =
-  | {
-      kind: 'status'
-      stage: TextImportRunStage
-      message: string
-      progress: number
-      at: number
-      requestId?: string
-    }
-  | ({
-      kind: 'runner_observation'
-      at: number
-    } & Omit<TextImportRunnerObservationState, 'observedAt'>)
 
 interface TextImportState {
   isOpen: boolean
@@ -116,7 +88,10 @@ interface TextImportState {
   draftText: string
   preprocessedHints: TextImportPreprocessHint[]
   preview: TextImportResponse | null
+  draftTree: TextImportPreviewNode[]
   previewTree: TextImportPreviewNode[]
+  draftConfirmed: boolean
+  planningSummaries: TextImportSourcePlanningSummary[]
   crossFileMergeSuggestions: TextImportCrossFileMergeSuggestion[]
   approvedConflictIds: string[]
   runStage: AiRunStage
@@ -133,12 +108,6 @@ interface TextImportState {
   activeJobId: string | null
   activeJobMode: TextImportJobMode | null
   activeJobType: TextImportJobType | null
-  currentStatus: TextImportCurrentStatus | null
-  latestCodexExplainer: TextImportCodexExplainerState | null
-  latestCodexEvent: TextImportCodexEventState | null
-  codexEventFeed: TextImportCodexEventState[]
-  codexDiagnostics: TextImportCodexDiagnosticState[]
-  statusTimeline: TextImportStatusTimelineEntry[]
   semanticCandidateCount: number
   semanticAdjudicatedCount: number
   semanticFallbackCount: number
@@ -149,8 +118,13 @@ interface TextImportState {
   appliedCount: number
   totalOperations: number
   currentApplyLabel: string | null
+  presetOverride: TextImportPreset | null
+  archetypeOverride: TextImportArchetype | null
+  cachedSources: CachedTextImportSource[]
   open: () => void
   close: () => void
+  setPresetOverride: (value: TextImportPreset | null) => void
+  setArchetypeOverride: (value: TextImportArchetype | null) => void
   setDraftSourceName: (value: string) => void
   setDraftText: (value: string) => void
   previewFile: (
@@ -168,7 +142,22 @@ interface TextImportState {
     selection: ImportSelectionSnapshot,
     options?: { sourceName?: string; sourceType?: TextImportSourceType; rawText?: string },
   ) => Promise<void>
+  rerunPreviewWithPreset: (
+    document: MindMapDocument,
+    selection: ImportSelectionSnapshot,
+    preset: TextImportPreset | null,
+  ) => Promise<void>
+  rerunPreviewWithArchetype: (
+    document: MindMapDocument,
+    selection: ImportSelectionSnapshot,
+    archetype: TextImportArchetype | null,
+  ) => Promise<void>
   toggleConflictApproval: (conflictId: string) => void
+  confirmDraft: () => void
+  renamePreviewNode: (nodeId: string, title: string) => void
+  promotePreviewNode: (nodeId: string) => void
+  demotePreviewNode: (nodeId: string) => void
+  deletePreviewNode: (nodeId: string) => void
   applyPreview: (document: MindMapDocument) => Promise<ApplyTextImportResult | null>
 }
 
@@ -182,7 +171,10 @@ const INITIAL_STATE = {
   draftText: '',
   preprocessedHints: [] as TextImportPreprocessHint[],
   preview: null as TextImportResponse | null,
+  draftTree: [] as TextImportPreviewNode[],
   previewTree: [] as TextImportPreviewNode[],
+  draftConfirmed: false,
+  planningSummaries: [] as TextImportSourcePlanningSummary[],
   crossFileMergeSuggestions: [] as TextImportCrossFileMergeSuggestion[],
   approvedConflictIds: [] as string[],
   runStage: 'idle' as AiRunStage,
@@ -199,12 +191,6 @@ const INITIAL_STATE = {
   activeJobId: null as string | null,
   activeJobMode: null as TextImportJobMode | null,
   activeJobType: null as TextImportJobType | null,
-  currentStatus: null as TextImportCurrentStatus | null,
-  latestCodexExplainer: null as TextImportCodexExplainerState | null,
-  latestCodexEvent: null as TextImportCodexEventState | null,
-  codexEventFeed: [] as TextImportCodexEventState[],
-  codexDiagnostics: [] as TextImportCodexDiagnosticState[],
-  statusTimeline: [] as TextImportStatusTimelineEntry[],
   semanticCandidateCount: 0,
   semanticAdjudicatedCount: 0,
   semanticFallbackCount: 0,
@@ -215,6 +201,9 @@ const INITIAL_STATE = {
   appliedCount: 0,
   totalOperations: 0,
   currentApplyLabel: null as string | null,
+  presetOverride: null as TextImportPreset | null,
+  archetypeOverride: null as TextImportArchetype | null,
+  cachedSources: [] as CachedTextImportSource[],
 }
 
 let activeJobHandle: TextImportJobHandle | null = null
@@ -227,20 +216,22 @@ function cancelActiveJob(): void {
 function createModeHint(mode: TextImportJobMode, jobType: TextImportJobType): string {
   if (mode === 'local_markdown') {
     return jobType === 'batch'
-      ? 'Using the local text batch pipeline. Imported branches stay safe, while semantic merges only apply when the target topic is unchanged.'
-      : 'Using the local text import pipeline. Semantic merges only apply when the target topic is unchanged.'
+      ? 'Using the local structured-text batch pipeline. Structured Markdown stays local, while semantic merges only apply when the target topic is unchanged.'
+      : 'Using the local structured-text pipeline for clearly structured content. Semantic merges only apply when the target topic is unchanged.'
   }
 
   return jobType === 'batch'
-    ? 'Using the Codex import batch pipeline for Markdown analysis. Non-Markdown files stay on the local import path.'
-    : 'Using the Codex import pipeline for Markdown analysis.'
+    ? 'Using the hybrid import batch pipeline. Structured Markdown stays on the local path, and only weakly structured files use Codex.'
+    : 'Using the Codex import pipeline for weakly structured or prose-heavy text.'
 }
 
 function createSelectionContext(
   document: MindMapDocument,
   selection: ImportSelectionSnapshot,
 ) {
-  return buildAiContext(document, selection.selectedTopicIds, selection.activeTopicId)
+  return buildAiContext(document, selection.selectedTopicIds, selection.activeTopicId, {
+    useFullDocument: true,
+  })
 }
 
 function createErrorState(
@@ -262,138 +253,69 @@ function isCodexWaitingStage(stage: TextImportRunStage): boolean {
   return stage === 'waiting_codex_primary' || stage === 'waiting_codex_repair'
 }
 
-function createTimelineEntryId(stage: TextImportRunStage, startedAt: number): string {
-  return `${stage}_${startedAt.toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+function confidenceRank(value: TextImportSourcePlanningSummary['confidence']): number {
+  switch (value) {
+    case 'high':
+      return 3
+    case 'medium':
+      return 2
+    case 'low':
+    default:
+      return 1
+  }
 }
 
-function updateTimelineWithStatus(
-  timeline: TextImportStatusTimelineEntry[],
-  event: Extract<TextImportJobEvent, { type: 'status' }>,
-  timestamp: number,
-): TextImportStatusTimelineEntry[] {
-  const nextTimeline = [...timeline]
-  const lastEntry = nextTimeline.at(-1)
-
-  if (lastEntry && lastEntry.stage === event.stage && lastEntry.completedAt === null) {
-    nextTimeline[nextTimeline.length - 1] = {
-      ...lastEntry,
-      message: event.message,
-      progress: event.progress,
-      requestId: event.requestId ?? lastEntry.requestId,
-    }
-    return nextTimeline
-  }
-
-  if (lastEntry && lastEntry.completedAt === null) {
-    nextTimeline[nextTimeline.length - 1] = {
-      ...lastEntry,
-      completedAt: timestamp,
-    }
-  }
-
-  nextTimeline.push({
-    id: createTimelineEntryId(event.stage, timestamp),
-    stage: event.stage,
-    message: event.message,
-    progress: event.progress,
-    startedAt: timestamp,
-    completedAt: null,
-    requestId: event.requestId,
-    runnerObservations: [],
-  })
-
-  return nextTimeline
+function lowerConfidence(
+  left: TextImportSourcePlanningSummary['confidence'],
+  right: TextImportSourcePlanningSummary['confidence'],
+): TextImportSourcePlanningSummary['confidence'] {
+  return confidenceRank(left) <= confidenceRank(right) ? left : right
 }
 
-function updateTimelineWithRunnerObservation(
-  timeline: TextImportStatusTimelineEntry[],
-  event: Extract<TextImportJobEvent, { type: 'runner_observation' }>,
-  timestamp: number,
-): TextImportStatusTimelineEntry[] {
-  if (timeline.length === 0) {
-    return timeline
-  }
+function mergePlanningSummaryWithClassification(
+  summary: TextImportSourcePlanningSummary,
+  classification: NonNullable<TextImportResponse['classification']>,
+): TextImportSourcePlanningSummary {
+  const archetypeConfidence = formatTextImportClassificationConfidence(classification.confidence)
 
-  const nextTimeline = [...timeline]
-  const lastEntry = nextTimeline.at(-1)
-  if (!lastEntry) {
-    return nextTimeline
+  return {
+    ...summary,
+    resolvedArchetype: classification.archetype,
+    confidence: summary.isManual
+      ? 'high'
+      : lowerConfidence(summary.presetConfidence, archetypeConfidence),
+    archetypeConfidence,
+    archetypeRationale: classification.rationale,
+    rationale: `${summary.presetRationale} ${classification.rationale}`.trim(),
   }
-
-  nextTimeline[nextTimeline.length - 1] = {
-    ...lastEntry,
-    runnerObservations: [
-      ...lastEntry.runnerObservations,
-      {
-        attempt: event.attempt,
-        phase: event.phase,
-        promptLength: event.promptLength,
-        elapsedSinceSpawnMs: event.elapsedSinceSpawnMs,
-        elapsedSinceLastEventMs: event.elapsedSinceLastEventMs,
-        exitCode: event.exitCode,
-        hadJsonEvent: event.hadJsonEvent,
-        observedAt: timestamp,
-        requestId: event.requestId,
-      },
-    ],
-  }
-
-  return nextTimeline
 }
 
-function closeActiveTimelineEntry(
-  timeline: TextImportStatusTimelineEntry[],
-  timestamp: number,
-): TextImportStatusTimelineEntry[] {
-  const lastEntry = timeline.at(-1)
-  if (!lastEntry || lastEntry.completedAt !== null) {
-    return timeline
+function mergePlanningSummariesWithPreview(
+  planningSummaries: TextImportSourcePlanningSummary[],
+  preview: TextImportResponse,
+): TextImportSourcePlanningSummary[] {
+  if (planningSummaries.length === 0) {
+    return planningSummaries
   }
 
-  const nextTimeline = [...timeline]
-  nextTimeline[nextTimeline.length - 1] = {
-    ...lastEntry,
-    completedAt: timestamp,
+  if (preview.batch?.jobType === 'batch' && preview.batch.files?.length) {
+    const classificationBySource = new Map(
+      preview.batch.files
+        .filter((file) => file.classification)
+        .map((file) => [file.sourceName, file.classification] as const),
+    )
+
+    return planningSummaries.map((summary) => {
+      const classification = classificationBySource.get(summary.sourceName)
+      return classification ? mergePlanningSummaryWithClassification(summary, classification) : summary
+    })
   }
-  return nextTimeline
-}
 
-function appendCodexEvent(
-  feed: TextImportCodexEventState[],
-  event: Extract<TextImportJobEvent, { type: 'codex_event' }>,
-): TextImportCodexEventState[] {
-  const nextFeed = [
-    ...feed,
-    {
-      attempt: event.attempt,
-      eventType: event.eventType,
-      at: event.at,
-      summary: event.summary,
-      rawJson: event.rawJson,
-      requestId: event.requestId,
-    },
-  ]
+  if (planningSummaries.length === 1 && preview.classification) {
+    return [mergePlanningSummaryWithClassification(planningSummaries[0], preview.classification)]
+  }
 
-  return nextFeed.length > 50 ? nextFeed.slice(-50) : nextFeed
-}
-
-function appendCodexDiagnostic(
-  diagnostics: TextImportCodexDiagnosticState[],
-  event: Extract<TextImportJobEvent, { type: 'codex_diagnostic' }>,
-): TextImportCodexDiagnosticState[] {
-  const nextDiagnostics = [
-    ...diagnostics,
-    {
-      attempt: event.attempt,
-      category: event.category,
-      at: event.at,
-      message: event.message,
-      rawLine: event.rawLine,
-      requestId: event.requestId,
-    },
-  ]
-
-  return nextDiagnostics.length > 50 ? nextDiagnostics.slice(-50) : nextDiagnostics
+  return planningSummaries
 }
 
 async function startSinglePreview(
@@ -407,25 +329,24 @@ async function startSinglePreview(
   sourceName: string,
   sourceType: TextImportSourceType,
   rawText: string,
+  presetOverride: TextImportPreset | null,
+  archetypeOverride: TextImportArchetype | null,
 ): Promise<void> {
   const normalizedText = rawText.replace(/\r\n?/g, '\n').trim()
   if (!normalizedText) {
     set({
       error: createErrorState('Select a text file or paste content before generating an import preview.'),
       preview: null,
+      draftTree: [],
       previewTree: [],
+      draftConfirmed: false,
+      planningSummaries: [],
       crossFileMergeSuggestions: [],
       approvedConflictIds: [],
       runStage: 'error',
       statusText: '',
       progress: 0,
       progressIndeterminate: false,
-      currentStatus: null,
-      latestCodexExplainer: null,
-      latestCodexEvent: null,
-      codexEventFeed: [],
-      codexDiagnostics: [],
-      statusTimeline: [],
       applyProgress: 0,
       appliedCount: 0,
       totalOperations: 0,
@@ -438,6 +359,13 @@ async function startSinglePreview(
   cancelActiveJob()
 
   const preprocessedHints = preprocessTextToImportHints(normalizedText)
+  const planning = resolveTextImportPlanningOptions({
+    sourceName,
+    sourceType,
+    preprocessedHints,
+    presetOverride,
+    archetypeOverride,
+  })
   const request = {
     documentId: document.id,
     documentTitle: document.title,
@@ -446,8 +374,14 @@ async function startSinglePreview(
     anchorTopicId: selection.activeTopicId ?? document.rootTopicId,
     sourceName,
     sourceType,
+    intent: planning.intent,
+    archetype: archetypeOverride ?? undefined,
+    archetypeMode: archetypeOverride ? ('manual' as const) : ('auto' as const),
+    contentProfile: planning.contentProfile,
+    nodeBudget: planning.nodeBudget,
     rawText: normalizedText,
     preprocessedHints,
+    semanticHints: planning.semanticHints,
   }
 
   const queuedEvents: TextImportJobEvent[] = []
@@ -462,8 +396,7 @@ async function startSinglePreview(
     }
 
     if (event.type === 'status') {
-      const timestamp = Date.now()
-      set((state) => ({
+      set({
         activeJobMode: event.mode,
         activeJobType: event.jobType,
         runStage: event.stage,
@@ -478,89 +411,20 @@ async function startSinglePreview(
         semanticCandidateCount: event.semanticCandidateCount ?? 0,
         semanticAdjudicatedCount: event.semanticAdjudicatedCount ?? 0,
         semanticFallbackCount: event.semanticFallbackCount ?? 0,
-        currentStatus: {
-          kind: 'status',
-          stage: event.stage,
-          message: event.message,
-          progress: event.progress,
-          at: timestamp,
-          requestId: event.requestId,
-        },
-        statusTimeline: updateTimelineWithStatus(state.statusTimeline, event, timestamp),
-      }))
-      return
-    }
-
-    if (event.type === 'runner_observation') {
-      const timestamp = Date.now()
-      set((state) => ({
-        activeJobMode: event.mode,
-        activeJobType: event.jobType,
-        currentStatus: {
-          kind: 'runner_observation',
-          attempt: event.attempt,
-          phase: event.phase,
-          promptLength: event.promptLength,
-          elapsedSinceSpawnMs: event.elapsedSinceSpawnMs,
-          elapsedSinceLastEventMs: event.elapsedSinceLastEventMs,
-          exitCode: event.exitCode,
-          hadJsonEvent: event.hadJsonEvent,
-          requestId: event.requestId,
-          at: timestamp,
-        },
-        statusTimeline: updateTimelineWithRunnerObservation(state.statusTimeline, event, timestamp),
-      }))
-      return
-    }
-
-    if (event.type === 'codex_event') {
-      set((state) => ({
-        activeJobMode: event.mode,
-        activeJobType: event.jobType,
-        latestCodexEvent: {
-          attempt: event.attempt,
-          eventType: event.eventType,
-          at: event.at,
-          summary: event.summary,
-          rawJson: event.rawJson,
-          requestId: event.requestId,
-        },
-        codexEventFeed: appendCodexEvent(state.codexEventFeed, event),
-      }))
-      return
-    }
-
-    if (event.type === 'codex_explainer') {
-      set({
-        activeJobMode: event.mode,
-        activeJobType: event.jobType,
-        latestCodexExplainer: {
-          attempt: event.attempt,
-          at: event.at,
-          headline: event.headline,
-          reason: event.reason,
-          evidence: event.evidence,
-          requestId: event.requestId,
-        },
       })
       return
     }
 
-    if (event.type === 'codex_diagnostic') {
-      set((state) => ({
-        activeJobMode: event.mode,
-        activeJobType: event.jobType,
-        codexDiagnostics: appendCodexDiagnostic(state.codexDiagnostics, event),
-      }))
-      return
-    }
-
     if (event.type === 'preview') {
+      const preview = recompileTextImportDraft(event.data)
       set({
         activeJobMode: event.mode,
         activeJobType: event.jobType,
-        preview: event.data,
-        previewTree: buildTextImportPreviewTree(event.data.previewNodes),
+        preview,
+        draftTree: buildTextImportDraftTree(preview),
+        previewTree: buildTextImportPreviewTree(preview.previewNodes),
+        draftConfirmed: false,
+        planningSummaries: mergePlanningSummariesWithPreview([planning.summary], event.data),
         crossFileMergeSuggestions: event.data.crossFileMergeSuggestions ?? [],
         approvedConflictIds: getInitialApprovedConflictIds(event.data),
         modeHint: createModeHint(event.mode, event.jobType),
@@ -572,7 +436,7 @@ async function startSinglePreview(
     if (event.type === 'error') {
       activeJobHandle = null
       const finishedAt = Date.now()
-      set((state) => ({
+      set({
         activeJobMode: event.mode,
         activeJobType: event.jobType,
         error: createErrorState(event.message, {
@@ -584,7 +448,9 @@ async function startSinglePreview(
           requestId: event.requestId,
         }),
         preview: null,
+        draftTree: [],
         previewTree: [],
+        draftConfirmed: false,
         crossFileMergeSuggestions: [],
         isPreviewing: false,
         runStage: 'error',
@@ -594,23 +460,25 @@ async function startSinglePreview(
         modeHint: createModeHint(event.mode, event.jobType),
         previewFinishedAt: finishedAt,
         activeJobId: null,
-        currentStatus: null,
-        statusTimeline: closeActiveTimelineEntry(state.statusTimeline, finishedAt),
         semanticCandidateCount: 0,
         semanticAdjudicatedCount: 0,
         semanticFallbackCount: 0,
         currentFileName: event.currentFileName ?? sourceName,
-      }))
+      })
       return
     }
 
     activeJobHandle = null
     const finishedAt = Date.now()
-    set((state) => ({
+    const preview = recompileTextImportDraft(event.data)
+    set({
       activeJobMode: event.mode,
       activeJobType: event.jobType,
-      preview: event.data,
-      previewTree: buildTextImportPreviewTree(event.data.previewNodes),
+      preview,
+      draftTree: buildTextImportDraftTree(preview),
+      previewTree: buildTextImportPreviewTree(preview.previewNodes),
+      draftConfirmed: false,
+      planningSummaries: mergePlanningSummariesWithPreview([planning.summary], event.data),
       crossFileMergeSuggestions: event.data.crossFileMergeSuggestions ?? [],
       approvedConflictIds: getInitialApprovedConflictIds(event.data),
       isPreviewing: false,
@@ -623,15 +491,13 @@ async function startSinglePreview(
       error: null,
       previewFinishedAt: finishedAt,
       activeJobId: null,
-      currentStatus: null,
-      statusTimeline: closeActiveTimelineEntry(state.statusTimeline, finishedAt),
       fileCount: event.data.batch?.fileCount ?? 1,
       completedFileCount: event.data.batch?.completedFileCount ?? 1,
       currentFileName: null,
       semanticCandidateCount: event.data.semanticMerge?.candidateCount ?? 0,
       semanticAdjudicatedCount: event.data.semanticMerge?.adjudicatedCount ?? 0,
       semanticFallbackCount: event.data.semanticMerge?.fallbackCount ?? 0,
-    }))
+    })
   }
 
   const jobHandle = startTextImportJob(request, handleJobEvent)
@@ -640,20 +506,24 @@ async function startSinglePreview(
   const previewQueuedAt = Date.now()
   const initialStatusText =
     jobHandle.mode === 'local_markdown'
-      ? 'Preparing the local text import pipeline...'
-      : 'Preparing the Codex import pipeline for Markdown analysis...'
+      ? 'Preparing the local structured-text import pipeline...'
+      : 'Preparing the Codex import pipeline for weakly structured text...'
 
   set({
     isOpen: true,
     sourceName,
     sourceType,
     sourceFiles: [{ sourceName, sourceType, textLength: normalizedText.length }],
+    cachedSources: [{ sourceName, sourceType, rawText: normalizedText }],
     rawText: normalizedText,
     draftSourceName: sourceName,
     draftText: normalizedText,
     preprocessedHints,
     preview: null,
+    draftTree: [],
     previewTree: [],
+    draftConfirmed: false,
+    planningSummaries: [planning.summary],
     crossFileMergeSuggestions: [],
     approvedConflictIds: [],
     runStage: 'extracting_input',
@@ -670,28 +540,6 @@ async function startSinglePreview(
     activeJobId: jobHandle.jobId,
     activeJobMode: jobHandle.mode,
     activeJobType: jobHandle.jobType,
-    currentStatus: {
-      kind: 'status',
-      stage: 'extracting_input',
-      message: initialStatusText,
-      progress: 4,
-      at: previewQueuedAt,
-    },
-    latestCodexExplainer: null,
-    latestCodexEvent: null,
-    codexEventFeed: [],
-    codexDiagnostics: [],
-    statusTimeline: [
-      {
-        id: createTimelineEntryId('extracting_input', previewQueuedAt),
-        stage: 'extracting_input',
-        message: initialStatusText,
-        progress: 4,
-        startedAt: previewQueuedAt,
-        completedAt: null,
-        runnerObservations: [],
-      },
-    ],
     semanticCandidateCount: 0,
     semanticAdjudicatedCount: 0,
     semanticFallbackCount: 0,
@@ -702,6 +550,8 @@ async function startSinglePreview(
     appliedCount: 0,
     totalOperations: 0,
     currentApplyLabel: null,
+    presetOverride,
+    archetypeOverride,
   })
 
   while (queuedEvents.length > 0) {
@@ -720,7 +570,9 @@ async function startBatchPreview(
   ) => void,
   document: MindMapDocument,
   selection: ImportSelectionSnapshot,
-  files: File[],
+  files: Array<File | CachedTextImportSource>,
+  presetOverride: TextImportPreset | null,
+  archetypeOverride: TextImportArchetype | null,
 ): Promise<void> {
   if (files.length === 0) {
     return
@@ -738,37 +590,18 @@ async function startBatchPreview(
     runStage: 'extracting_input',
     semanticMergeStage: 'idle',
     preview: null,
+    draftTree: [],
     previewTree: [],
+    draftConfirmed: false,
+    planningSummaries: [],
     crossFileMergeSuggestions: [],
     approvedConflictIds: [],
     fileCount: files.length,
     completedFileCount: 0,
-    currentFileName: files[0]?.name ?? null,
+    currentFileName: 'name' in files[0] ? files[0].name : files[0]?.sourceName ?? null,
     previewStartedAt: previewQueuedAt,
     previewFinishedAt: null,
     sourceType: 'file',
-    currentStatus: {
-      kind: 'status',
-      stage: 'extracting_input',
-      message: 'Reading selected text files...',
-      progress: 2,
-      at: previewQueuedAt,
-    },
-    latestCodexExplainer: null,
-    latestCodexEvent: null,
-    codexEventFeed: [],
-    codexDiagnostics: [],
-    statusTimeline: [
-      {
-        id: createTimelineEntryId('extracting_input', previewQueuedAt),
-        stage: 'extracting_input',
-        message: 'Reading selected text files...',
-        progress: 2,
-        startedAt: previewQueuedAt,
-        completedAt: null,
-        runnerObservations: [],
-      },
-    ],
     applyProgress: 0,
     appliedCount: 0,
     totalOperations: 0,
@@ -777,12 +610,29 @@ async function startBatchPreview(
 
   const loadedFiles = await Promise.all(
     files.map(async (file) => {
-      const rawText = await file.text()
+      const sourceName = 'name' in file ? file.name : file.sourceName
+      const sourceType = 'name' in file ? ('file' as const) : file.sourceType
+      const rawText = 'name' in file ? await file.text() : file.rawText
+      const preprocessedHints = preprocessTextToImportHints(rawText)
+      const planning = resolveTextImportPlanningOptions({
+        sourceName,
+        sourceType,
+        preprocessedHints,
+        presetOverride,
+        archetypeOverride,
+      })
       return {
-        sourceName: file.name,
-        sourceType: 'file' as const,
+        sourceName,
+        sourceType,
         rawText,
-        preprocessedHints: preprocessTextToImportHints(rawText),
+        preprocessedHints,
+        semanticHints: planning.semanticHints,
+        intent: planning.intent,
+        archetype: archetypeOverride ?? undefined,
+        archetypeMode: archetypeOverride ? ('manual' as const) : ('auto' as const),
+        contentProfile: planning.contentProfile,
+        nodeBudget: planning.nodeBudget,
+        planningSummary: planning.summary,
       }
     }),
   )
@@ -808,8 +658,7 @@ async function startBatchPreview(
     }
 
     if (event.type === 'status') {
-      const timestamp = Date.now()
-      set((state) => ({
+      set({
         activeJobMode: event.mode,
         activeJobType: event.jobType,
         runStage: event.stage,
@@ -824,89 +673,23 @@ async function startBatchPreview(
         semanticCandidateCount: event.semanticCandidateCount ?? 0,
         semanticAdjudicatedCount: event.semanticAdjudicatedCount ?? 0,
         semanticFallbackCount: event.semanticFallbackCount ?? 0,
-        currentStatus: {
-          kind: 'status',
-          stage: event.stage,
-          message: event.message,
-          progress: event.progress,
-          at: timestamp,
-          requestId: event.requestId,
-        },
-        statusTimeline: updateTimelineWithStatus(state.statusTimeline, event, timestamp),
-      }))
-      return
-    }
-
-    if (event.type === 'runner_observation') {
-      const timestamp = Date.now()
-      set((state) => ({
-        activeJobMode: event.mode,
-        activeJobType: event.jobType,
-        currentStatus: {
-          kind: 'runner_observation',
-          attempt: event.attempt,
-          phase: event.phase,
-          promptLength: event.promptLength,
-          elapsedSinceSpawnMs: event.elapsedSinceSpawnMs,
-          elapsedSinceLastEventMs: event.elapsedSinceLastEventMs,
-          exitCode: event.exitCode,
-          hadJsonEvent: event.hadJsonEvent,
-          requestId: event.requestId,
-          at: timestamp,
-        },
-        statusTimeline: updateTimelineWithRunnerObservation(state.statusTimeline, event, timestamp),
-      }))
-      return
-    }
-
-    if (event.type === 'codex_event') {
-      set((state) => ({
-        activeJobMode: event.mode,
-        activeJobType: event.jobType,
-        latestCodexEvent: {
-          attempt: event.attempt,
-          eventType: event.eventType,
-          at: event.at,
-          summary: event.summary,
-          rawJson: event.rawJson,
-          requestId: event.requestId,
-        },
-        codexEventFeed: appendCodexEvent(state.codexEventFeed, event),
-      }))
-      return
-    }
-
-    if (event.type === 'codex_explainer') {
-      set({
-        activeJobMode: event.mode,
-        activeJobType: event.jobType,
-        latestCodexExplainer: {
-          attempt: event.attempt,
-          at: event.at,
-          headline: event.headline,
-          reason: event.reason,
-          evidence: event.evidence,
-          requestId: event.requestId,
-        },
       })
       return
     }
 
-    if (event.type === 'codex_diagnostic') {
-      set((state) => ({
-        activeJobMode: event.mode,
-        activeJobType: event.jobType,
-        codexDiagnostics: appendCodexDiagnostic(state.codexDiagnostics, event),
-      }))
-      return
-    }
-
     if (event.type === 'preview') {
+      const preview = recompileTextImportDraft(event.data)
       set({
         activeJobMode: event.mode,
         activeJobType: event.jobType,
-        preview: event.data,
-        previewTree: buildTextImportPreviewTree(event.data.previewNodes),
+        preview,
+        draftTree: buildTextImportDraftTree(preview),
+        previewTree: buildTextImportPreviewTree(preview.previewNodes),
+        draftConfirmed: false,
+        planningSummaries: mergePlanningSummariesWithPreview(
+          sortedFiles.map((file) => file.planningSummary),
+          event.data,
+        ),
         crossFileMergeSuggestions: event.data.crossFileMergeSuggestions ?? [],
         approvedConflictIds: getInitialApprovedConflictIds(event.data),
         modeHint: createModeHint(event.mode, event.jobType),
@@ -918,7 +701,7 @@ async function startBatchPreview(
     if (event.type === 'error') {
       activeJobHandle = null
       const finishedAt = Date.now()
-      set((state) => ({
+      set({
         activeJobMode: event.mode,
         activeJobType: event.jobType,
         error: createErrorState(event.message, {
@@ -930,7 +713,9 @@ async function startBatchPreview(
           requestId: event.requestId,
         }),
         preview: null,
+        draftTree: [],
         previewTree: [],
+        draftConfirmed: false,
         crossFileMergeSuggestions: [],
         isPreviewing: false,
         runStage: 'error',
@@ -940,23 +725,28 @@ async function startBatchPreview(
         modeHint: createModeHint(event.mode, event.jobType),
         previewFinishedAt: finishedAt,
         activeJobId: null,
-        currentStatus: null,
-        statusTimeline: closeActiveTimelineEntry(state.statusTimeline, finishedAt),
         semanticCandidateCount: 0,
         semanticAdjudicatedCount: 0,
         semanticFallbackCount: 0,
         currentFileName: event.currentFileName ?? null,
-      }))
+      })
       return
     }
 
     activeJobHandle = null
     const finishedAt = Date.now()
-    set((state) => ({
+    const preview = recompileTextImportDraft(event.data)
+    set({
       activeJobMode: event.mode,
       activeJobType: event.jobType,
-      preview: event.data,
-      previewTree: buildTextImportPreviewTree(event.data.previewNodes),
+      preview,
+      draftTree: buildTextImportDraftTree(preview),
+      previewTree: buildTextImportPreviewTree(preview.previewNodes),
+      draftConfirmed: false,
+      planningSummaries: mergePlanningSummariesWithPreview(
+        sortedFiles.map((file) => file.planningSummary),
+        event.data,
+      ),
       crossFileMergeSuggestions: event.data.crossFileMergeSuggestions ?? [],
       approvedConflictIds: getInitialApprovedConflictIds(event.data),
       isPreviewing: false,
@@ -969,15 +759,13 @@ async function startBatchPreview(
       error: null,
       previewFinishedAt: finishedAt,
       activeJobId: null,
-      currentStatus: null,
-      statusTimeline: closeActiveTimelineEntry(state.statusTimeline, finishedAt),
       fileCount: event.data.batch?.fileCount ?? sortedFiles.length,
       completedFileCount: event.data.batch?.completedFileCount ?? sortedFiles.length,
       currentFileName: null,
       semanticCandidateCount: event.data.semanticMerge?.candidateCount ?? 0,
       semanticAdjudicatedCount: event.data.semanticMerge?.adjudicatedCount ?? 0,
       semanticFallbackCount: event.data.semanticMerge?.fallbackCount ?? 0,
-    }))
+    })
   }
 
   const jobHandle = startTextImportBatchJob(batchRequest, handleJobEvent)
@@ -991,18 +779,24 @@ async function startBatchPreview(
       sourceType: file.sourceType,
       textLength: file.rawText.length,
     })),
+    cachedSources: sortedFiles.map((file) => ({
+      sourceName: file.sourceName,
+      sourceType: file.sourceType,
+      rawText: file.rawText,
+    })),
     rawText: '',
     draftSourceName: `${sortedFiles.length} files`,
     draftText: '',
     preprocessedHints: sortedFiles.flatMap((file) => file.preprocessedHints),
+    planningSummaries: sortedFiles.map((file) => file.planningSummary),
     activeJobId: jobHandle.jobId,
     activeJobMode: jobHandle.mode,
     activeJobType: jobHandle.jobType,
     modeHint: createModeHint(jobHandle.mode, jobHandle.jobType),
     statusText:
       jobHandle.mode === 'local_markdown'
-        ? 'Preparing the local text batch pipeline...'
-        : 'Preparing the Codex import batch pipeline...',
+        ? 'Preparing the local structured-text batch pipeline...'
+        : 'Preparing the hybrid import batch pipeline...',
     semanticCandidateCount: 0,
     semanticAdjudicatedCount: 0,
     semanticFallbackCount: 0,
@@ -1010,6 +804,8 @@ async function startBatchPreview(
     appliedCount: 0,
     totalOperations: 0,
     currentApplyLabel: null,
+    presetOverride,
+    archetypeOverride,
   })
 
   while (queuedEvents.length > 0) {
@@ -1020,32 +816,159 @@ async function startBatchPreview(
   }
 }
 
+function buildEditedDraftState(
+  state: Pick<TextImportState, 'preview' | 'approvedConflictIds'>,
+  preview: TextImportResponse,
+): Partial<TextImportState> {
+  return {
+    preview,
+    draftTree: buildTextImportDraftTree(preview),
+    previewTree: buildTextImportPreviewTree(preview.previewNodes),
+    draftConfirmed: false,
+    crossFileMergeSuggestions: preview.crossFileMergeSuggestions ?? [],
+    approvedConflictIds: state.approvedConflictIds.filter((conflictId) =>
+      preview.conflicts.some((conflict) => conflict.id === conflictId),
+    ),
+  }
+}
+
 export const useTextImportStore = create<TextImportState>((set, get) => ({
   ...INITIAL_STATE,
 
   open: () => set({ isOpen: true, error: null }),
-  close: () => set({ isOpen: false }),
+  close: () =>
+    set({
+      isOpen: false,
+      presetOverride: null,
+      archetypeOverride: null,
+      planningSummaries: [],
+      cachedSources: [],
+      draftConfirmed: false,
+    }),
+  setPresetOverride: (value) => set({ presetOverride: value }),
+  setArchetypeOverride: (value) => set({ archetypeOverride: value }),
   setDraftSourceName: (value) => set({ draftSourceName: value }),
   setDraftText: (value) => set({ draftText: value }),
   previewFile: async (document, selection, file) => {
-    await startSinglePreview(set, document, selection, file.name, 'file', await file.text())
+    await startSinglePreview(
+      set,
+      document,
+      selection,
+      file.name,
+      'file',
+      await file.text(),
+      get().presetOverride,
+      get().archetypeOverride,
+    )
   },
   previewFiles: async (document, selection, files) => {
     if (files.length <= 1) {
       const [file] = files
       if (file) {
-        await startSinglePreview(set, document, selection, file.name, 'file', await file.text())
+        await startSinglePreview(
+          set,
+          document,
+          selection,
+          file.name,
+          'file',
+          await file.text(),
+          get().presetOverride,
+          get().archetypeOverride,
+        )
       }
       return
     }
-    await startBatchPreview(set, document, selection, files)
+    await startBatchPreview(set, document, selection, files, get().presetOverride, get().archetypeOverride)
   },
   previewText: async (document, selection, options) => {
     const state = get()
     const sourceName = (options?.sourceName ?? state.draftSourceName.trim()) || 'Pasted text'
     const sourceType = options?.sourceType ?? state.sourceType ?? 'paste'
     const rawText = options?.rawText ?? state.draftText
-    await startSinglePreview(set, document, selection, sourceName, sourceType, rawText)
+    await startSinglePreview(
+      set,
+      document,
+      selection,
+      sourceName,
+      sourceType,
+      rawText,
+      state.presetOverride,
+      state.archetypeOverride,
+    )
+  },
+  rerunPreviewWithPreset: async (document, selection, preset) => {
+    set({ presetOverride: preset })
+    const state = get()
+    if (state.cachedSources.length > 1) {
+      await startBatchPreview(set, document, selection, state.cachedSources, preset, state.archetypeOverride)
+      return
+    }
+
+    const [source] = state.cachedSources
+    if (source) {
+      await startSinglePreview(
+        set,
+        document,
+        selection,
+        source.sourceName,
+        source.sourceType,
+        source.rawText,
+        preset,
+        state.archetypeOverride,
+      )
+      return
+    }
+
+    const sourceName = (state.sourceName ?? state.draftSourceName) || 'Pasted text'
+    const sourceType = state.sourceType ?? 'paste'
+    const rawText = state.rawText || state.draftText
+    await startSinglePreview(
+      set,
+      document,
+      selection,
+      sourceName,
+      sourceType,
+      rawText,
+      preset,
+      state.archetypeOverride,
+    )
+  },
+  rerunPreviewWithArchetype: async (document, selection, archetype) => {
+    set({ archetypeOverride: archetype })
+    const state = get()
+    if (state.cachedSources.length > 1) {
+      await startBatchPreview(set, document, selection, state.cachedSources, state.presetOverride, archetype)
+      return
+    }
+
+    const [source] = state.cachedSources
+    if (source) {
+      await startSinglePreview(
+        set,
+        document,
+        selection,
+        source.sourceName,
+        source.sourceType,
+        source.rawText,
+        state.presetOverride,
+        archetype,
+      )
+      return
+    }
+
+    const sourceName = (state.sourceName ?? state.draftSourceName) || 'Pasted text'
+    const sourceType = state.sourceType ?? 'paste'
+    const rawText = state.rawText || state.draftText
+    await startSinglePreview(
+      set,
+      document,
+      selection,
+      sourceName,
+      sourceType,
+      rawText,
+      state.presetOverride,
+      archetype,
+    )
   },
   toggleConflictApproval: (conflictId) =>
     set((state) => ({
@@ -1053,10 +976,85 @@ export const useTextImportStore = create<TextImportState>((set, get) => ({
         ? state.approvedConflictIds.filter((item) => item !== conflictId)
         : [...state.approvedConflictIds, conflictId],
     })),
+  confirmDraft: () =>
+    set((state) => {
+      if (!state.preview) {
+        return {}
+      }
+
+      const preview = recompileTextImportDraft(state.preview)
+      return {
+        preview,
+        draftTree: buildTextImportDraftTree(preview),
+        previewTree: buildTextImportPreviewTree(preview.previewNodes),
+        draftConfirmed: true,
+        crossFileMergeSuggestions: preview.crossFileMergeSuggestions ?? [],
+        approvedConflictIds: state.approvedConflictIds.filter((conflictId) =>
+          preview.conflicts.some((conflict) => conflict.id === conflictId),
+        ),
+      }
+    }),
+  renamePreviewNode: (nodeId, title) =>
+    set((state) => {
+      if (!state.preview) {
+        return {}
+      }
+
+      const preview = applyTextImportPreviewEdit(state.preview, {
+        type: 'rename',
+        nodeId,
+        title,
+      })
+
+      return buildEditedDraftState(state, preview)
+    }),
+  promotePreviewNode: (nodeId) =>
+    set((state) => {
+      if (!state.preview) {
+        return {}
+      }
+
+      const preview = applyTextImportPreviewEdit(state.preview, {
+        type: 'promote',
+        nodeId,
+      })
+
+      return buildEditedDraftState(state, preview)
+    }),
+  demotePreviewNode: (nodeId) =>
+    set((state) => {
+      if (!state.preview) {
+        return {}
+      }
+
+      const preview = applyTextImportPreviewEdit(state.preview, {
+        type: 'demote',
+        nodeId,
+      })
+
+      return buildEditedDraftState(state, preview)
+    }),
+  deletePreviewNode: (nodeId) =>
+    set((state) => {
+      if (!state.preview) {
+        return {}
+      }
+
+      const preview = applyTextImportPreviewEdit(state.preview, {
+        type: 'delete',
+        nodeId,
+      })
+
+      return buildEditedDraftState(state, preview)
+    }),
   applyPreview: async (document) => {
     const state = get()
     if (!state.preview) {
       set({ error: createErrorState('No import preview is available to apply.') })
+      return null
+    }
+    if (!state.draftConfirmed) {
+      set({ error: createErrorState('Confirm the structure draft before applying the import.') })
       return null
     }
 
@@ -1076,7 +1074,6 @@ export const useTextImportStore = create<TextImportState>((set, get) => ({
       appliedCount: 0,
       totalOperations,
       currentApplyLabel: null,
-      currentStatus: null,
       error: null,
     })
 

@@ -150,6 +150,12 @@ button {
   cursor: pointer;
 }
 
+/* Ensure italic tags display correctly */
+em,
+i {
+  font-style: italic;
+}
+
 input[type='search']::-webkit-search-decoration,
 input[type='search']::-webkit-search-cancel-button,
 input[type='search']::-webkit-search-results-button,

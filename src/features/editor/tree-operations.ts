@@ -60,6 +60,8 @@ function createTopic(parentId: string): TopicNode {
     layout: {
       offsetX: 0,
       offsetY: 0,
+      semanticGroupKey: null,
+      priority: null,
     },
     metadata: createDefaultTopicMetadata(),
     style: createDefaultTopicStyle(),
@@ -67,7 +69,7 @@ function createTopic(parentId: string): TopicNode {
 }
 
 export function getTopicLayout(topic: TopicNode): TopicLayout {
-  return topic.layout ?? { offsetX: 0, offsetY: 0 }
+  return topic.layout ?? { offsetX: 0, offsetY: 0, semanticGroupKey: null, priority: null }
 }
 
 export function getTopicDepth(doc: MindMapDocument, topicId: string): number {
@@ -146,6 +148,53 @@ function isDescendant(doc: MindMapDocument, candidateId: string, ancestorId: str
   }
 
   return false
+}
+
+function hasLockedTopicInSubtree(doc: MindMapDocument, topicId: string): boolean {
+  const queue = [topicId]
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()
+    if (!currentId) {
+      continue
+    }
+
+    const topic = doc.topics[currentId]
+    if (!topic) {
+      continue
+    }
+
+    if (topic.aiLocked) {
+      return true
+    }
+
+    queue.push(...topic.childIds)
+  }
+
+  return false
+}
+
+function normalizeRemovableTopicIds(doc: MindMapDocument, topicIds: string[]): string[] {
+  const candidateIds = Array.from(new Set(topicIds)).filter((topicId) => {
+    const topic = doc.topics[topicId]
+
+    return !!topic && topicId !== doc.rootTopicId && !!topic.parentId && !hasLockedTopicInSubtree(doc, topicId)
+  })
+  const candidateSet = new Set(candidateIds)
+
+  return candidateIds.filter((topicId) => {
+    let cursor = doc.topics[topicId]
+
+    while (cursor?.parentId) {
+      if (candidateSet.has(cursor.parentId)) {
+        return false
+      }
+
+      cursor = doc.topics[cursor.parentId]
+    }
+
+    return true
+  })
 }
 
 export function addChild(doc: MindMapDocument, parentId: string): TopicMutationResult {
@@ -446,32 +495,48 @@ export function applyDocumentTheme(doc: MindMapDocument, themeId: string): MindM
 }
 
 export function removeTopic(doc: MindMapDocument, topicId: string): MindMapDocument {
-  const topic = doc.topics[topicId]
-  if (!topic || topicId === doc.rootTopicId || !topic.parentId) {
+  return removeTopics(doc, [topicId])
+}
+
+export function removeTopics(doc: MindMapDocument, topicIds: string[]): MindMapDocument {
+  const removableTopicIds = normalizeRemovableTopicIds(doc, topicIds)
+  if (removableTopicIds.length === 0) {
     return doc
   }
 
   const nextDoc = cloneDocument(doc)
-  const parent = nextDoc.topics[topic.parentId]
-  parent.childIds = parent.childIds.filter((childId) => childId !== topicId)
+  let changed = false
 
-  const queue = [topicId]
-  while (queue.length > 0) {
-    const currentId = queue.shift()
-    if (!currentId) {
+  for (const topicId of removableTopicIds) {
+    const topic = nextDoc.topics[topicId]
+    if (!topic?.parentId) {
       continue
     }
 
-    const current = nextDoc.topics[currentId]
-    if (!current) {
-      continue
+    const parent = nextDoc.topics[topic.parentId]
+    if (parent) {
+      parent.childIds = parent.childIds.filter((childId) => childId !== topicId)
     }
 
-    queue.push(...current.childIds)
-    delete nextDoc.topics[currentId]
+    const queue = [topicId]
+    while (queue.length > 0) {
+      const currentId = queue.shift()
+      if (!currentId) {
+        continue
+      }
+
+      const current = nextDoc.topics[currentId]
+      if (!current) {
+        continue
+      }
+
+      queue.push(...current.childIds)
+      delete nextDoc.topics[currentId]
+      changed = true
+    }
   }
 
-  return touchDocument(nextDoc)
+  return changed ? touchDocument(nextDoc) : doc
 }
 
 export function toggleCollapse(doc: MindMapDocument, topicId: string): MindMapDocument {
@@ -655,7 +720,12 @@ export function setTopicOffset(
   }
 
   const nextDoc = cloneDocument(doc)
-  nextDoc.topics[topicId].layout = { offsetX, offsetY }
+  nextDoc.topics[topicId].layout = {
+    offsetX,
+    offsetY,
+    semanticGroupKey: topic.layout?.semanticGroupKey ?? null,
+    priority: topic.layout?.priority ?? null,
+  }
   return touchDocument(nextDoc)
 }
 

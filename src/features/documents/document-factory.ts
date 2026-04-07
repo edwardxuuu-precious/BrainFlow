@@ -26,6 +26,8 @@ function createTopic(
     layout: {
       offsetX: 0,
       offsetY: 0,
+      semanticGroupKey: null,
+      priority: null,
     },
     metadata: createDefaultTopicMetadata(),
     style: createDefaultTopicStyle(),

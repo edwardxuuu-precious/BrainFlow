@@ -110,7 +110,7 @@ export function AiSettingsDialog({
               <p className={styles.archivedSubtitle}>归档后的聊天可在这里恢复，删除后将从本地永久移除。</p>
             </div>
             <Button
-              tone="secondary"
+              tone="primary"
               size="sm"
               iconStart="history"
               onClick={onLoadArchivedSessions}
@@ -139,7 +139,7 @@ export function AiSettingsDialog({
                         </div>
                         <div className={styles.archivedItemActions}>
                           <Button
-                            tone="secondary"
+                            tone="primary"
                             size="sm"
                             iconStart="restore"
                             onClick={() => onRestoreArchivedSession(session.documentId, session.sessionId)}
@@ -165,10 +165,10 @@ export function AiSettingsDialog({
         </section>
 
         <div className={styles.footer}>
-          <Button tone="secondary" onClick={onClose}>
+          <Button tone="primary" onClick={onClose}>
             关闭
           </Button>
-          <Button tone="secondary" onClick={onReset} disabled={isLoading || isSaving}>
+          <Button tone="primary" onClick={onReset} disabled={isLoading || isSaving}>
             恢复默认
           </Button>
           <Button tone="primary" onClick={onSave} disabled={isLoading || isSaving || !draft.trim()}>

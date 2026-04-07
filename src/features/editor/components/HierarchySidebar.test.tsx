@@ -31,14 +31,13 @@ function renderSidebar(overrides?: Partial<ComponentProps<typeof HierarchySideba
 
 describe('HierarchySidebar', () => {
   it('renders the integrated sidebar structure', () => {
-    const { document } = renderSidebar({
+    renderSidebar({
       id: 'hierarchy-sidebar',
     })
 
     expect(screen.getByRole('complementary')).toHaveAttribute('id', 'hierarchy-sidebar')
-    expect(screen.getByText('目录')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: document.title })).toBeInTheDocument()
-    expect(screen.getByRole('navigation')).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: '主题层级' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /中心主题\s+2\s+个子节点/ })).toBeInTheDocument()
   })
 
   it('shows a note marker and accessible description for noted topics', () => {
@@ -104,9 +103,6 @@ describe('HierarchySidebar', () => {
         labels: [],
         markers: [],
         stickers: [],
-        task: null,
-        links: [],
-        attachments: [],
       },
       style: {
         emphasis: 'normal',
@@ -151,9 +147,6 @@ describe('HierarchySidebar', () => {
         labels: [],
         markers: [],
         stickers: [],
-        task: null,
-        links: [],
-        attachments: [],
       },
       style: {
         emphasis: 'normal',

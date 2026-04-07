@@ -37,6 +37,8 @@ import {
 interface AiSelectionSnapshot {
   activeTopicId: string | null
   selectedTopicIds: string[]
+  useFullDocument?: boolean
+  manualContextTopicIds?: string[]
 }
 
 interface LastAppliedAiChange {
@@ -123,6 +125,18 @@ function createMessage(role: AiMessage['role'], content: string): AiMessage {
     role,
     content,
     createdAt: Date.now(),
+  }
+}
+
+function describeContextStatus(scope: 'full_document' | 'focused_subset' | 'empty'): string {
+  switch (scope) {
+    case 'focused_subset':
+      return '正在整理所选上下文节点与祖先路径…'
+    case 'empty':
+      return '正在基于当前提问发起零上下文对话…'
+    case 'full_document':
+    default:
+      return '正在整理整张脑图与当前重点节点…'
   }
 }
 
@@ -803,12 +817,21 @@ export const useAiStore = create<AiState>((set, get) => ({
         void persistState(nextState)
       }
 
+      const context = buildAiContext(document, selection.selectedTopicIds, selection.activeTopicId, {
+        useFullDocument: selection.useFullDocument,
+        manualContextTopicIds: selection.manualContextTopicIds,
+      })
+
+      set({
+        streamingStatusText: describeContextStatus(context.scope),
+      })
+
       await streamCodexChat(
         {
           documentId: document.id,
           sessionId,
           messages: nextMessages,
-          context: buildAiContext(document, selection.selectedTopicIds, selection.activeTopicId),
+          context,
           baseDocumentUpdatedAt: document.updatedAt,
         },
         (event) => {

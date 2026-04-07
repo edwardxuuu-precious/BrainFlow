@@ -3,6 +3,7 @@ import type {
   AiCanvasProposal,
   TextImportResponse,
 } from '../../../shared/ai-contract'
+import { compileTextImportPreviewNodesToOperations } from '../../../shared/text-import-semantics'
 import {
   applyAiProposalAsync,
   type AiProposalApplyProgress,
@@ -61,6 +62,20 @@ function createTopicFingerprint(topic: TopicNode): string {
   })
 }
 
+function resolveExistingTopicTargetId(target: string): string | null {
+  return target.startsWith('topic:') ? target.slice('topic:'.length) : null
+}
+
+function buildStructuralOperationsFromPreview(
+  insertionParentTopicId: string,
+  response: TextImportResponse,
+): TextImportResponse['operations'] {
+  return compileTextImportPreviewNodesToOperations({
+    insertionParentTopicId,
+    previewNodes: response.previewNodes,
+  })
+}
+
 export async function applyTextImportPreview(
   document: MindMapDocument,
   response: TextImportResponse,
@@ -72,6 +87,19 @@ export async function applyTextImportPreview(
 ): Promise<AiProposalApplyResult> {
   const approved = new Set(approvedConflictIds)
   const warnings: string[] = []
+  const insertionParentTopicId =
+    response.anchorTopicId && document.topics[response.anchorTopicId]
+      ? response.anchorTopicId
+      : document.rootTopicId
+
+  if (response.anchorTopicId && insertionParentTopicId !== response.anchorTopicId) {
+    warnings.push('The original import anchor is missing. Applied the import at the document root instead.')
+  }
+
+  const structuralOperations = buildStructuralOperationsFromPreview(
+    insertionParentTopicId,
+    response,
+  )
   const rebaseableOperations = response.operations.filter((operation) => {
     if (!(operation.risk === 'low' || (operation.conflictId && approved.has(operation.conflictId)))) {
       return false
@@ -81,15 +109,17 @@ export async function applyTextImportPreview(
       return true
     }
 
+    const targetTopicId =
+      typeof operation.target === 'string' ? resolveExistingTopicTargetId(operation.target) : null
+    if (!targetTopicId) {
+      return true
+    }
+
     if (!operation.targetFingerprint) {
       return false
     }
 
-    const targetTopicId =
-      typeof operation.target === 'string' && operation.target.startsWith('topic:')
-        ? operation.target.slice('topic:'.length)
-        : null
-    if (!targetTopicId || !document.topics[targetTopicId]) {
+    if (!document.topics[targetTopicId]) {
       warnings.push(`Skipped semantic merge for missing topic target ${String(operation.target)}.`)
       return false
     }
@@ -108,7 +138,10 @@ export async function applyTextImportPreview(
   const proposal = createProposalFromTextImportPreview(
     {
       ...response,
-      operations: rebaseableOperations,
+      operations: [
+        ...structuralOperations,
+        ...rebaseableOperations.filter((operation) => operation.type !== 'create_child'),
+      ],
     },
     approvedConflictIds,
   )

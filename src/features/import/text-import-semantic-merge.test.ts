@@ -26,8 +26,10 @@ describe('text-import-semantic-merge', () => {
       anchorTopicId: document.rootTopicId,
       sourceName: 'GTM_main.md',
       sourceType: 'file' as const,
+      intent: 'preserve_structure' as const,
       rawText,
       preprocessedHints: preprocessTextToImportHints(rawText),
+      semanticHints: [],
     }
 
     const built = createLocalTextImportPreview(request)
@@ -82,14 +84,18 @@ describe('text-import-semantic-merge', () => {
         {
           sourceName: 'GTM_step1.md',
           sourceType: 'file',
+          intent: 'preserve_structure' as const,
           rawText: '# Step 1\n\n## Positioning\n\nText A',
           preprocessedHints: preprocessTextToImportHints('# Step 1\n\n## Positioning\n\nText A'),
+          semanticHints: [],
         },
         {
           sourceName: 'GTM_step1-1.md',
           sourceType: 'file',
+          intent: 'preserve_structure' as const,
           rawText: '# Step 1-1\n\n## Positioning\n\nText B',
           preprocessedHints: preprocessTextToImportHints('# Step 1-1\n\n## Positioning\n\nText B'),
+          semanticHints: [],
         },
       ],
     })
@@ -105,14 +111,18 @@ describe('text-import-semantic-merge', () => {
         {
           sourceName: 'GTM_step1.md',
           sourceType: 'file' as const,
+          intent: 'preserve_structure' as const,
           rawText: '# Step 1\n\n## Positioning\n\nText A',
           preprocessedHints: preprocessTextToImportHints('# Step 1\n\n## Positioning\n\nText A'),
+          semanticHints: [],
         },
         {
           sourceName: 'GTM_step1-1.md',
           sourceType: 'file' as const,
+          intent: 'preserve_structure' as const,
           rawText: '# Step 1-1\n\n## Positioning\n\nText B',
           preprocessedHints: preprocessTextToImportHints('# Step 1-1\n\n## Positioning\n\nText B'),
+          semanticHints: [],
         },
       ],
     }

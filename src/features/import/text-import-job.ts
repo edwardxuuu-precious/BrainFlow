@@ -1,10 +1,6 @@
 import type {
   CodexApiError,
-  TextImportCodexDiagnostic,
-  TextImportCodexEvent,
-  TextImportCodexExplainer,
   TextImportRequest,
-  TextImportRunnerObservation,
   TextImportResponse,
   TextImportRunStage,
   TextImportStreamEvent,
@@ -14,7 +10,6 @@ import { composeTextImportBatchPreview, type BatchTextImportPreviewSource } from
 import { streamCodexTextImportPreview } from './text-import-client'
 import {
   createLocalTextImportPreview,
-  isMarkdownImportSourceFile,
   shouldUseLocalMarkdownImport,
   sortTextImportBatchSources,
   type LocalTextImportBatchRequest,
@@ -43,27 +38,6 @@ export type TextImportJobEvent =
       semanticFallbackCount?: number
       requestId?: string
     }
-  | ({
-      type: 'runner_observation'
-      mode: TextImportJobMode
-      jobType: TextImportJobType
-      requestId?: string
-    } & TextImportRunnerObservation)
-  | ({
-      type: 'codex_event'
-      mode: TextImportJobMode
-      jobType: TextImportJobType
-    } & TextImportCodexEvent)
-  | ({
-      type: 'codex_explainer'
-      mode: TextImportJobMode
-      jobType: TextImportJobType
-    } & TextImportCodexExplainer)
-  | ({
-      type: 'codex_diagnostic'
-      mode: TextImportJobMode
-      jobType: TextImportJobType
-    } & TextImportCodexDiagnostic)
   | {
       type: 'preview'
       data: TextImportResponse
@@ -150,6 +124,14 @@ let sharedWorker: Worker | null = null
 
 function createJobId(): string {
   return `import_job_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function selectTextImportJobMode(
+  request: Pick<TextImportRequest, 'sourceName' | 'sourceType' | 'rawText' | 'preprocessedHints'>,
+): TextImportJobMode {
+  return shouldUseLocalMarkdownImport(request as TextImportRequest)
+    ? 'local_markdown'
+    : 'codex_import'
 }
 
 function getWorker(): Worker {
@@ -255,10 +237,6 @@ async function runCodexTextImportPreview(
   options?: {
     signal?: AbortSignal
     onStatus?: (event: Extract<TextImportStreamEvent, { type: 'status' }>) => void
-    onRunnerObservation?: (event: Extract<TextImportStreamEvent, { type: 'runner_observation' }>) => void
-    onCodexEvent?: (event: Extract<TextImportStreamEvent, { type: 'codex_event' }>) => void
-    onCodexExplainer?: (event: Extract<TextImportStreamEvent, { type: 'codex_explainer' }>) => void
-    onCodexDiagnostic?: (event: Extract<TextImportStreamEvent, { type: 'codex_diagnostic' }>) => void
   },
 ): Promise<TextImportResponse> {
   let response: TextImportResponse | null = null
@@ -268,26 +246,6 @@ async function runCodexTextImportPreview(
     (event) => {
       if (event.type === 'status') {
         options?.onStatus?.(event)
-        return
-      }
-
-      if (event.type === 'runner_observation') {
-        options?.onRunnerObservation?.(event)
-        return
-      }
-
-      if (event.type === 'codex_event') {
-        options?.onCodexEvent?.(event)
-        return
-      }
-
-      if (event.type === 'codex_explainer') {
-        options?.onCodexExplainer?.(event)
-        return
-      }
-
-      if (event.type === 'codex_diagnostic') {
-        options?.onCodexDiagnostic?.(event)
         return
       }
 
@@ -491,11 +449,18 @@ async function buildBatchPreviewSource(
     anchorTopicId: request.anchorTopicId,
     sourceName: file.sourceName,
     sourceType: file.sourceType,
+    intent: file.intent,
+    archetype: file.archetype,
+    archetypeMode: file.archetypeMode,
+    contentProfile: file.contentProfile,
+    nodeBudget: file.nodeBudget,
     rawText: file.rawText,
     preprocessedHints: file.preprocessedHints,
+    semanticHints: file.semanticHints,
   }
+  const fileMode = selectTextImportJobMode(singleRequest)
 
-  if (isMarkdownImportSourceFile(file.sourceName, file.sourceType)) {
+  if (fileMode === 'codex_import') {
     const response = await runCodexTextImportPreview(singleRequest, {
       signal,
       onStatus: (event) => {
@@ -506,64 +471,10 @@ async function buildBatchPreviewSource(
           requestId: event.requestId,
         })
       },
-      onRunnerObservation: (event) => {
-        onEvent({
-          type: 'runner_observation',
-          attempt: event.attempt,
-          phase: event.phase,
-          kind: event.kind,
-          promptLength: event.promptLength,
-          elapsedSinceSpawnMs: event.elapsedSinceSpawnMs,
-          elapsedSinceLastEventMs: event.elapsedSinceLastEventMs,
-          exitCode: event.exitCode,
-          hadJsonEvent: event.hadJsonEvent,
-          requestId: event.requestId,
-          mode: 'codex_import',
-          jobType: 'batch',
-        })
-      },
-      onCodexEvent: (event) => {
-        onEvent({
-          type: 'codex_event',
-          attempt: event.attempt,
-          eventType: event.eventType,
-          at: event.at,
-          summary: event.summary,
-          rawJson: event.rawJson,
-          requestId: event.requestId,
-          mode: 'codex_import',
-          jobType: 'batch',
-        })
-      },
-      onCodexExplainer: (event) => {
-        onEvent({
-          type: 'codex_explainer',
-          attempt: event.attempt,
-          at: event.at,
-          headline: event.headline,
-          reason: event.reason,
-          evidence: event.evidence,
-          requestId: event.requestId,
-          mode: 'codex_import',
-          jobType: 'batch',
-        })
-      },
-      onCodexDiagnostic: (event) => {
-        onEvent({
-          type: 'codex_diagnostic',
-          attempt: event.attempt,
-          category: event.category,
-          at: event.at,
-          message: event.message,
-          rawLine: event.rawLine,
-          requestId: event.requestId,
-          mode: 'codex_import',
-          jobType: 'batch',
-        })
-      },
     })
     return {
       ...file,
+      route: fileMode,
       response,
     }
   }
@@ -582,6 +493,7 @@ async function buildBatchPreviewSource(
 
   return {
     ...file,
+    route: fileMode,
     response: built.response,
   }
 }
@@ -619,9 +531,11 @@ function startCodexBatchJob(
         }
 
         builtFiles.push(built)
+        const routeLabel =
+          built.route === 'local_markdown' ? 'local structured import' : 'Codex import'
         emitBatchStatus(onEvent, mode, files.length, index + 1, files[index + 1]?.sourceName ?? null, {
           stage: 'analyzing_import',
-          message: `Prepared ${file.sourceName} for batch composition.`,
+          message: `Prepared ${file.sourceName} with ${routeLabel}.`,
           progress: mapBatchFileProgress(index, files.length, 100),
         })
       } catch (error) {
@@ -710,8 +624,9 @@ export function startTextImportJob(
   onEvent: (event: TextImportJobEvent) => void,
 ): TextImportJobHandle {
   const jobId = createJobId()
+  const mode = selectTextImportJobMode(request)
 
-  if (shouldUseLocalMarkdownImport(request)) {
+  if (mode === 'local_markdown') {
     return startWorkerBackedJob(
       'single',
       {
@@ -723,7 +638,6 @@ export function startTextImportJob(
     )
   }
 
-  const mode: TextImportJobMode = 'codex_import'
   const controller = new AbortController()
   let cancelled = false
 
@@ -740,69 +654,6 @@ export function startTextImportJob(
           stage: event.stage,
           message: event.message,
           progress: mapCodexStageToProgress(event.stage),
-          mode,
-          jobType: 'single',
-          requestId: event.requestId,
-        })
-        return
-      }
-
-      if (event.type === 'runner_observation') {
-        onEvent({
-          type: 'runner_observation',
-          attempt: event.attempt,
-          phase: event.phase,
-          kind: event.kind,
-          promptLength: event.promptLength,
-          elapsedSinceSpawnMs: event.elapsedSinceSpawnMs,
-          elapsedSinceLastEventMs: event.elapsedSinceLastEventMs,
-          exitCode: event.exitCode,
-          hadJsonEvent: event.hadJsonEvent,
-          mode,
-          jobType: 'single',
-          requestId: event.requestId,
-        })
-        return
-      }
-
-      if (event.type === 'codex_event') {
-        onEvent({
-          type: 'codex_event',
-          attempt: event.attempt,
-          eventType: event.eventType,
-          at: event.at,
-          summary: event.summary,
-          rawJson: event.rawJson,
-          mode,
-          jobType: 'single',
-          requestId: event.requestId,
-        })
-        return
-      }
-
-      if (event.type === 'codex_explainer') {
-        onEvent({
-          type: 'codex_explainer',
-          attempt: event.attempt,
-          at: event.at,
-          headline: event.headline,
-          reason: event.reason,
-          evidence: event.evidence,
-          mode,
-          jobType: 'single',
-          requestId: event.requestId,
-        })
-        return
-      }
-
-      if (event.type === 'codex_diagnostic') {
-        onEvent({
-          type: 'codex_diagnostic',
-          attempt: event.attempt,
-          category: event.category,
-          at: event.at,
-          message: event.message,
-          rawLine: event.rawLine,
           mode,
           jobType: 'single',
           requestId: event.requestId,
@@ -863,11 +714,16 @@ export function startTextImportBatchJob(
   request: LocalTextImportBatchRequest,
   onEvent: (event: TextImportJobEvent) => void,
 ): TextImportJobHandle {
-  const hasMarkdownFiles = request.files.some((file) =>
-    isMarkdownImportSourceFile(file.sourceName, file.sourceType),
+  const requiresCodex = request.files.some((file) =>
+    selectTextImportJobMode({
+      sourceName: file.sourceName,
+      sourceType: file.sourceType,
+      rawText: file.rawText,
+      preprocessedHints: file.preprocessedHints,
+    }) === 'codex_import',
   )
 
-  if (!hasMarkdownFiles) {
+  if (!requiresCodex) {
     return startWorkerBackedJob(
       'batch',
       {

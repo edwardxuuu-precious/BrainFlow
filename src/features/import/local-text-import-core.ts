@@ -8,20 +8,38 @@ import type {
   AiDocumentTopicContext,
   AiImportOperation,
   AiSelectionContext,
+  TextImportArchetype,
   TextImportCrossFileMergeSuggestion,
+  TextImportClassification,
   TextImportMergeSuggestion,
   TextImportPreviewItem,
+  TextImportHintKind,
   TextImportPreprocessHint,
+  TextImportPreviewNode,
   TextImportRequest,
   TextImportResponse,
   TextImportRunStage,
   TextImportSourceType,
+  TextImportNodePlan,
+  TextImportSemanticRole,
+  TextImportTemplateSummary,
 } from '../../../shared/ai-contract'
+import {
+  buildTextImportQualityWarnings,
+  compileTextImportPreviewNodesToOperations,
+  compileTextImportNodePlans,
+  deriveTextImportNodePlansFromPreviewNodes,
+  inferTextImportSemanticHintKind,
+  detectTextImportContentProfile,
+  planTextImportFromSemanticHints,
+  resolveTextImportNodeBudget,
+} from '../../../shared/text-import-semantics'
 import {
   countTextImportHints,
   deriveTextImportTitle,
   preprocessTextToImportHints,
 } from './text-import-preprocess'
+import { buildTextImportPreviewTree } from './text-import-preview-tree'
 
 export type SemanticMergeStage =
   | 'idle'
@@ -34,6 +52,12 @@ export interface LocalTextImportSourceInput {
   sourceType: TextImportSourceType
   rawText: string
   preprocessedHints: TextImportPreprocessHint[]
+  semanticHints: TextImportRequest['semanticHints']
+  intent: TextImportRequest['intent']
+  archetype?: TextImportArchetype
+  archetypeMode?: TextImportRequest['archetypeMode']
+  contentProfile?: TextImportRequest['contentProfile']
+  nodeBudget?: TextImportRequest['nodeBudget']
 }
 
 export interface LocalTextImportBatchRequest {
@@ -95,6 +119,14 @@ export interface LocalTextImportBatchBuildResult {
   response: TextImportResponse
   metrics: LocalTextImportBatchMetrics
 }
+
+const STRUCTURED_IMPORT_HINT_KINDS = new Set<TextImportHintKind>([
+  'heading',
+  'bullet_list',
+  'ordered_list',
+  'task_list',
+  'table',
+])
 
 interface LocalImportNode {
   id: string
@@ -660,7 +692,7 @@ function processMarkdownNode(
 }
 
 function buildImportTree(
-  source: LocalTextImportSourceInput,
+  source: Pick<LocalTextImportSourceInput, 'sourceName' | 'sourceType' | 'rawText' | 'preprocessedHints'>,
   rootTitle: string,
   prefix: string,
   metrics: MutableMetrics,
@@ -907,23 +939,25 @@ function createCrossFileMergeSuggestions(roots: LocalImportNode[]): TextImportCr
   return suggestions.slice(0, 120)
 }
 
+// Retained for the existing merge heuristics while the semantic planner rollout is in progress.
+const LEGACY_LOCAL_IMPORT_HELPERS = [
+  matchExistingTopics,
+  resetSubtreePaths,
+  flattenPreviewItems,
+  buildCreateChildOperations,
+  countEdges,
+  createBatchRoot,
+  createCrossFileMergeSuggestions,
+] as const
+
+void LEGACY_LOCAL_IMPORT_HELPERS
+
 export function shouldUseLocalMarkdownImport(request: TextImportRequest): boolean {
-  if (isMarkdownImportSourceFile(request.sourceName, request.sourceType)) {
-    return false
-  }
+  const structuredHintCount = request.preprocessedHints.filter((hint) =>
+    STRUCTURED_IMPORT_HINT_KINDS.has(hint.kind),
+  ).length
 
-  const headingLikeHints = request.preprocessedHints.filter((hint) =>
-    hint.kind === 'heading' ||
-    hint.kind === 'bullet_list' ||
-    hint.kind === 'ordered_list' ||
-    hint.kind === 'task_list',
-  )
-
-  if (headingLikeHints.length >= 3) {
-    return true
-  }
-
-  return /^#{1,6}\s+/m.test(request.rawText)
+  return structuredHintCount >= 3 || /^#{1,6}\s+/m.test(request.rawText)
 }
 
 export function isMarkdownImportSourceFile(
@@ -935,6 +969,166 @@ export function isMarkdownImportSourceFile(
     sourceType === 'file' &&
     (normalizedSourceName.endsWith('.md') || normalizedSourceName.endsWith('.markdown'))
   )
+}
+
+function mapSemanticRoleFromText(title: string, note: string, hasChildren: boolean): TextImportSemanticRole {
+  if (hasChildren) {
+    return 'section'
+  }
+
+  const classified = inferTextImportSemanticHintKind([title, note].filter(Boolean).join('\n'), 'paragraph')
+  if (classified.kind === 'owner') {
+    return 'evidence'
+  }
+  if (classified.kind === 'evidence' && note.trim()) {
+    return 'summary'
+  }
+  return classified.kind as Exclude<TextImportSemanticRole, 'section' | 'summary'>
+}
+
+function buildNodePlansFromImportTree(root: LocalImportNode): TextImportNodePlan[] {
+  const plans: TextImportNodePlan[] = [
+    {
+      id: root.id,
+      parentId: null,
+      order: 0,
+      title: root.title,
+      note: root.noteParts.join('\n\n').trim() || null,
+      semanticRole: 'section',
+      confidence: 'high',
+      sourceAnchors: [],
+      groupKey: 'root',
+      priority: 'primary',
+      collapsedByDefault: false,
+      templateSlot: null,
+    },
+  ]
+
+  const visit = (node: LocalImportNode): void => {
+    node.children.forEach((child, index) => {
+      const note = child.noteParts.join('\n\n').trim()
+      plans.push({
+        id: child.id,
+        parentId: child.parentId,
+        order: index,
+        title: child.title,
+        note: note || null,
+        semanticRole: mapSemanticRoleFromText(child.title, note, child.children.length > 0),
+        confidence: note || child.children.length > 0 ? 'medium' : 'low',
+        sourceAnchors: [],
+        priority: child.children.length > 0 ? 'secondary' : undefined,
+        groupKey: child.children.length > 0 ? 'sections' : undefined,
+        collapsedByDefault: false,
+        templateSlot: null,
+      })
+      visit(child)
+    })
+  }
+
+  visit(root)
+  return plans
+}
+
+function buildLocalTextImportNodePlans(
+  request: TextImportRequest,
+  sourceTitle: string,
+  metrics: MutableMetrics,
+): {
+  nodePlans: TextImportNodePlan[]
+  profile: TextImportRequest['contentProfile']
+  nodeBudget: TextImportRequest['nodeBudget']
+  classification: TextImportClassification
+  templateSummary: TextImportTemplateSummary
+} {
+  const profile = detectTextImportContentProfile({
+    sourceName: request.sourceName,
+    preprocessedHints: request.preprocessedHints,
+    semanticHints: request.semanticHints,
+    explicitProfile: request.contentProfile,
+    explicitArchetype: request.archetype,
+    archetypeMode: request.archetypeMode,
+  })
+  const nodeBudget = resolveTextImportNodeBudget(request.intent, profile, request.nodeBudget)
+  const plannedDistillation = planTextImportFromSemanticHints({
+    rootTitle: `Import: ${sourceTitle}`,
+    intent: request.intent,
+    sourceName: request.sourceName,
+    preprocessedHints: request.preprocessedHints,
+    profile,
+    archetype: request.archetype,
+    archetypeMode: request.archetypeMode,
+    nodeBudget,
+    semanticHints: request.semanticHints,
+  })
+
+  if (request.intent === 'distill_structure') {
+    return {
+      nodePlans: plannedDistillation.nodePlans,
+      profile,
+      nodeBudget,
+      classification: plannedDistillation.classification,
+      templateSummary: plannedDistillation.templateSummary,
+    }
+  }
+
+  const importRoot = buildImportTree(
+    {
+      sourceName: request.sourceName,
+      sourceType: request.sourceType,
+      rawText: request.rawText,
+      preprocessedHints: request.preprocessedHints,
+    },
+    `Import: ${sourceTitle}`,
+    'import_node',
+    metrics,
+  )
+
+  return {
+    nodePlans: buildNodePlansFromImportTree(importRoot),
+    profile,
+    nodeBudget,
+    classification: plannedDistillation.classification,
+    templateSummary: plannedDistillation.templateSummary,
+  }
+}
+
+function clonePreviewTreeWithPrefix(
+  node: TextImportPreviewNode,
+  prefix: string,
+  parentId: string | null,
+): TextImportPreviewNode {
+  const clonedId = `${prefix}${node.id}`
+  return {
+    ...node,
+    id: clonedId,
+    parentId,
+    sourceAnchors: node.sourceAnchors?.map((anchor) => ({ ...anchor })),
+    children: node.children.map((child) => clonePreviewTreeWithPrefix(child, prefix, clonedId)),
+  }
+}
+
+function flattenPreviewTree(root: TextImportPreviewNode): TextImportPreviewItem[] {
+  const items: TextImportPreviewItem[] = []
+  const visit = (node: TextImportPreviewNode) => {
+    items.push({
+      id: node.id,
+      parentId: node.parentId,
+      order: node.order,
+      title: node.title,
+      note: node.note,
+      relation: node.relation,
+      matchedTopicId: node.matchedTopicId,
+      reason: node.reason,
+      semanticRole: node.semanticRole,
+      confidence: node.confidence,
+      sourceAnchors: node.sourceAnchors?.map((anchor) => ({ ...anchor })),
+      templateSlot: node.templateSlot ?? null,
+    })
+    node.children.forEach(visit)
+  }
+
+  visit(root)
+  return items
 }
 
 export function createLocalTextImportPreview(
@@ -964,22 +1158,15 @@ export function createLocalTextImportPreview(
   })
   const parseTreeStartedAt = now()
   const sourceTitle = deriveTextImportTitle(request.sourceName, request.rawText)
-  const importRoot = buildImportTree(
-    {
-      sourceName: request.sourceName,
-      sourceType: request.sourceType,
-      rawText: request.rawText,
-      preprocessedHints: request.preprocessedHints,
-    },
-    `Import: ${sourceTitle}`,
-    'import_node',
-    metrics,
-  )
+  const planned = buildLocalTextImportNodePlans(request, sourceTitle, metrics)
   const parseTreeMs = now() - parseTreeStartedAt
 
   emitProgress(options?.onProgress, {
     stage: 'semantic_candidate_generation',
-    message: 'Generating semantic merge candidates...',
+    message:
+      request.intent === 'distill_structure'
+        ? 'Distilling semantic node plans...'
+        : 'Preparing semantic import plans...',
     progress: 48,
     jobType: 'single',
     fileCount: 1,
@@ -988,12 +1175,15 @@ export function createLocalTextImportPreview(
     semanticMergeStage: 'candidate_generation',
   })
   const candidateGenStartedAt = now()
-  const matchResult = matchExistingTopics(importRoot, request.context)
+  const compiled = compileTextImportNodePlans({
+    insertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+    nodePlans: planned.nodePlans,
+  })
   const candidateGenMs = now() - candidateGenStartedAt
 
   emitProgress(options?.onProgress, {
     stage: 'semantic_adjudication',
-    message: 'Reviewing semantic merge decisions...',
+    message: 'Reviewing semantic structure quality...',
     progress: 76,
     jobType: 'single',
     fileCount: 1,
@@ -1002,11 +1192,12 @@ export function createLocalTextImportPreview(
     semanticMergeStage: 'adjudicating',
   })
   const semanticMergeStartedAt = now()
-  const previewNodes = flattenPreviewItems(importRoot)
-  const operations = [
-    ...buildCreateChildOperations(importRoot, request.context.rootTopicId),
-    ...matchResult.operations,
-  ]
+  const previewNodes = compiled.previewNodes
+  const operations = compiled.operations
+  const qualityWarnings = buildTextImportQualityWarnings({
+    previewNodes,
+    nodeBudget: planned.nodeBudget,
+  })
   const semanticMergeMs = now() - semanticMergeStartedAt
 
   emitProgress(options?.onProgress, {
@@ -1020,23 +1211,30 @@ export function createLocalTextImportPreview(
     semanticMergeStage: 'review_ready',
   })
   const buildPreviewStartedAt = now()
-  const summary = `Created an import branch with ${previewNodes.length} nodes. ${matchResult.suggestions.length > 0 ? `Detected ${matchResult.suggestions.length} semantic merge candidates.` : 'No semantic merge candidates were detected.'}`
+  const summary =
+    request.intent === 'distill_structure'
+      ? `Built a distilled ${planned.classification.archetype} import branch with ${previewNodes.length} nodes.`
+      : `Built a structured import branch with ${previewNodes.length} nodes while classifying the content as ${planned.classification.archetype}.`
   const response: TextImportResponse = {
     summary,
     baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
+    anchorTopicId: request.anchorTopicId,
+    classification: planned.classification,
+    templateSummary: planned.templateSummary,
+    nodePlans: planned.nodePlans,
     previewNodes,
     operations,
     conflicts: [],
-    mergeSuggestions: matchResult.suggestions,
+    mergeSuggestions: [],
     semanticMerge: {
-      candidateCount: matchResult.suggestions.length,
+      candidateCount: 0,
       adjudicatedCount: 0,
-      autoMergedExistingCount: matchResult.operations.filter((operation) => operation.type === 'update_topic').length,
+      autoMergedExistingCount: 0,
       autoMergedCrossFileCount: 0,
-      conflictCount: matchResult.suggestions.filter((suggestion) => suggestion.kind === 'conflict').length,
-      fallbackCount: matchResult.suggestions.length,
+      conflictCount: 0,
+      fallbackCount: 0,
     },
-    warnings: matchResult.warnings,
+    warnings: qualityWarnings,
     batch: {
       jobType: 'single',
       fileCount: 1,
@@ -1047,10 +1245,12 @@ export function createLocalTextImportPreview(
         {
           sourceName: request.sourceName,
           sourceType: request.sourceType,
-          previewNodeId: importRoot.id,
+          previewNodeId: previewNodes[0]?.id ?? 'import_root',
           nodeCount: previewNodes.length,
-          mergeSuggestionCount: matchResult.suggestions.length,
-          warningCount: matchResult.warnings.length,
+          mergeSuggestionCount: 0,
+          warningCount: qualityWarnings.length,
+          classification: planned.classification,
+          templateSummary: planned.templateSummary,
         },
       ],
     },
@@ -1077,9 +1277,9 @@ export function createLocalTextImportPreview(
       semanticMergeMs,
       buildPreviewMs,
       totalNodeCount: previewNodes.length,
-      edgeCount: countEdges(importRoot),
-      mergeSuggestionCount: matchResult.suggestions.length,
-      warningCount: matchResult.warnings.length,
+      edgeCount: Math.max(0, previewNodes.filter((node) => node.parentId !== null).length),
+      mergeSuggestionCount: 0,
+      warningCount: qualityWarnings.length,
     },
   }
 }
@@ -1093,11 +1293,24 @@ export function createLocalTextImportBatchPreview(
 ): LocalTextImportBatchBuildResult {
   const now = options?.now ?? Date.now
   const files = sortTextImportBatchSources(request.files)
-  const batchRoot = createBatchRoot(buildTextImportBatchTitle(files, request.batchTitle))
+  const batchTitle = buildTextImportBatchTitle(files, request.batchTitle)
+  const batchRoot: TextImportPreviewNode = {
+    id: 'batch_root_1',
+    parentId: null,
+    order: 0,
+    title: batchTitle,
+    note: null,
+    relation: 'new',
+    matchedTopicId: null,
+    reason: null,
+    semanticRole: 'section',
+    confidence: 'high',
+    sourceAnchors: [],
+    children: [],
+  }
   const perFile: LocalTextImportBatchFileMetrics[] = []
-  const allSuggestions: TextImportMergeSuggestion[] = []
+  const perFileResponses: Array<Pick<TextImportResponse, 'classification' | 'templateSummary'>> = []
   const allWarnings: string[] = []
-  const semanticOperations: AiImportOperation[] = []
   let aggregateMetrics: MutableMetrics = {
     headingCount: 0,
     listItemCount: 0,
@@ -1120,25 +1333,45 @@ export function createLocalTextImportBatchPreview(
       currentFileName: file.sourceName,
     })
 
-    const fileMetrics: MutableMetrics = {
-      headingCount: 0,
-      listItemCount: 0,
-      tableCount: 0,
-      codeBlockCount: 0,
-    }
     const fileStartedAt = now()
-    const sourceTitle = deriveTextImportTitle(file.sourceName, file.rawText)
-    const parseStartedAt = now()
-    const fileRoot = buildImportTree(file, `Import: ${sourceTitle}`, `batch_${index + 1}`, fileMetrics)
-    const fileParseTreeMs = now() - parseStartedAt
-    parseTreeMs += fileParseTreeMs
-    fileRoot.parentId = batchRoot.id
-    resetSubtreePaths(fileRoot, batchRoot.pathTitles)
-    batchRoot.children.push(fileRoot)
+    const built = createLocalTextImportPreview(
+      {
+        documentId: request.documentId,
+        documentTitle: request.documentTitle,
+        baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
+        context: request.context,
+        anchorTopicId: request.anchorTopicId,
+        sourceName: file.sourceName,
+        sourceType: file.sourceType,
+        rawText: file.rawText,
+        intent: file.intent,
+        archetype: file.archetype,
+        archetypeMode: file.archetypeMode,
+        contentProfile: file.contentProfile,
+        nodeBudget: file.nodeBudget,
+        preprocessedHints: file.preprocessedHints,
+        semanticHints: file.semanticHints,
+      },
+      {
+        preprocessHintCount: file.preprocessedHints.length,
+        now,
+      },
+    )
+    parseTreeMs += built.metrics.parseTreeMs
+    candidateGenMs += built.metrics.candidateGenMs
+    semanticMergeMs += built.metrics.semanticMergeMs
+
+    const roots = buildTextImportPreviewTree(built.response.previewNodes)
+    const root = roots[0]
+    if (root) {
+      const cloned = clonePreviewTreeWithPrefix(root, `batch_${index + 1}__`, batchRoot.id)
+      cloned.order = index
+      batchRoot.children.push(cloned)
+    }
 
     emitProgress(options?.onProgress, {
       stage: 'semantic_candidate_generation',
-      message: `Generating semantic merge candidates for ${file.sourceName}...`,
+      message: `Compiling semantic node plans for ${file.sourceName}...`,
       progress: 52 + (index / Math.max(1, files.length)) * 14,
       jobType: 'batch',
       fileCount: files.length,
@@ -1146,19 +1379,17 @@ export function createLocalTextImportBatchPreview(
       currentFileName: file.sourceName,
       semanticMergeStage: 'candidate_generation',
     })
-    const candidateStartedAt = now()
-    const matchResult = matchExistingTopics(fileRoot, request.context)
-    const fileCandidateGenMs = now() - candidateStartedAt
-    candidateGenMs += fileCandidateGenMs
-    allSuggestions.push(...matchResult.suggestions)
-    semanticOperations.push(...matchResult.operations)
-    allWarnings.push(...matchResult.warnings)
+    allWarnings.push(...(built.response.warnings ?? []).map((warning) => `[${file.sourceName}] ${warning}`))
+    perFileResponses.push({
+      classification: built.response.classification,
+      templateSummary: built.response.templateSummary,
+    })
 
     aggregateMetrics = {
-      headingCount: aggregateMetrics.headingCount + fileMetrics.headingCount,
-      listItemCount: aggregateMetrics.listItemCount + fileMetrics.listItemCount,
-      tableCount: aggregateMetrics.tableCount + fileMetrics.tableCount,
-      codeBlockCount: aggregateMetrics.codeBlockCount + fileMetrics.codeBlockCount,
+      headingCount: aggregateMetrics.headingCount + built.metrics.headingCount,
+      listItemCount: aggregateMetrics.listItemCount + built.metrics.listItemCount,
+      tableCount: aggregateMetrics.tableCount + built.metrics.tableCount,
+      codeBlockCount: aggregateMetrics.codeBlockCount + built.metrics.codeBlockCount,
     }
     preprocessHintCount += countTextImportHints(file.preprocessedHints)
 
@@ -1166,26 +1397,26 @@ export function createLocalTextImportBatchPreview(
       sourceName: file.sourceName,
       sourceType: file.sourceType,
       preprocessHintCount: countTextImportHints(file.preprocessedHints),
-      headingCount: fileMetrics.headingCount,
-      listItemCount: fileMetrics.listItemCount,
-      tableCount: fileMetrics.tableCount,
-      codeBlockCount: fileMetrics.codeBlockCount,
-      parseTreeMs: fileParseTreeMs,
-      matchExistingMs: fileCandidateGenMs,
-      candidateGenMs: fileCandidateGenMs,
-      semanticMergeMs: 0,
-      buildPreviewMs: 0,
-      totalNodeCount: flattenNodes(fileRoot, true).length,
-      edgeCount: countEdges(fileRoot),
-      mergeSuggestionCount: matchResult.suggestions.length,
-      warningCount: matchResult.warnings.length,
+      headingCount: built.metrics.headingCount,
+      listItemCount: built.metrics.listItemCount,
+      tableCount: built.metrics.tableCount,
+      codeBlockCount: built.metrics.codeBlockCount,
+      parseTreeMs: built.metrics.parseTreeMs,
+      matchExistingMs: built.metrics.matchExistingMs,
+      candidateGenMs: built.metrics.candidateGenMs,
+      semanticMergeMs: built.metrics.semanticMergeMs,
+      buildPreviewMs: built.metrics.buildPreviewMs,
+      totalNodeCount: built.metrics.totalNodeCount,
+      edgeCount: built.metrics.edgeCount,
+      mergeSuggestionCount: 0,
+      warningCount: built.metrics.warningCount,
       totalReadyMs: now() - fileStartedAt,
     })
   })
 
   emitProgress(options?.onProgress, {
     stage: 'semantic_adjudication',
-    message: 'Reviewing cross-file semantic merge opportunities...',
+    message: 'Reviewing batch import structure quality...',
     progress: 74,
     jobType: 'batch',
     fileCount: files.length,
@@ -1194,7 +1425,18 @@ export function createLocalTextImportBatchPreview(
     semanticMergeStage: 'adjudicating',
   })
   const semanticStartedAt = now()
-  const crossFileMergeSuggestions = createCrossFileMergeSuggestions(batchRoot.children)
+  const previewNodes = flattenPreviewTree(batchRoot)
+  const nodePlans = deriveTextImportNodePlansFromPreviewNodes({
+    previewNodes,
+  })
+  const operations = compileTextImportPreviewNodesToOperations({
+    insertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+    previewNodes,
+  })
+  const qualityWarnings = buildTextImportQualityWarnings({
+    previewNodes,
+    nodeBudget: { maxRoots: Math.max(2, files.length + 1), maxDepth: 5, maxTotalNodes: Math.max(12, previewNodes.length) },
+  })
   semanticMergeMs += now() - semanticStartedAt
 
   emitProgress(options?.onProgress, {
@@ -1207,37 +1449,44 @@ export function createLocalTextImportBatchPreview(
     currentFileName: null,
     semanticMergeStage: 'review_ready',
   })
-  const buildPreviewStartedAt = now()
-  const previewNodes = flattenPreviewItems(batchRoot)
-  const operations = [
-    ...buildCreateChildOperations(batchRoot, request.context.rootTopicId),
-    ...semanticOperations,
-  ]
-  const buildPreviewMs = now() - buildPreviewStartedAt
+  const buildPreviewMs = 0
 
   const response: TextImportResponse = {
-    summary: `Created a batch import tree with ${files.length} files and ${previewNodes.length} preview nodes. ${allSuggestions.length > 0 ? `Detected ${allSuggestions.length} semantic matches against the current canvas.` : 'No semantic matches against the current canvas were detected.'}`,
+    summary: `Built a distilled batch import tree with ${files.length} files and ${previewNodes.length} preview nodes.`,
     baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
+    anchorTopicId: request.anchorTopicId,
+    classification: {
+      archetype: 'mixed',
+      confidence: 0.4,
+      rationale: 'Batch imports keep each file on its own archetype and use a mixed container at the top level.',
+      secondaryArchetype: null,
+    },
+    templateSummary: {
+      archetype: 'mixed',
+      visibleSlots: ['themes', 'actions'],
+      foldedSlots: ['summary', 'evidence', 'open_questions'],
+    },
+    nodePlans,
     previewNodes,
     operations,
     conflicts: [],
-    mergeSuggestions: allSuggestions,
-    crossFileMergeSuggestions,
+    mergeSuggestions: [],
+    crossFileMergeSuggestions: [],
     semanticMerge: {
-      candidateCount: allSuggestions.length + crossFileMergeSuggestions.length,
+      candidateCount: 0,
       adjudicatedCount: 0,
-      autoMergedExistingCount: semanticOperations.filter((operation) => operation.type === 'update_topic').length,
+      autoMergedExistingCount: 0,
       autoMergedCrossFileCount: 0,
-      conflictCount: allSuggestions.filter((suggestion) => suggestion.kind === 'conflict').length,
-      fallbackCount: allSuggestions.length + crossFileMergeSuggestions.length,
+      conflictCount: 0,
+      fallbackCount: 0,
     },
-    warnings: allWarnings,
+    warnings: [...allWarnings, ...qualityWarnings],
     batch: {
       jobType: 'batch',
       fileCount: files.length,
       completedFileCount: files.length,
       currentFileName: null,
-      batchContainerTitle: batchRoot.title,
+      batchContainerTitle: batchTitle,
       files: perFile.map((fileMetric, index) => ({
         sourceName: fileMetric.sourceName,
         sourceType: fileMetric.sourceType,
@@ -1245,6 +1494,8 @@ export function createLocalTextImportBatchPreview(
         nodeCount: fileMetric.totalNodeCount,
         mergeSuggestionCount: fileMetric.mergeSuggestionCount,
         warningCount: fileMetric.warningCount,
+        classification: perFileResponses[index]?.classification ?? null,
+        templateSummary: perFileResponses[index]?.templateSummary ?? null,
       })),
     },
   }
@@ -1263,11 +1514,11 @@ export function createLocalTextImportBatchPreview(
       semanticMergeMs,
       buildPreviewMs,
       totalNodeCount: previewNodes.length,
-      edgeCount: countEdges(batchRoot),
-      mergeSuggestionCount: allSuggestions.length,
-      warningCount: allWarnings.length,
+      edgeCount: Math.max(0, previewNodes.filter((node) => node.parentId !== null).length),
+      mergeSuggestionCount: 0,
+      warningCount: allWarnings.length + qualityWarnings.length,
       fileCount: files.length,
-      crossFileSuggestionCount: crossFileMergeSuggestions.length,
+      crossFileSuggestionCount: 0,
       perFile,
     },
   }

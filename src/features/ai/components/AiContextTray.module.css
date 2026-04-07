@@ -168,12 +168,37 @@
   border-radius: var(--radius-xs);
 }
 
+.selectedActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .selectedTitle {
   font-size: var(--font-size-body-sm);
   color: var(--on-surface);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sourceBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 88, 188, 0.08);
+  color: var(--primary-700);
+  font-size: var(--font-size-label);
+  font-weight: 500;
+}
+
+.emptyState {
+  padding: 10px 12px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-container-low);
+  color: var(--on-surface-muted);
+  font-size: var(--font-size-body-sm);
 }
 
 .removeButton {

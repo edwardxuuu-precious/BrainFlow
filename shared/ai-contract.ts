@@ -8,43 +8,32 @@ export type AiTopicMarker =
   | 'decision'
   | 'blocked'
 
-export interface AiTopicTask {
-  status: 'todo' | 'in_progress' | 'done'
-  priority: 'low' | 'medium' | 'high'
-  dueDate: string | null
-}
+export type AiTopicSticker =
+  | 'smile'
+  | 'party'
+  | 'heart'
+  | 'star'
+  | 'fire'
+  | 'rocket'
+  | 'bulb'
+  | 'target'
+  | 'coffee'
+  | 'clap'
+  | 'rainbow'
+  | 'sparkles'
 
-export interface AiTopicLink {
-  id: string
-  type: 'web' | 'topic' | 'local'
-  label: string
-  href?: string
-  targetTopicId?: string
-  path?: string
-}
-
-export interface AiTopicAttachmentRef {
-  id: string
-  name: string
-  uri: string
-  source: 'local' | 'url'
-  mimeType?: string | null
-}
+export type AiTopicType = 'normal' | 'milestone' | 'task'
 
 export interface AiTopicMetadata {
   labels: string[]
   markers: AiTopicMarker[]
-  task: AiTopicTask | null
-  links: AiTopicLink[]
-  attachments: AiTopicAttachmentRef[]
+  stickers?: AiTopicSticker[]
+  type?: AiTopicType
 }
 
 export interface AiTopicMetadataPatch {
   labels?: string[] | null
-  markers?: AiTopicMarker[] | null
-  task?: AiTopicTask | null
-  links?: AiTopicLink[] | null
-  attachments?: AiTopicAttachmentRef[] | null
+  type?: AiTopicType | null
 }
 
 export interface AiTopicStyle {
@@ -79,15 +68,26 @@ export interface AiFocusContext {
   relationSummary: string[]
 }
 
+export type AiContextScope = 'full_document' | 'focused_subset' | 'empty'
+
 export interface AiSelectionContext {
   documentTitle: string
   rootTopicId: string
+  scope: AiContextScope
   topicCount: number
   topics: AiDocumentTopicContext[]
   focus: AiFocusContext
 }
 
 export type AiCanvasTarget = `topic:${string}` | `ref:${string}`
+
+export type TextImportNodePriority = 'primary' | 'secondary' | 'supporting'
+
+export interface TextImportPresentationHints {
+  collapsedByDefault?: boolean
+  groupKey?: string | null
+  priority?: TextImportNodePriority | null
+}
 
 export type AiCanvasOperation =
   | {
@@ -97,6 +97,7 @@ export type AiCanvasOperation =
       note?: string
       metadata?: AiTopicMetadataPatch
       style?: AiTopicStyle
+      presentation?: TextImportPresentationHints
       resultRef?: string
     }
   | {
@@ -106,6 +107,7 @@ export type AiCanvasOperation =
       note?: string
       metadata?: AiTopicMetadataPatch
       style?: AiTopicStyle
+      presentation?: TextImportPresentationHints
       resultRef?: string
     }
   | {
@@ -115,6 +117,7 @@ export type AiCanvasOperation =
       note?: string
       metadata?: AiTopicMetadataPatch
       style?: AiTopicStyle
+      presentation?: TextImportPresentationHints
     }
   | {
       type: 'move_topic'
@@ -183,6 +186,69 @@ export interface AiChatResponse {
 }
 
 export type TextImportSourceType = 'file' | 'paste'
+export type TextImportIntent = 'preserve_structure' | 'distill_structure'
+export type TextImportPreset = 'preserve' | 'distill' | 'action_first'
+export type TextImportContentProfile =
+  | 'report'
+  | 'meeting_notes'
+  | 'procedure'
+  | 'mixed'
+  | 'brain_dump'
+export type TextImportArchetype =
+  | 'method'
+  | 'argument'
+  | 'plan'
+  | 'report'
+  | 'meeting'
+  | 'postmortem'
+  | 'knowledge'
+  | 'mixed'
+export type TextImportArchetypeMode = 'auto' | 'manual'
+export type TextImportConfidence = 'high' | 'medium' | 'low'
+export type TextImportTemplateSlot =
+  | 'goal'
+  | 'use_cases'
+  | 'prerequisites'
+  | 'steps'
+  | 'principles'
+  | 'criteria'
+  | 'pitfalls'
+  | 'examples'
+  | 'thesis'
+  | 'claims'
+  | 'evidence'
+  | 'data'
+  | 'limitations'
+  | 'conclusion'
+  | 'strategy'
+  | 'actions'
+  | 'owners'
+  | 'timeline'
+  | 'risks'
+  | 'success_metrics'
+  | 'summary'
+  | 'key_results'
+  | 'progress'
+  | 'metrics'
+  | 'blockers'
+  | 'next_steps'
+  | 'agenda'
+  | 'decisions'
+  | 'open_questions'
+  | 'timepoints'
+  | 'background'
+  | 'issues'
+  | 'causes'
+  | 'impacts'
+  | 'fixes'
+  | 'preventions'
+  | 'definition'
+  | 'components'
+  | 'mechanism'
+  | 'categories'
+  | 'comparisons'
+  | 'cautions'
+  | 'themes'
 
 export type TextImportHintKind =
   | 'heading'
@@ -193,6 +259,60 @@ export type TextImportHintKind =
   | 'blockquote'
   | 'code_block'
   | 'table'
+
+export type TextImportSemanticHintKind =
+  | 'decision'
+  | 'action'
+  | 'risk'
+  | 'question'
+  | 'metric'
+  | 'timeline'
+  | 'owner'
+  | 'evidence'
+
+export type TextImportSemanticRole =
+  | 'section'
+  | 'summary'
+  | 'decision'
+  | 'action'
+  | 'risk'
+  | 'question'
+  | 'metric'
+  | 'timeline'
+  | 'evidence'
+
+export type TextImportSemanticUnitType =
+  | 'summary'
+  | 'claim'
+  | 'step'
+  | 'criterion'
+  | 'decision'
+  | 'action'
+  | 'risk'
+  | 'question'
+  | 'metric'
+  | 'timeline'
+  | 'evidence'
+  | 'cause'
+  | 'impact'
+  | 'definition'
+  | 'comparison'
+  | 'example'
+  | 'owner'
+  | 'goal'
+  | 'strategy'
+  | 'result'
+  | 'progress'
+  | 'issue'
+  | 'principle'
+  | 'prerequisite'
+  | 'use_case'
+  | 'limitation'
+
+export interface TextImportSourceAnchor {
+  lineStart: number
+  lineEnd: number
+}
 
 export interface TextImportPreprocessHint {
   id: string
@@ -209,6 +329,63 @@ export interface TextImportPreprocessHint {
   rows?: string[][]
 }
 
+export interface TextImportSemanticHint {
+  id: string
+  kind: TextImportSemanticHintKind
+  text: string
+  excerpt: string
+  confidence: TextImportConfidence
+  lineStart: number
+  lineEnd: number
+  sourcePath: string[]
+}
+
+export interface TextImportSemanticUnit {
+  id: string
+  unitType: TextImportSemanticUnitType
+  text: string
+  excerpt: string
+  confidence: TextImportConfidence
+  lineStart: number
+  lineEnd: number
+  sourcePath: string[]
+  headingPath: string[]
+}
+
+export interface TextImportNodeBudget {
+  maxRoots: number
+  maxDepth: number
+  maxTotalNodes: number
+}
+
+export interface TextImportNodePlan {
+  id: string
+  parentId: string | null
+  order: number
+  title: string
+  note: string | null
+  semanticRole: TextImportSemanticRole
+  confidence: TextImportConfidence
+  sourceAnchors: TextImportSourceAnchor[]
+  groupKey?: string | null
+  priority?: TextImportNodePriority | null
+  collapsedByDefault?: boolean | null
+  templateSlot?: TextImportTemplateSlot | null
+}
+
+export interface TextImportClassification {
+  archetype: TextImportArchetype
+  confidence: number
+  rationale: string
+  secondaryArchetype?: TextImportArchetype | null
+}
+
+export interface TextImportTemplateSummary {
+  archetype: TextImportArchetype
+  visibleSlots: TextImportTemplateSlot[]
+  foldedSlots: TextImportTemplateSlot[]
+}
+
 export interface TextImportRequest {
   documentId: string
   documentTitle: string
@@ -217,8 +394,14 @@ export interface TextImportRequest {
   anchorTopicId: string | null
   sourceName: string
   sourceType: TextImportSourceType
+  intent: TextImportIntent
+  archetype?: TextImportArchetype
+  archetypeMode?: TextImportArchetypeMode
+  contentProfile?: TextImportContentProfile
+  nodeBudget?: TextImportNodeBudget
   rawText: string
   preprocessedHints: TextImportPreprocessHint[]
+  semanticHints: TextImportSemanticHint[]
 }
 
 export type AiImportOperationRisk = 'low' | 'high'
@@ -252,6 +435,10 @@ export interface TextImportPreviewItem {
   relation: 'new' | 'merge' | 'conflict'
   matchedTopicId: string | null
   reason: string | null
+  semanticRole?: TextImportSemanticRole
+  confidence?: TextImportConfidence
+  sourceAnchors?: TextImportSourceAnchor[]
+  templateSlot?: TextImportTemplateSlot | null
 }
 
 export interface TextImportPreviewNode extends TextImportPreviewItem {
@@ -327,6 +514,8 @@ export interface TextImportBatchFileSummary {
   nodeCount: number
   mergeSuggestionCount: number
   warningCount: number
+  classification?: TextImportClassification | null
+  templateSummary?: TextImportTemplateSummary | null
 }
 
 export interface TextImportBatchSummary {
@@ -358,6 +547,10 @@ export type AiImportOperation = AiCanvasOperation & {
 export interface TextImportResponse {
   summary: string
   baseDocumentUpdatedAt: number
+  anchorTopicId: string | null
+  classification: TextImportClassification
+  templateSummary: TextImportTemplateSummary
+  nodePlans: TextImportNodePlan[]
   previewNodes: TextImportPreviewItem[]
   operations: AiImportOperation[]
   conflicts: TextImportConflict[]
@@ -430,57 +623,6 @@ export type TextImportRunStage =
   | 'resolving_conflicts'
   | 'building_preview'
 
-export type TextImportRunnerAttempt = 'primary' | 'repair'
-
-export type TextImportRunnerObservationPhase =
-  | 'spawn_started'
-  | 'heartbeat'
-  | 'first_json_event'
-  | 'completed'
-
-export interface TextImportRunnerObservation {
-  attempt: TextImportRunnerAttempt
-  phase: TextImportRunnerObservationPhase
-  kind: 'structured' | 'message'
-  promptLength: number
-  elapsedSinceSpawnMs?: number
-  elapsedSinceLastEventMs?: number
-  exitCode?: number
-  hadJsonEvent?: boolean
-}
-
-export interface TextImportCodexEvent {
-  attempt: TextImportRunnerAttempt
-  eventType: string
-  at: number
-  summary: string
-  rawJson: string
-  requestId?: string
-}
-
-export interface TextImportCodexExplainer {
-  attempt: TextImportRunnerAttempt
-  at: number
-  headline: string
-  reason: string
-  evidence: string[]
-  requestId?: string
-}
-
-export type TextImportCodexDiagnosticCategory =
-  | 'noise'
-  | 'capability_gap'
-  | 'actionable'
-
-export interface TextImportCodexDiagnostic {
-  attempt: TextImportRunnerAttempt
-  category: TextImportCodexDiagnosticCategory
-  at: number
-  message: string
-  rawLine: string
-  requestId?: string
-}
-
 export type AiRunStage =
   | 'idle'
   | 'checking_status'
@@ -551,19 +693,6 @@ export type TextImportStreamEvent =
       message: string
       requestId?: string
     }
-  | ({
-      type: 'runner_observation'
-      requestId?: string
-    } & TextImportRunnerObservation)
-  | ({
-      type: 'codex_event'
-    } & TextImportCodexEvent)
-  | ({
-      type: 'codex_explainer'
-    } & TextImportCodexExplainer)
-  | ({
-      type: 'codex_diagnostic'
-    } & TextImportCodexDiagnostic)
   | {
       type: 'result'
       data: TextImportResponse

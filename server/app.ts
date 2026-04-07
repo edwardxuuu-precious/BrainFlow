@@ -68,7 +68,12 @@ function validateImportRequest(payload: unknown): TextImportRequest {
     throw new CodexBridgeError('invalid_request', '智能导入请求缺少预处理线索。')
   }
 
-  return request as TextImportRequest
+  return {
+    ...request,
+    intent: request.intent === 'preserve_structure' ? 'preserve_structure' : 'distill_structure',
+    archetypeMode: request.archetypeMode === 'manual' ? 'manual' : 'auto',
+    semanticHints: Array.isArray(request.semanticHints) ? request.semanticHints : [],
+  } as TextImportRequest
 }
 
 function validateImportAdjudicationRequest(payload: unknown): TextImportSemanticAdjudicationRequest {
@@ -495,30 +500,6 @@ export function createApp(options?: CreateAppOptions) {
               type: 'status',
               stage,
               message,
-            })
-          },
-          onRunnerObservation: (observation) => {
-            emit({
-              type: 'runner_observation',
-              ...observation,
-            })
-          },
-          onCodexEvent: (codexEvent) => {
-            emit({
-              type: 'codex_event',
-              ...codexEvent,
-            })
-          },
-          onCodexExplainer: (explainer) => {
-            emit({
-              type: 'codex_explainer',
-              ...explainer,
-            })
-          },
-          onCodexDiagnostic: (diagnostic) => {
-            emit({
-              type: 'codex_diagnostic',
-              ...diagnostic,
             })
           },
         })

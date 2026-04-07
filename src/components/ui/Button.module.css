@@ -52,6 +52,7 @@
 .lg {
   min-height: 48px;
   padding: 0 18px;
+  font-size: 14px;
 }
 
 /* Primary: Gradient fill (primary to primary-container), white text */

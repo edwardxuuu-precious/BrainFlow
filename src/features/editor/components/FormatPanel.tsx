@@ -90,7 +90,7 @@ function renderStyleControls(
               onChange={(event) => applyPatch({ background: event.target.value })}
             />
             <Button
-              tone="ghost"
+              tone="primary"
               size="sm"
               className={baseStyles.inlineButton}
               onClick={() => applyPatch({ background: null })}
@@ -111,7 +111,7 @@ function renderStyleControls(
               onChange={(event) => applyPatch({ textColor: event.target.value })}
             />
             <Button
-              tone="ghost"
+              tone="primary"
               size="sm"
               className={baseStyles.inlineButton}
               onClick={() => applyPatch({ textColor: null })}
@@ -132,7 +132,7 @@ function renderStyleControls(
               onChange={(event) => applyPatch({ branchColor: event.target.value })}
             />
             <Button
-              tone="ghost"
+              tone="primary"
               size="sm"
               className={baseStyles.inlineButton}
               onClick={() => applyPatch({ branchColor: null })}
@@ -168,34 +168,19 @@ export function FormatPanel({
 
   return (
     <section id={id} className={classNames(baseStyles.panel, className)} data-mode={mode}>
-      <div className={baseStyles.header}>
-        <div className={baseStyles.chrome}>
-          <div className={baseStyles.modeIntro}>
-            <span className={baseStyles.modeLabel}>格式</span>
-            <h2 className={baseStyles.modeHeading}>样式与画布</h2>
-            <p className={baseStyles.modeDescription}>
-              {activeSubtab === 'topic'
-                ? hasSelection
-                  ? isMultiSelection
-                    ? `当前选中了 ${selectionCount} 个节点。这里的样式调整会批量应用到整个选区。`
-                    : '编辑当前选中节点的视觉样式和一级分支方向。'
-                  : '当前没有选中节点。你可以先选中节点，或者切到画布子标签编辑整张脑图。'
-                : '调整整张脑图的配色、背景和分支色板。'}
-            </p>
-          </div>
-          {onCollapse ? (
-            <IconButton
-              label="隐藏右侧栏"
-              icon="chevronRight"
-              tone="ghost"
-              size="sm"
-              className={baseStyles.collapseButton}
-              aria-controls={id}
-              onClick={onCollapse}
-            />
-          ) : null}
+      {onCollapse ? (
+        <div className={baseStyles.collapseHeader}>
+          <IconButton
+            label="隐藏右侧栏"
+            icon="chevronRight"
+            tone="primary"
+            size="sm"
+            className={baseStyles.collapseButton}
+            aria-controls={id}
+            onClick={onCollapse}
+          />
         </div>
-      </div>
+      ) : null}
 
       <div className={baseStyles.content}>
         <div className={baseStyles.block}>

@@ -80,7 +80,7 @@ type CandidateBundle = ExistingCandidateBundle | CrossFileCandidateBundle
 
 export interface TextImportSemanticDraft {
   jobType: 'single' | 'batch'
-  rootTopicId: string
+  insertionParentTopicId: string
   batchTitle: string | null
   candidateBundles: CandidateBundle[]
   previewMetaById: Map<string, PreviewNodeMeta>
@@ -548,7 +548,7 @@ export function createTextImportSemanticDraft(
 
   return {
     jobType: 'files' in request ? 'batch' : 'single',
-    rootTopicId: request.context.rootTopicId,
+    insertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
     batchTitle: response.batch?.batchContainerTitle ?? null,
     candidateBundles,
     previewMetaById,
@@ -707,7 +707,7 @@ function resetChildOrder(node: TextImportPreviewNode): void {
 
 function buildCreateChildOperationsFromTree(
   roots: TextImportPreviewNode[],
-  rootTopicId: string,
+  insertionParentTopicId: string,
 ): AiImportOperation[] {
   const operations: AiImportOperation[] = []
 
@@ -732,7 +732,7 @@ function buildCreateChildOperationsFromTree(
     node.children.forEach((child) => visit(child, node.id))
   }
 
-  roots.forEach((root) => visit(root, `topic:${rootTopicId}`))
+  roots.forEach((root) => visit(root, `topic:${insertionParentTopicId}`))
   return operations
 }
 
@@ -984,7 +984,10 @@ export function applyTextImportSemanticAdjudication(
   })
 
   applyRoots.forEach((root) => resetChildOrder(root))
-  const structuralOperations = buildCreateChildOperationsFromTree(applyRoots, draft.rootTopicId)
+  const structuralOperations = buildCreateChildOperationsFromTree(
+    applyRoots,
+    draft.insertionParentTopicId,
+  )
   const updateOperations: AiImportOperation[] = []
 
   existingUpdateAggregates.forEach((aggregate, targetTopicId) => {

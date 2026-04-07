@@ -59,17 +59,11 @@ export function HierarchySidebar({
     const isActive = activeTopicId === topicId
     const isSelected = selectedSet.has(topicId)
     const hasNote = topic.note.trim().length > 0
-    const hasLinks = topic.metadata.links.length > 0
-    const hasAttachments = topic.metadata.attachments.length > 0
-    const task = topic.metadata.task
     const markers = topic.metadata.markers.slice(0, 2)
     const stickers = (topic.metadata.stickers ?? []).slice(0, 2)
     const description = [
       hasNote ? '已添加详细内容' : '',
       isLocked ? 'AI 已锁定' : '',
-      task ? `任务：${task.status}` : '',
-      hasLinks ? '包含链接' : '',
-      hasAttachments ? '包含附件引用' : '',
     ]
       .filter(Boolean)
       .join('；')
@@ -142,37 +136,6 @@ export function HierarchySidebar({
                   {topicStickerGlyphs[sticker]}
                 </span>
               ))}
-              {task ? (
-                <span
-                  className={styles.metaIndicator}
-                  data-task-indicator={task.status}
-                  aria-hidden="true"
-                >
-                  <Icon
-                    name={task.status === 'done' ? 'check' : task.status === 'in_progress' ? 'calendar' : 'history'}
-                    size={11}
-                    strokeWidth={1.9}
-                  />
-                </span>
-              ) : null}
-              {hasLinks ? (
-                <span
-                  className={styles.metaIndicator}
-                  data-link-indicator="true"
-                  aria-hidden="true"
-                >
-                  <Icon name="link" size={11} strokeWidth={1.9} />
-                </span>
-              ) : null}
-              {hasAttachments ? (
-                <span
-                  className={styles.metaIndicator}
-                  data-attachment-indicator="true"
-                  aria-hidden="true"
-                >
-                  <Icon name="attachment" size={11} strokeWidth={1.9} />
-                </span>
-              ) : null}
               {isLocked ? (
                 <span
                   className={styles.lockIndicator}
@@ -202,26 +165,19 @@ export function HierarchySidebar({
 
   return (
     <aside id={id} className={classNames(styles.sidebar, className)} data-mode={mode}>
-      <div className={styles.header}>
-        <div className={styles.chrome}>
-          <div className={styles.titleBlock}>
-            <span className={styles.label}>目录</span>
-            <h2 className={styles.title}>{document.title}</h2>
-            <p className={styles.subtitle}>在这里浏览主题层级，点击任意节点后会同步定位右侧内容与画布选区。</p>
-          </div>
-          {onCollapse ? (
-            <IconButton
-              label="隐藏右侧栏"
-              icon="chevronRight"
-              tone="ghost"
-              size="sm"
-              className={styles.collapseButton}
-              aria-controls={id}
-              onClick={onCollapse}
-            />
-          ) : null}
+      {onCollapse ? (
+        <div className={styles.collapseHeader}>
+          <IconButton
+            label="隐藏右侧栏"
+            icon="chevronRight"
+            tone="primary"
+            size="sm"
+            className={styles.collapseButton}
+            aria-controls={id}
+            onClick={onCollapse}
+          />
         </div>
-      </div>
+      ) : null}
 
       <nav className={styles.tree} aria-label="主题层级">
         <ul className={styles.treeList}>{renderTopic(document.rootTopicId, 0)}</ul>

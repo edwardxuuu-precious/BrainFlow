@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect, useCallback } from 'react'
 import type { AiRunStage } from '../../../../shared/ai-contract'
 import { Button, IconButton } from '../../../components/ui'
 import styles from './AiComposer.module.css'
@@ -13,6 +13,10 @@ interface AiComposerProps {
   onChange: (value: string) => void
   onSubmit: () => void
 }
+
+const MIN_HEIGHT = 160
+const MAX_HEIGHT = 400
+const DEFAULT_HEIGHT = 180
 
 function describeSendingState(stage: AiRunStage): string {
   switch (stage) {
@@ -47,7 +51,12 @@ export function AiComposer({
 }: AiComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const composerRef = useRef<HTMLDivElement>(null)
   const [attachments, setAttachments] = useState<File[]>([])
+  const [height, setHeight] = useState(DEFAULT_HEIGHT)
+  const [isDragging, setIsDragging] = useState(false)
+  const dragStartYRef = useRef(0)
+  const dragStartHeightRef = useRef(0)
 
   const handleSubmit = () => {
     if (!value.trim() && attachments.length === 0) return
@@ -76,8 +85,50 @@ export function AiComposer({
     setAttachments(prev => prev.filter((_, i) => i !== index))
   }
 
+  const handleResizeStart = useCallback((event: React.MouseEvent) => {
+    event.preventDefault()
+    setIsDragging(true)
+    dragStartYRef.current = event.clientY
+    dragStartHeightRef.current = height
+  }, [height])
+
+  useEffect(() => {
+    if (!isDragging) return
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const deltaY = dragStartYRef.current - event.clientY
+      const newHeight = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, dragStartHeightRef.current + deltaY))
+      setHeight(newHeight)
+    }
+
+    const handleMouseUp = () => {
+      setIsDragging(false)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isDragging])
+
   return (
-    <section className={styles.composer}>
+    <section 
+      ref={composerRef}
+      className={styles.composer} 
+      style={{ height }}
+    >
+      {/* Resize handle */}
+      <div 
+        className={styles.resizeHandle}
+        onMouseDown={handleResizeStart}
+        title="拖拽调整高度"
+      >
+        <div className={styles.resizeHandleBar} />
+      </div>
+
       {/* Attachments preview */}
       {attachments.length > 0 && (
         <div className={styles.attachments}>
@@ -112,7 +163,6 @@ export function AiComposer({
           }
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={handleKeyDown}
-          rows={1}
         />
       </div>
 
@@ -122,7 +172,7 @@ export function AiComposer({
           <IconButton
             label="添加附件"
             icon="attachment"
-            tone="ghost"
+            tone="primary"
             size="sm"
             disabled={disabled || isSending}
             onClick={() => fileInputRef.current?.click()}

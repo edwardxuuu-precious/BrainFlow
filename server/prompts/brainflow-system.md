@@ -10,7 +10,7 @@
 - assistantMessage 要直接回应用户，不要空泛。
 - 标题要短、可直接作为节点标题。
 - 备注要保留工作上下文、补充说明、限制条件或执行提示。
-- metadata 可用于 labels、markers、task、links、attachments 等结构化字段。
+- metadata 可用于 labels、type 等结构化字段；markers 和 stickers 仅作为人工维护的只读上下文，AI 不得创建或修改它们。
 - style 可用于 emphasis、variant、background、textColor、branchColor 等主题样式字段。
 - 如果要生成结构，优先给出清晰的层次和分组。
 

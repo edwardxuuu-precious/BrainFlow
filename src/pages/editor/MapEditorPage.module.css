@@ -16,6 +16,51 @@
   color: var(--on-surface-muted);
 }
 
+.errorState {
+  display: grid;
+  gap: 12px;
+  align-content: center;
+  justify-items: center;
+  min-height: 100dvh;
+  padding: 32px;
+  text-align: center;
+}
+
+.errorTitle {
+  margin: 0;
+  color: var(--document-text, var(--on-surface));
+  font-size: var(--font-size-display-sm);
+}
+
+.errorDescription {
+  max-width: 520px;
+  margin: 0;
+  color: var(--document-muted, var(--on-surface-variant));
+  line-height: 1.6;
+}
+
+.errorActions {
+  display: flex;
+  justify-content: center;
+}
+
+.errorButton {
+  min-width: 120px;
+  height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: var(--font-size-body-md);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.errorButton:hover {
+  filter: brightness(0.96);
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -53,6 +98,138 @@
 
 .topbarLeft {
   min-width: 0;
+}
+
+/* Main Menu (Hamburger) */
+.mainMenuContainer {
+  position: relative;
+}
+
+.hamburgerButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface);
+  cursor: pointer;
+  transition: background-color 180ms ease;
+}
+
+.hamburgerButton:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface);
+  cursor: pointer;
+  transition: background-color 180ms ease;
+}
+
+.iconButton:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.iconButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mainMenuDropdown {
+  position: fixed;
+  top: 52px;
+  left: 12px;
+  z-index: 9999;
+  overflow: visible;
+  min-width: 160px;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  border: 0.5px solid var(--divider);
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface);
+  font-size: var(--font-size-body-sm);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.menuItem:hover {
+  background: var(--surface-container-high);
+}
+
+.menuItemWithSubmenu {
+  position: relative;
+}
+
+.submenuArrow {
+  opacity: 0.72;
+  transition:
+    transform 200ms ease,
+    opacity 200ms ease;
+  margin-left: 8px;
+}
+
+.submenuArrowOpen {
+  transform: translateX(2px);
+  opacity: 1;
+}
+
+.submenu {
+  position: absolute;
+  top: -6px;
+  left: calc(100% - 2px);
+  z-index: 1;
+  min-width: 148px;
+  padding: 6px;
+  border-radius: 8px;
+  background: var(--surface-container-lowest);
+  border: 0.5px solid var(--divider);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.submenuItem {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface);
+  font-size: var(--font-size-body-sm);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.submenuItem:hover {
+  background: var(--surface-container-high);
 }
 
 .wordmark {
@@ -251,6 +428,13 @@
 .canvasFrame :global(.react-flow) {
   width: 100%;
   height: 100%;
+  --xy-selection-background-color: transparent;
+  --xy-selection-border: none;
+}
+
+.canvasFrame :global(.react-flow__nodesselection-rect),
+.canvasFrame :global(.react-flow__selection) {
+  box-shadow: none;
 }
 
 .canvasFrame :global(.react-flow__edge path) {

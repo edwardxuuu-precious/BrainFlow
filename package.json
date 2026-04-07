@@ -12,6 +12,7 @@
     "build:web": "tsc -b && vite build",
     "build:server": "tsc -p server/tsconfig.json",
     "lint": "eslint .",
+    "benchmark:markdown-import": "tsx scripts/benchmark-markdown-import.ts",
     "preview": "vite preview",
     "start:server": "node server/dist/server/index.js",
     "test": "vitest run",

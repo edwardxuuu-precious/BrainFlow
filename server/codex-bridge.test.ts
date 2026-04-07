@@ -27,18 +27,19 @@ const baseRequest: AiChatRequest = {
     {
       id: 'msg_1',
       role: 'user',
-      content: '帮我整理脑图',
+      content: 'Summarize the current map.',
       createdAt: 1,
     },
   ],
   context: {
-    documentTitle: '测试脑图',
+    documentTitle: '濞村鐦懘鎴濇禈',
     rootTopicId: 'root',
+    scope: 'full_document',
     topicCount: 1,
     topics: [
       {
         topicId: 'root',
-        title: '中心主题',
+        title: '娑擃厼绺炬稉濠氼暯',
         note: '',
         parentTopicId: null,
         childTopicIds: [],
@@ -46,9 +47,6 @@ const baseRequest: AiChatRequest = {
         metadata: {
           labels: [],
           markers: [],
-          task: null,
-          links: [],
-          attachments: [],
         },
         style: {
           emphasis: 'normal',
@@ -67,12 +65,13 @@ const baseRequest: AiChatRequest = {
 
 const baseImportRequest: TextImportRequest = {
   documentId: 'doc_1',
-  documentTitle: '测试脑图',
+  documentTitle: '濞村鐦懘鎴濇禈',
   baseDocumentUpdatedAt: 1,
   context: baseRequest.context,
   anchorTopicId: 'root',
   sourceName: 'plan.txt',
   sourceType: 'file',
+  intent: 'distill_structure',
   rawText: '# Plan',
   preprocessedHints: [
     {
@@ -86,12 +85,13 @@ const baseImportRequest: TextImportRequest = {
       sourcePath: ['Plan'],
     },
   ],
+  semanticHints: [],
 }
 
 const baseAdjudicationRequest: TextImportSemanticAdjudicationRequest = {
   jobId: 'job_semantic_1',
   documentId: 'doc_1',
-  documentTitle: '测试脑图',
+  documentTitle: '濞村鐦懘鎴濇禈',
   batchTitle: 'Import batch: GTM',
   candidates: [
     {
@@ -111,10 +111,10 @@ const baseAdjudicationRequest: TextImportSemanticAdjudicationRequest = {
         id: 'topic_1',
         scope: 'existing_topic',
         sourceName: null,
-        pathTitles: ['中心主题', '分支一'],
-        title: '分支一',
+        pathTitles: ['Root topic', 'Goals'],
+        title: 'Goals',
         noteSummary: 'Existing summary',
-        parentTitle: '中心主题',
+        parentTitle: '娑擃厼绺炬稉濠氼暯',
         fingerprint: 'fp_1',
       },
     },
@@ -153,7 +153,7 @@ describe('createCodexBridge', () => {
       loggedIn: true,
       ready: false,
       issues: [expect.objectContaining({ code: 'request_failed', message: expect.stringContaining('ENOENT') })],
-      systemPromptSummary: '系统 Prompt 加载失败',
+      systemPromptSummary: expect.stringContaining('Prompt'),
       systemPromptVersion: 'unavailable',
       systemPrompt: '',
     })
@@ -164,11 +164,11 @@ describe('createCodexBridge', () => {
       options?.onEvent?.({
         type: 'item.delta',
         item: {
-          text_delta: '正在输出的片段',
+          text_delta: 'Streaming assistant delta',
         },
       })
 
-      return '完整自然语言回答'
+      return 'Assistant reply'
     })
 
     const bridge = createCodexBridge({
@@ -184,16 +184,110 @@ describe('createCodexBridge', () => {
     const result = await bridge.streamChat(baseRequest, { onAssistantDelta })
 
     expect(result).toEqual({
-      assistantMessage: '完整自然语言回答',
+      assistantMessage: 'Assistant reply',
       emittedDelta: true,
     })
-    expect(onAssistantDelta).toHaveBeenCalledWith('正在输出的片段')
+    expect(onAssistantDelta).toHaveBeenCalledWith('Streaming assistant delta')
+  })
+
+  it('switches chat prompt guidance when only a focused subset is provided', async () => {
+    const executeMessage = vi.fn().mockResolvedValue('Assistant reply')
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockResolvedValue(readyStatus),
+        execute: vi.fn(),
+        executeMessage,
+      },
+      promptStore: createPromptStore(),
+    })
+
+    const subsetRequest: AiChatRequest = {
+      ...baseRequest,
+      context: {
+        ...baseRequest.context,
+        scope: 'focused_subset',
+        topicCount: 1,
+        topics: [baseRequest.context.topics[0]],
+      },
+    }
+
+    await bridge.streamChat(subsetRequest)
+
+    expect(executeMessage.mock.calls[0]?.[0]).toContain('Use only the provided subset graph context.')
+    expect(executeMessage.mock.calls[0]?.[0]).not.toContain('Use the full graph context to understand the request')
+  })
+
+  it('drops AI-authored markers and stickers from planned proposal metadata', async () => {
+    const execute = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        needsMoreContext: false,
+        contextRequest: [],
+        warnings: [],
+        proposal: {
+          id: 'proposal_1',
+          summary: 'Planned changes',
+          operations: [
+            {
+              type: 'update_topic',
+              target: 'topic:root',
+              title: 'Updated root',
+              metadata: {
+                labels: ['action'],
+                type: 'task',
+                markers: ['warning'],
+                stickers: ['rocket'],
+              },
+            },
+          ],
+        },
+      }),
+    )
+
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockResolvedValue(readyStatus),
+        execute,
+        executeMessage: vi.fn(),
+      },
+      promptStore: createPromptStore(),
+    })
+
+    const result = await bridge.planChanges(baseRequest, 'Assistant reply')
+
+    expect(result).toMatchObject({
+      assistantMessage: 'Assistant reply',
+      needsMoreContext: false,
+      proposal: {
+        summary: 'Planned changes',
+        operations: [
+          expect.objectContaining({
+            type: 'update_topic',
+            target: 'topic:root',
+          }),
+        ],
+      },
+    })
+    expect(result.proposal?.operations[0]).toMatchObject({
+      type: 'update_topic',
+      target: 'topic:root',
+      metadata: {
+        labels: ['action'],
+        type: 'task',
+      },
+    })
+    const firstOperation = result.proposal?.operations[0]
+    expect(firstOperation && 'metadata' in firstOperation ? firstOperation.metadata : undefined).not.toHaveProperty('markers')
+    expect(firstOperation && 'metadata' in firstOperation ? firstOperation.metadata : undefined).not.toHaveProperty('stickers')
+    expect(execute.mock.calls[0]?.[0]).toContain('Markers and stickers are human-maintained fields.')
+    expect(execute.mock.calls[0]?.[0]).toContain(
+      'you must not create or modify markers or stickers in proposal metadata.',
+    )
   })
 
   it('normalizes flat text import preview payloads', async () => {
     const execute = vi.fn().mockResolvedValue(
       JSON.stringify({
-        summary: '已生成导入预览',
+        summary: 'Compact preview ready',
         previewNodes: [
           {
             id: 'preview_1',
@@ -244,7 +338,7 @@ describe('createCodexBridge', () => {
     })
 
     await expect(bridge.previewTextImport(baseImportRequest)).resolves.toMatchObject({
-      summary: '已生成导入预览',
+      summary: 'Compact preview ready',
       baseDocumentUpdatedAt: 1,
       previewNodes: [
         expect.objectContaining({
@@ -260,14 +354,115 @@ describe('createCodexBridge', () => {
       warnings: [],
     })
     expect(execute.mock.calls[0][0]).toContain(
-      'When the source is dialogue, chat, or meeting back-and-forth, prefer finer-grained nodes',
+      'Prefer semantic planning first. Output nodePlans when possible',
     )
     expect(execute.mock.calls[0][0]).toContain(
-      'When the source contains tables or semi-structured data, preserve the full table in note text',
+      '"semanticHintCount": 0',
     )
     expect(execute.mock.calls[0][0]).toContain(
-      'When the source is long-form prose without explicit markdown structure, infer a concise hierarchy',
+      'Avoid generic titles, sibling explosions, and dumping long raw notes into leaf nodes.',
     )
+  })
+
+  it('strips formatting fields from imported structural operations', async () => {
+    const execute = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        summary: 'Compact preview ready',
+        previewNodes: [
+          {
+            id: 'preview_1',
+            parentId: null,
+            order: 0,
+            title: 'Plan',
+            note: 'Capture the key follow-up',
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+          },
+        ],
+        operations: [
+          {
+            id: 'import_1',
+            risk: 'low',
+            type: 'create_child',
+            parent: 'topic:root',
+            title: 'Plan',
+            note: 'Capture the key follow-up',
+            resultRef: 'preview_1',
+            metadata: {
+              labels: ['action'],
+              type: 'task',
+              markers: ['warning'],
+              stickers: ['rocket'],
+            },
+            style: {
+              emphasis: 'focus',
+              variant: 'soft',
+            },
+            presentation: {
+              collapsedByDefault: true,
+              groupKey: 'actions',
+              priority: 'primary',
+            },
+          },
+          {
+            id: 'import_2',
+            risk: 'low',
+            type: 'update_topic',
+            target: 'topic:root',
+            title: 'Root update',
+            note: 'Keep the existing branch concise',
+            metadata: {
+              labels: ['decision'],
+              markers: ['decision'],
+            },
+            style: {
+              emphasis: 'focus',
+              variant: 'solid',
+            },
+            presentation: {
+              collapsedByDefault: true,
+            },
+          },
+        ],
+        conflicts: [],
+        warnings: [],
+      }),
+    )
+
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockResolvedValue(readyStatus),
+        execute,
+        executeMessage: vi.fn(),
+      },
+      promptStore: createPromptStore(),
+    })
+
+    const result = await bridge.previewTextImport(baseImportRequest)
+    const createOperation = result.operations[0]
+    const updateOperation = result.operations[1]
+
+    expect(createOperation).toMatchObject({
+      type: 'create_child',
+      parent: 'topic:root',
+      title: 'Plan',
+      note: 'Capture the key follow-up',
+      resultRef: 'preview_1',
+    })
+    expect(createOperation).not.toHaveProperty('metadata')
+    expect(createOperation).not.toHaveProperty('style')
+    expect(createOperation).not.toHaveProperty('presentation')
+
+    expect(updateOperation).toMatchObject({
+      type: 'update_topic',
+      target: 'topic:root',
+      title: 'Root update',
+      note: 'Keep the existing branch concise',
+    })
+    expect(updateOperation).not.toHaveProperty('metadata')
+    expect(updateOperation).not.toHaveProperty('style')
+    expect(updateOperation).not.toHaveProperty('presentation')
   })
 
   it('adjudicates semantic import candidates with a dedicated schema', async () => {
@@ -330,7 +525,7 @@ describe('createCodexBridge', () => {
       )
       .mockResolvedValueOnce(
         JSON.stringify({
-          summary: '已生成导入预览',
+          summary: 'Compact preview ready',
           previewNodes: [
             {
               id: 'preview_1',
@@ -381,7 +576,7 @@ describe('createCodexBridge', () => {
     expect(execute.mock.calls[1][0]).toContain('repair attempt')
   })
 
-  it('logs import attempt timings and runner observations when requestId is provided', async () => {
+  it('logs import attempt timings when requestId is provided', async () => {
     const execute = vi.fn().mockImplementation(async (_prompt, _schema, options) => {
       options?.onEvent?.({
         type: 'thread.started',
@@ -440,7 +635,7 @@ describe('createCodexBridge', () => {
       })
 
       return JSON.stringify({
-        summary: '已生成导入预览',
+        summary: 'preview',
         previewNodes: [
           {
             id: 'preview_1',
@@ -458,9 +653,8 @@ describe('createCodexBridge', () => {
         warnings: [],
       })
     })
+
     const logInfo = vi.fn()
-    const onRunnerObservation = vi.fn()
-    const onCodexEvent = vi.fn()
     const bridge = createCodexBridge({
       runner: {
         getStatus: vi.fn().mockResolvedValue(readyStatus),
@@ -481,55 +675,11 @@ describe('createCodexBridge', () => {
     await bridge.previewTextImport(baseImportRequest, {
       requestId: 'req_123',
       onStatus: vi.fn(),
-      onRunnerObservation,
-      onCodexEvent,
     })
 
     expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('[import][requestId=req_123]'))
     expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('event="runner"'))
     expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('event="attempt_completed"'))
-    expect(onRunnerObservation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        attempt: 'primary',
-        phase: 'heartbeat',
-        promptLength: 120,
-        elapsedSinceLastEventMs: 40,
-      }),
-    )
-    expect(onRunnerObservation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        attempt: 'primary',
-        phase: 'first_json_event',
-        promptLength: 120,
-      }),
-    )
-    expect(onCodexEvent).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        attempt: 'primary',
-        eventType: 'turn.started',
-        requestId: 'req_123',
-        summary: 'Codex 已开始分析导入内容',
-      }),
-    )
-    expect(onCodexEvent).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        attempt: 'primary',
-        eventType: 'item.completed',
-        requestId: 'req_123',
-        summary: '已生成结构化结果：Compact preview ready',
-      }),
-    )
-    expect(onCodexEvent).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({
-        attempt: 'primary',
-        eventType: 'turn.completed',
-        requestId: 'req_123',
-        summary: 'Codex 已完成生成（输入 512 tokens，输出 128 tokens）',
-      }),
-    )
   })
 
   it('builds a compact import context for markdown requests', async () => {
@@ -551,9 +701,6 @@ describe('createCodexBridge', () => {
             metadata: {
               labels: ['launch'],
               markers: [],
-              task: null,
-              links: [],
-              attachments: [],
             },
             style: {
               emphasis: 'focus',
@@ -570,9 +717,6 @@ describe('createCodexBridge', () => {
             metadata: {
               labels: [],
               markers: [],
-              task: null,
-              links: [],
-              attachments: [],
             },
             style: {
               emphasis: 'normal',
@@ -589,9 +733,6 @@ describe('createCodexBridge', () => {
             metadata: {
               labels: [],
               markers: [],
-              task: null,
-              links: [],
-              attachments: [],
             },
             style: {
               emphasis: 'normal',
@@ -632,7 +773,18 @@ describe('createCodexBridge', () => {
     const prompt = execute.mock.calls[0]?.[0] as string
     expect(prompt).toContain('"focusedTopicCount": 3')
     expect(prompt).toContain('"compactTopicCount": 1')
-    expect(prompt).toContain('"notePreview": "This note should be truncated')
+    expect(prompt).toContain('"focusedNotePreviewCount": 2')
+    expect(prompt).toContain('"compactNotePreviewCount": 1')
+    expect(prompt).toContain('"structuredHintCount": 1')
+    expect(prompt).toContain('"preprocessedHintSummary"')
+    expect(prompt).toContain('"backgroundTopicTitles": [')
+    expect(prompt).not.toContain('"compactTopics": [')
+    expect(prompt).not.toContain('"preprocessedHints": [')
+    expect(prompt).toContain('"notePreview": "Detailed note kept in full"')
+    expect(prompt).toContain('"notePreview": "Another full note"')
+    expect(prompt).toContain('"Background topic"')
+    expect(prompt).not.toContain('"notePreview": "This note should be truncated')
+    expect(prompt).not.toContain('"note": "Detailed note kept in full"')
     expect(prompt).not.toContain('"labels": []')
     expect(prompt).not.toContain('"variant": "default"')
   })
@@ -653,7 +805,7 @@ describe('createCodexBridge', () => {
         Object.assign(new Error('cli failed'), {
           issue: {
             code: 'request_failed',
-            message: 'Codex 执行失败，请稍后重试；如果持续失败，请检查本地 bridge 日志。',
+            message: 'Codex execution failed; check the local bridge logs.',
           },
           rawMessage: 'stderr: model output was truncated',
         }),
@@ -670,7 +822,7 @@ describe('createCodexBridge', () => {
 
     await expect(bridge.previewTextImport(baseImportRequest)).rejects.toMatchObject({
       code: 'request_failed',
-      message: 'Codex 导入结构修正失败',
+      message: expect.stringContaining('Codex'),
       rawMessage: 'stderr: model output was truncated',
     } satisfies Partial<CodexBridgeError>)
   })

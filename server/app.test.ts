@@ -19,13 +19,13 @@ const status: CodexStatus = {
   authProvider: 'ChatGPT',
   ready: true,
   issues: [],
-  systemPromptSummary: '完整系统提示摘要',
+  systemPromptSummary: '锟斤拷锟斤拷系统锟斤拷示摘要',
   systemPromptVersion: 'abc123',
   systemPrompt: 'full prompt',
 }
 
 const settings: CodexSettings = {
-  businessPrompt: '你是一个帮助用户直接把想法落到脑图中的助手。',
+  businessPrompt: '锟斤拷锟斤拷一锟斤拷锟斤拷锟斤拷锟矫伙拷直锟接帮拷锟诫法锟戒到锟斤拷图锟叫碉拷锟斤拷锟街★拷',
   updatedAt: 1,
   version: 'settings-v1',
 }
@@ -38,18 +38,19 @@ const baseRequest: AiChatRequest = {
     {
       id: 'msg_1',
       role: 'user',
-      content: '请帮我整理这张脑图',
+      content: 'Summarize the meeting.',
       createdAt: 1,
     },
   ],
   context: {
-    documentTitle: '测试脑图',
+    documentTitle: '锟斤拷锟斤拷锟斤拷图',
     rootTopicId: 'topic_root',
+    scope: 'full_document',
     topicCount: 2,
     topics: [
       {
         topicId: 'topic_root',
-        title: '中心主题',
+        title: '锟斤拷锟斤拷锟斤拷锟斤拷',
         note: '',
         parentTopicId: null,
         childTopicIds: ['topic_1'],
@@ -57,9 +58,6 @@ const baseRequest: AiChatRequest = {
         metadata: {
           labels: [],
           markers: [],
-          task: null,
-          links: [],
-          attachments: [],
         },
         style: {
           emphasis: 'normal',
@@ -68,7 +66,7 @@ const baseRequest: AiChatRequest = {
       },
       {
         topicId: 'topic_1',
-        title: '分支一',
+        title: '锟斤拷支一',
         note: '',
         parentTopicId: 'topic_root',
         childTopicIds: [],
@@ -76,9 +74,6 @@ const baseRequest: AiChatRequest = {
         metadata: {
           labels: [],
           markers: [],
-          task: null,
-          links: [],
-          attachments: [],
         },
         style: {
           emphasis: 'normal',
@@ -96,12 +91,13 @@ const baseRequest: AiChatRequest = {
 
 const baseImportRequest: TextImportRequest = {
   documentId: 'doc_1',
-  documentTitle: '测试脑图',
+  documentTitle: '锟斤拷锟斤拷锟斤拷图',
   baseDocumentUpdatedAt: 1,
   context: baseRequest.context,
   anchorTopicId: 'topic_1',
   sourceName: 'plan.txt',
   sourceType: 'file',
+  intent: 'distill_structure',
   rawText: '# Plan\n\n- Item',
   preprocessedHints: [
     {
@@ -115,12 +111,13 @@ const baseImportRequest: TextImportRequest = {
       sourcePath: ['Plan'],
     },
   ],
+  semanticHints: [],
 }
 
 const baseAdjudicationRequest: TextImportSemanticAdjudicationRequest = {
   jobId: 'job_semantic_1',
   documentId: 'doc_1',
-  documentTitle: '测试脑图',
+  documentTitle: '锟斤拷锟斤拷锟斤拷图',
   batchTitle: 'Import batch: GTM',
   candidates: [
     {
@@ -140,10 +137,10 @@ const baseAdjudicationRequest: TextImportSemanticAdjudicationRequest = {
         id: 'topic_1',
         scope: 'existing_topic',
         sourceName: null,
-        pathTitles: ['中心主题', '分支一'],
-        title: '分支一',
+        pathTitles: ['锟斤拷锟斤拷锟斤拷锟斤拷', '锟斤拷支一'],
+        title: '锟斤拷支一',
         noteSummary: 'Existing summary',
-        parentTitle: '中心主题',
+        parentTitle: '锟斤拷锟斤拷锟斤拷锟斤拷',
         fingerprint: 'fp_1',
       },
     },
@@ -188,7 +185,7 @@ describe('codex app', () => {
 
   it('streams natural-language content first, then emits the final result', async () => {
     const result: AiChatResponse = {
-      assistantMessage: '这里是一条 Codex 回答。',
+      assistantMessage: '锟斤拷锟斤拷锟斤拷一锟斤拷 Codex 锟截达拷',
       needsMoreContext: false,
       contextRequest: [],
       proposal: {
@@ -223,8 +220,36 @@ describe('codex app', () => {
 
   it('streams text import preview stages and the final import result', async () => {
     const result: TextImportResponse = {
-      summary: '已生成导入预览',
+      summary: '锟斤拷锟斤拷锟缴碉拷锟斤拷预锟斤拷',
       baseDocumentUpdatedAt: 1,
+      anchorTopicId: 'topic_1',
+      classification: {
+        archetype: 'plan',
+        confidence: 0.72,
+        rationale: 'Fixture classification.',
+        secondaryArchetype: 'report',
+      },
+      templateSummary: {
+        archetype: 'plan',
+        visibleSlots: ['actions', 'risks'],
+        foldedSlots: ['goal'],
+      },
+      nodePlans: [
+        {
+          id: 'preview_1',
+          parentId: null,
+          order: 0,
+          title: 'Plan',
+          note: null,
+          semanticRole: 'section',
+          confidence: 'high',
+          sourceAnchors: [],
+          groupKey: 'root',
+          priority: 'primary',
+          collapsedByDefault: false,
+          templateSlot: null,
+        },
+      ],
       previewNodes: [
         {
           id: 'preview_1',
@@ -255,36 +280,20 @@ describe('codex app', () => {
       previewTextImport: vi.fn().mockImplementation(async (_request, options) => {
         options?.onStatus?.({
           stage: 'loading_prompt',
-          message: '已加载系统提示词，正在准备导入分析…',
+          message: 'Loaded the system prompt for import analysis.',
           durationMs: 12,
         })
         options?.onStatus?.({
           stage: 'starting_codex_primary',
-          message: '正在启动 Codex 导入分析…',
+          message: 'Starting the Codex import analysis.',
         })
         options?.onStatus?.({
           stage: 'waiting_codex_primary',
-          message: 'Codex 正在分析全文与整张脑图…',
-        })
-        options?.onRunnerObservation?.({
-          attempt: 'primary',
-          phase: 'heartbeat',
-          kind: 'structured',
-          promptLength: 120,
-          elapsedSinceSpawnMs: 5_000,
-          elapsedSinceLastEventMs: 5_000,
-          hadJsonEvent: false,
-        })
-        options?.onCodexEvent?.({
-          attempt: 'primary',
-          eventType: 'turn.started',
-          at: 1_000,
-          summary: 'Codex 已开始分析导入内容',
-          rawJson: '{"type":"turn.started"}',
+          message: 'Codex 锟斤拷锟节凤拷锟斤拷全锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷图锟斤拷',
         })
         options?.onStatus?.({
           stage: 'parsing_primary_result',
-          message: '正在解析主导入结果…',
+          message: 'Parsing the primary import result.',
         })
         return result
       }),
@@ -307,10 +316,6 @@ describe('codex app', () => {
     expect(payload).toContain('"stage":"loading_prompt"')
     expect(payload).toContain('"stage":"starting_codex_primary"')
     expect(payload).toContain('"stage":"waiting_codex_primary"')
-    expect(payload).toContain('"type":"runner_observation"')
-    expect(payload).toContain('"phase":"heartbeat"')
-    expect(payload).toContain('"type":"codex_event"')
-    expect(payload).toContain('"eventType":"turn.started"')
     expect(payload).toContain('"stage":"parsing_primary_result"')
     expect(payload).toContain('"stage":"resolving_conflicts"')
     expect(payload).toContain('"stage":"building_preview"')
@@ -323,7 +328,16 @@ describe('codex app', () => {
         requestId: expect.stringMatching(/^import_/),
       }),
     )
-    expect(bridge.previewTextImport).toHaveBeenCalledWith(baseImportRequest, expect.any(Object))
+    expect(bridge.previewTextImport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...baseImportRequest,
+        archetypeMode: 'auto',
+      }),
+      expect.objectContaining({
+        onStatus: expect.any(Function),
+        requestId: expect.stringMatching(/^import_/),
+      }),
+    )
     expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('[import][requestId='))
     expect(logError).not.toHaveBeenCalled()
   })
@@ -333,7 +347,7 @@ describe('codex app', () => {
       previewTextImport: vi.fn().mockRejectedValue(
         new CodexBridgeError(
           'request_failed',
-          'Codex 导入结构修正失败',
+          'Codex import repair failed',
           undefined,
           'stderr: model output was truncated',
         ),
@@ -352,7 +366,7 @@ describe('codex app', () => {
     const payload = await response.text()
     const events = parseNdjsonPayload(payload)
     expect(payload).toContain('"type":"error"')
-    expect(payload).toContain('"message":"Codex 导入结构修正失败"')
+    expect(payload).toContain('"message":"Codex import repair failed"')
     expect(payload).toContain('"rawMessage":"stderr: model output was truncated"')
     expect(events.at(-1)).toEqual(
       expect.objectContaining({

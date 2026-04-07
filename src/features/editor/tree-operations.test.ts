@@ -70,9 +70,24 @@ describe('tree-operations', () => {
     const moved = setTopicOffset(document, branchId, 40, 18)
     const reset = resetTopicOffset(moved, branchId)
 
-    expect(document.topics[branchId].layout).toEqual({ offsetX: 0, offsetY: 0 })
-    expect(moved.topics[branchId].layout).toEqual({ offsetX: 40, offsetY: 18 })
-    expect(reset.topics[branchId].layout).toEqual({ offsetX: 0, offsetY: 0 })
+    expect(document.topics[branchId].layout).toEqual({
+      offsetX: 0,
+      offsetY: 0,
+      semanticGroupKey: null,
+      priority: null,
+    })
+    expect(moved.topics[branchId].layout).toEqual({
+      offsetX: 40,
+      offsetY: 18,
+      semanticGroupKey: null,
+      priority: null,
+    })
+    expect(reset.topics[branchId].layout).toEqual({
+      offsetX: 0,
+      offsetY: 0,
+      semanticGroupKey: null,
+      priority: null,
+    })
   })
 
   it('toggles AI lock state without mutating the source document', () => {

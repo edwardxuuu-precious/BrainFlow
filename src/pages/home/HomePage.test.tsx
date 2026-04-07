@@ -89,8 +89,7 @@ describe('HomePage', () => {
       </MemoryRouter>,
     )
 
-    await screen.findByText('人须在事上磨，方立得住。')
-    expect(screen.getByText('王阳明')).toBeInTheDocument()
+    await screen.findByText('人是欲望的动物，欲望得不到满足便痛苦，得到满足便无聊。')
     expect(screen.queryByText('Document Workspace')).not.toBeInTheDocument()
     expect(screen.queryByText('Local First')).not.toBeInTheDocument()
     expect(screen.queryByText(/\d+\s+Docs/)).not.toBeInTheDocument()

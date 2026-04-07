@@ -28,7 +28,7 @@ export function SidebarRail({
         label={label}
         icon="back"
         size="sm"
-        tone="secondary"
+        tone="primary"
         className={styles.toggle}
         aria-controls={controlsId}
         aria-expanded={expanded}

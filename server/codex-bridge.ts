@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   AiDocumentTopicContext,
   AiImportOperation,
   AiRunStage,
@@ -16,17 +16,22 @@
   TextImportSemanticAdjudicationResponse,
   TextImportSemanticDecision,
   TextImportConflict,
-  TextImportCodexDiagnostic,
-  TextImportCodexDiagnosticCategory,
-  TextImportCodexEvent,
-  TextImportCodexExplainer,
+  TextImportClassification,
+  TextImportNodePlan,
+  TextImportPresentationHints,
   TextImportPreviewItem,
   TextImportRequest,
   TextImportResponse,
   TextImportRunStage,
-  TextImportRunnerAttempt,
-  TextImportRunnerObservation,
+  TextImportTemplateSlot,
+  TextImportTemplateSummary,
 } from '../shared/ai-contract.js'
+import { sanitizeAiWritableMetadataPatch } from '../shared/ai-metadata-patch.js'
+import {
+  buildTextImportQualityWarnings,
+  compileTextImportNodePlans,
+  deriveTextImportNodePlansFromPreviewNodes,
+} from '../shared/text-import-semantics.js'
 import {
   createCodexRunner,
   type CodexExecutionObservation,
@@ -55,6 +60,7 @@ type RawProposalOperation = {
   targetParentId?: string | null
   metadata?: unknown
   style?: unknown
+  presentation?: unknown
 }
 
 interface RawProposalPayload {
@@ -75,6 +81,7 @@ interface RawImportOperation extends RawProposalOperation {
   risk?: string | null
   conflictId?: string | null
   reason?: string | null
+  targetFingerprint?: string | null
 }
 
 interface RawImportConflict {
@@ -95,10 +102,45 @@ interface RawImportPreviewItem {
   relation?: string | null
   matchedTopicId?: string | null
   reason?: string | null
+  semanticRole?: string | null
+  confidence?: string | null
+  sourceAnchors?: Array<{ lineStart?: number | null; lineEnd?: number | null }> | null
+  templateSlot?: string | null
+}
+
+interface RawImportNodePlan {
+  id?: string | null
+  parentId?: string | null
+  order?: number | null
+  title?: string | null
+  note?: string | null
+  semanticRole?: string | null
+  confidence?: string | null
+  sourceAnchors?: Array<{ lineStart?: number | null; lineEnd?: number | null }> | null
+  groupKey?: string | null
+  priority?: string | null
+  collapsedByDefault?: boolean | null
+  templateSlot?: string | null
+}
+
+interface RawImportClassification {
+  archetype?: string | null
+  confidence?: number | null
+  rationale?: string | null
+  secondaryArchetype?: string | null
+}
+
+interface RawImportTemplateSummary {
+  archetype?: string | null
+  visibleSlots?: string[] | null
+  foldedSlots?: string[] | null
 }
 
 interface RawImportPayload {
   summary?: string | null
+  classification?: RawImportClassification | null
+  templateSummary?: RawImportTemplateSummary | null
+  nodePlans?: RawImportNodePlan[] | null
   previewNodes?: RawImportPreviewItem[] | null
   operations?: RawImportOperation[] | null
   conflicts?: RawImportConflict[] | null
@@ -134,18 +176,9 @@ export interface TextImportStatusUpdate {
   durationMs?: number
 }
 
-export type TextImportRunnerObservationUpdate = TextImportRunnerObservation
-export type TextImportCodexEventUpdate = TextImportCodexEvent
-export type TextImportCodexExplainerUpdate = TextImportCodexExplainer
-export type TextImportCodexDiagnosticUpdate = TextImportCodexDiagnostic
-
 export interface TextImportPreviewOptions {
   requestId?: string
   onStatus?: (update: TextImportStatusUpdate) => void
-  onRunnerObservation?: (update: TextImportRunnerObservationUpdate) => void
-  onCodexEvent?: (update: TextImportCodexEventUpdate) => void
-  onCodexExplainer?: (update: TextImportCodexExplainerUpdate) => void
-  onCodexDiagnostic?: (update: TextImportCodexDiagnosticUpdate) => void
 }
 
 export class CodexBridgeError extends Error {
@@ -173,7 +206,7 @@ export class CodexBridgeError extends Error {
 const METADATA_PATCH_SCHEMA = {
   type: ['object', 'null'],
   additionalProperties: false,
-  required: ['labels', 'markers', 'task', 'links', 'attachments'],
+  required: ['labels', 'markers', 'stickers', 'type'],
   properties: {
     labels: {
       type: ['array', 'null'],
@@ -186,46 +219,16 @@ const METADATA_PATCH_SCHEMA = {
         enum: ['important', 'question', 'idea', 'warning', 'decision', 'blocked'],
       },
     },
-    task: {
-      type: ['object', 'null'],
-      additionalProperties: false,
-      required: ['status', 'priority', 'dueDate'],
-      properties: {
-        status: { type: 'string', enum: ['todo', 'in_progress', 'done'] },
-        priority: { type: 'string', enum: ['low', 'medium', 'high'] },
-        dueDate: { type: ['string', 'null'] },
-      },
-    },
-    links: {
+    stickers: {
       type: ['array', 'null'],
       items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['id', 'type', 'label', 'href', 'targetTopicId', 'path'],
-        properties: {
-          id: { type: 'string' },
-          type: { type: 'string', enum: ['web', 'topic', 'local'] },
-          label: { type: 'string' },
-          href: { type: ['string', 'null'] },
-          targetTopicId: { type: ['string', 'null'] },
-          path: { type: ['string', 'null'] },
-        },
+        type: 'string',
+        enum: ['smile', 'party', 'heart', 'star', 'fire', 'rocket', 'bulb', 'target', 'coffee', 'clap', 'rainbow', 'sparkles'],
       },
     },
-    attachments: {
-      type: ['array', 'null'],
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['id', 'name', 'uri', 'source', 'mimeType'],
-        properties: {
-          id: { type: 'string' },
-          name: { type: 'string' },
-          uri: { type: 'string' },
-          source: { type: 'string', enum: ['local', 'url'] },
-          mimeType: { type: ['string', 'null'] },
-        },
-      },
+    type: {
+      type: ['string', 'null'],
+      enum: ['normal', 'milestone', 'task', null],
     },
   },
 } as const
@@ -262,6 +265,7 @@ const OPERATION_SCHEMA = {
     'targetParentId',
     'metadata',
     'style',
+    'presentation',
   ],
   properties: {
     type: { type: ['string', 'null'] },
@@ -279,6 +283,16 @@ const OPERATION_SCHEMA = {
     targetParentId: { type: ['string', 'null'] },
     metadata: METADATA_PATCH_SCHEMA,
     style: STYLE_PATCH_SCHEMA,
+    presentation: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['collapsedByDefault', 'groupKey', 'priority'],
+      properties: {
+        collapsedByDefault: { type: ['boolean', 'null'] },
+        groupKey: { type: ['string', 'null'] },
+        priority: { type: ['string', 'null'], enum: ['primary', 'secondary', 'supporting', null] },
+      },
+    },
   },
 } as const
 
@@ -335,12 +349,14 @@ const IMPORT_OPERATION_SCHEMA = {
     'targetParentId',
     'metadata',
     'style',
+    'targetFingerprint',
   ],
   properties: {
     id: { type: ['string', 'null'] },
     risk: { type: ['string', 'null'], enum: ['low', 'high', null] },
     conflictId: { type: ['string', 'null'] },
     reason: { type: ['string', 'null'] },
+    targetFingerprint: { type: ['string', 'null'] },
     ...OPERATION_SCHEMA.properties,
   },
 } as const
@@ -348,15 +364,75 @@ const IMPORT_OPERATION_SCHEMA = {
 const IMPORT_RESPONSE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['summary', 'previewNodes', 'operations', 'conflicts', 'warnings'],
+  required: ['summary', 'classification', 'templateSummary', 'nodePlans', 'previewNodes', 'operations', 'conflicts', 'warnings'],
   properties: {
     summary: { type: ['string', 'null'] },
+    classification: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['archetype', 'confidence', 'rationale', 'secondaryArchetype'],
+      properties: {
+        archetype: { type: ['string', 'null'] },
+        confidence: { type: ['number', 'null'] },
+        rationale: { type: ['string', 'null'] },
+        secondaryArchetype: { type: ['string', 'null'] },
+      },
+    },
+    templateSummary: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['archetype', 'visibleSlots', 'foldedSlots'],
+      properties: {
+        archetype: { type: ['string', 'null'] },
+        visibleSlots: { type: ['array', 'null'], items: { type: 'string' } },
+        foldedSlots: { type: ['array', 'null'], items: { type: 'string' } },
+      },
+    },
+    nodePlans: {
+      type: ['array', 'null'],
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'parentId', 'order', 'title', 'note', 'semanticRole', 'confidence', 'sourceAnchors', 'groupKey', 'priority', 'collapsedByDefault', 'templateSlot'],
+        properties: {
+          id: { type: ['string', 'null'] },
+          parentId: { type: ['string', 'null'] },
+          order: { type: ['integer', 'null'] },
+          title: { type: ['string', 'null'] },
+          note: { type: ['string', 'null'] },
+          semanticRole: {
+            type: ['string', 'null'],
+            enum: ['section', 'summary', 'decision', 'action', 'risk', 'question', 'metric', 'timeline', 'evidence', null],
+          },
+          confidence: {
+            type: ['string', 'null'],
+            enum: ['high', 'medium', 'low', null],
+          },
+          sourceAnchors: {
+            type: ['array', 'null'],
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['lineStart', 'lineEnd'],
+              properties: {
+                lineStart: { type: ['integer', 'null'] },
+                lineEnd: { type: ['integer', 'null'] },
+              },
+            },
+          },
+          groupKey: { type: ['string', 'null'] },
+          priority: { type: ['string', 'null'], enum: ['primary', 'secondary', 'supporting', null] },
+          collapsedByDefault: { type: ['boolean', 'null'] },
+          templateSlot: { type: ['string', 'null'] },
+        },
+      },
+    },
     previewNodes: {
       type: ['array', 'null'],
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['id', 'parentId', 'order', 'title', 'note', 'relation', 'matchedTopicId', 'reason'],
+        required: ['id', 'parentId', 'order', 'title', 'note', 'relation', 'matchedTopicId', 'reason', 'semanticRole', 'confidence', 'sourceAnchors', 'templateSlot'],
         properties: {
           id: { type: ['string', 'null'] },
           parentId: { type: ['string', 'null'] },
@@ -366,6 +442,27 @@ const IMPORT_RESPONSE_SCHEMA = {
           relation: { type: ['string', 'null'], enum: ['new', 'merge', 'conflict', null] },
           matchedTopicId: { type: ['string', 'null'] },
           reason: { type: ['string', 'null'] },
+          semanticRole: {
+            type: ['string', 'null'],
+            enum: ['section', 'summary', 'decision', 'action', 'risk', 'question', 'metric', 'timeline', 'evidence', null],
+          },
+          confidence: {
+            type: ['string', 'null'],
+            enum: ['high', 'medium', 'low', null],
+          },
+          sourceAnchors: {
+            type: ['array', 'null'],
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['lineStart', 'lineEnd'],
+              properties: {
+                lineStart: { type: ['integer', 'null'] },
+                lineEnd: { type: ['integer', 'null'] },
+              },
+            },
+          },
+          templateSlot: { type: ['string', 'null'] },
         },
       },
     },
@@ -449,6 +546,52 @@ const SEMANTIC_ADJUDICATION_RESPONSE_SCHEMA = {
   },
 } as const
 
+const VALID_TEMPLATE_SLOTS: TextImportTemplateSlot[] = [
+  'goal',
+  'use_cases',
+  'prerequisites',
+  'steps',
+  'principles',
+  'criteria',
+  'pitfalls',
+  'examples',
+  'thesis',
+  'claims',
+  'evidence',
+  'data',
+  'limitations',
+  'conclusion',
+  'strategy',
+  'actions',
+  'owners',
+  'timeline',
+  'risks',
+  'success_metrics',
+  'summary',
+  'key_results',
+  'progress',
+  'metrics',
+  'blockers',
+  'next_steps',
+  'agenda',
+  'decisions',
+  'open_questions',
+  'timepoints',
+  'background',
+  'issues',
+  'causes',
+  'impacts',
+  'fixes',
+  'preventions',
+  'definition',
+  'components',
+  'mechanism',
+  'categories',
+  'comparisons',
+  'cautions',
+  'themes',
+]
+
 function createProposalId(): string {
   return `proposal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
@@ -481,139 +624,7 @@ function normalizeStringArray(value: unknown): string[] | undefined {
 }
 
 function normalizeMetadataPatch(value: unknown): AiTopicMetadataPatch | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined
-  }
-
-  const raw = value as {
-    labels?: unknown
-    markers?: unknown
-    task?: unknown
-    links?: unknown
-    attachments?: unknown
-  }
-
-  const patch: AiTopicMetadataPatch = {}
-
-  if ('labels' in raw) {
-    patch.labels = normalizeStringArray(raw.labels) ?? []
-  }
-
-  if ('markers' in raw) {
-    patch.markers = (normalizeStringArray(raw.markers) ?? []).filter((marker) =>
-      ['important', 'question', 'idea', 'warning', 'decision', 'blocked'].includes(marker),
-    ) as AiTopicMetadataPatch['markers']
-  }
-
-  if ('task' in raw) {
-    if (raw.task === null) {
-      patch.task = null
-    } else if (raw.task && typeof raw.task === 'object' && !Array.isArray(raw.task)) {
-      const task = raw.task as {
-        status?: unknown
-        priority?: unknown
-        dueDate?: unknown
-      }
-      if (
-        typeof task.status === 'string' &&
-        ['todo', 'in_progress', 'done'].includes(task.status) &&
-        typeof task.priority === 'string' &&
-        ['low', 'medium', 'high'].includes(task.priority) &&
-        (typeof task.dueDate === 'string' || task.dueDate === null || task.dueDate === undefined)
-      ) {
-        patch.task = {
-          status: task.status as 'todo' | 'in_progress' | 'done',
-          priority: task.priority as 'low' | 'medium' | 'high',
-          dueDate: typeof task.dueDate === 'string' ? task.dueDate : null,
-        }
-      } else {
-        throw new CodexBridgeError('request_failed', 'Codex 返回了无效的 task 提案。')
-      }
-    }
-  }
-
-  if ('links' in raw) {
-    if (raw.links === null) {
-      patch.links = []
-    } else if (Array.isArray(raw.links)) {
-      patch.links = raw.links.map((item) => {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) {
-          throw new CodexBridgeError('request_failed', 'Codex 返回了无效的链接提案。')
-        }
-
-        const link = item as {
-          id?: unknown
-          type?: unknown
-          label?: unknown
-          href?: unknown
-          targetTopicId?: unknown
-          path?: unknown
-        }
-
-        if (
-          typeof link.id !== 'string' ||
-          typeof link.type !== 'string' ||
-          typeof link.label !== 'string'
-        ) {
-          throw new CodexBridgeError('request_failed', 'Codex 返回了无效的链接提案。')
-        }
-        if (!['web', 'topic', 'local'].includes(link.type)) {
-          throw new CodexBridgeError('request_failed', 'Codex 返回了无效的链接类型。')
-        }
-
-        return {
-          id: link.id,
-          type: link.type as 'web' | 'topic' | 'local',
-          label: link.label,
-          href: typeof link.href === 'string' ? link.href : undefined,
-          targetTopicId: typeof link.targetTopicId === 'string' ? link.targetTopicId : undefined,
-          path: typeof link.path === 'string' ? link.path : undefined,
-        }
-      })
-    }
-  }
-
-  if ('attachments' in raw) {
-    if (raw.attachments === null) {
-      patch.attachments = []
-    } else if (Array.isArray(raw.attachments)) {
-      patch.attachments = raw.attachments.map((item) => {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) {
-          throw new CodexBridgeError('request_failed', 'Codex 返回了无效的附件提案。')
-        }
-
-        const attachment = item as {
-          id?: unknown
-          name?: unknown
-          uri?: unknown
-          source?: unknown
-          mimeType?: unknown
-        }
-
-        if (
-          typeof attachment.id !== 'string' ||
-          typeof attachment.name !== 'string' ||
-          typeof attachment.uri !== 'string' ||
-          typeof attachment.source !== 'string'
-        ) {
-          throw new CodexBridgeError('request_failed', 'Codex 返回了无效的附件提案。')
-        }
-        if (!['local', 'url'].includes(attachment.source)) {
-          throw new CodexBridgeError('request_failed', 'Codex 返回了无效的附件来源。')
-        }
-
-        return {
-          id: attachment.id,
-          name: attachment.name,
-          uri: attachment.uri,
-          source: attachment.source as 'local' | 'url',
-          mimeType: typeof attachment.mimeType === 'string' ? attachment.mimeType : null,
-        }
-      })
-    }
-  }
-
-  return Object.keys(patch).length > 0 ? patch : undefined
+  return sanitizeAiWritableMetadataPatch(value)
 }
 
 function normalizeStylePatch(value: unknown): AiTopicStyle | undefined {
@@ -670,6 +681,37 @@ function normalizeStylePatch(value: unknown): AiTopicStyle | undefined {
   return Object.keys(patch).length > 0 ? patch : undefined
 }
 
+function normalizePresentationHints(value: unknown): TextImportPresentationHints | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+
+  const raw = value as {
+    collapsedByDefault?: unknown
+    groupKey?: unknown
+    priority?: unknown
+  }
+
+  const presentation: TextImportPresentationHints = {}
+
+  if ('collapsedByDefault' in raw && typeof raw.collapsedByDefault === 'boolean') {
+    presentation.collapsedByDefault = raw.collapsedByDefault
+  }
+
+  if ('groupKey' in raw) {
+    presentation.groupKey = typeof raw.groupKey === 'string' ? raw.groupKey.trim() || null : null
+  }
+
+  if ('priority' in raw) {
+    const priority = normalizeText(typeof raw.priority === 'string' ? raw.priority : undefined)
+    if (priority && ['primary', 'secondary', 'supporting'].includes(priority)) {
+      presentation.priority = priority as NonNullable<TextImportPresentationHints['priority']>
+    }
+  }
+
+  return Object.keys(presentation).length > 0 ? presentation : undefined
+}
+
 function toTargetReference(candidate: string): AiCanvasTarget {
   if (candidate.startsWith('topic:') || candidate.startsWith('ref:')) {
     return candidate as AiCanvasTarget
@@ -717,6 +759,7 @@ function normalizeOperation(operation: RawProposalOperation): AiCanvasOperation 
         note: normalizeNote(operation.note),
         metadata: normalizeMetadataPatch(operation.metadata),
         style: normalizeStylePatch(operation.style),
+        presentation: normalizePresentationHints(operation.presentation),
         resultRef: normalizeText(operation.resultRef),
       }
     }
@@ -735,6 +778,7 @@ function normalizeOperation(operation: RawProposalOperation): AiCanvasOperation 
         note: normalizeNote(operation.note),
         metadata: normalizeMetadataPatch(operation.metadata),
         style: normalizeStylePatch(operation.style),
+        presentation: normalizePresentationHints(operation.presentation),
         resultRef: normalizeText(operation.resultRef),
       }
     }
@@ -745,7 +789,8 @@ function normalizeOperation(operation: RawProposalOperation): AiCanvasOperation 
       const note = normalizeNote(operation.note)
       const metadata = normalizeMetadataPatch(operation.metadata)
       const style = normalizeStylePatch(operation.style)
-      if (!target || (title === undefined && note === undefined && !metadata && !style)) {
+      const presentation = normalizePresentationHints(operation.presentation)
+      if (!target || (title === undefined && note === undefined && !metadata && !style && !presentation)) {
         throw new CodexBridgeError('request_failed', 'Codex 返回了无效的 update_topic 提案。')
       }
 
@@ -756,6 +801,7 @@ function normalizeOperation(operation: RawProposalOperation): AiCanvasOperation 
         note,
         metadata,
         style,
+        presentation,
       }
     }
 
@@ -798,24 +844,209 @@ function createImportOperationId(): string {
   return `import_op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
 
-function normalizeImportOperation(operation: RawImportOperation): AiImportOperation {
+function createImportTargetFingerprint(topic: AiDocumentTopicContext): string {
+  return JSON.stringify({
+    title: topic.title,
+    note: topic.note,
+    parentId: topic.parentTopicId,
+    metadata: topic.metadata,
+    style: topic.style,
+  })
+}
+
+function resolveImportTargetFingerprint(
+  request: TextImportRequest,
+  operation: Extract<AiCanvasOperation, { type: 'update_topic' }>,
+  rawOperation: RawImportOperation,
+): string | undefined {
+  if (!operation.target.startsWith('topic:')) {
+    return normalizeText(rawOperation.targetFingerprint)
+  }
+
+  const topicId = operation.target.slice('topic:'.length)
+  const topic = request.context.topics.find((candidate) => candidate.topicId === topicId)
+  if (!topic) {
+    throw new CodexBridgeError(
+      'request_failed',
+      `导入预览引用了不存在的目标主题: ${operation.target}`,
+    )
+  }
+
+  return createImportTargetFingerprint(topic)
+}
+
+function normalizeImportOperation(
+  request: TextImportRequest,
+  operation: RawImportOperation,
+): AiImportOperation {
   const risk = normalizeText(operation.risk)
   if (risk !== 'low' && risk !== 'high') {
     throw new CodexBridgeError('request_failed', 'Codex 返回了无效的导入操作风险级别。')
   }
 
+  const normalizedOperation = stripImportFormattingFields(normalizeOperation(operation))
+
   return {
-    ...normalizeOperation(operation),
+    ...normalizedOperation,
     id: normalizeText(operation.id) ?? createImportOperationId(),
     risk,
     conflictId: normalizeText(operation.conflictId),
     reason: normalizeText(operation.reason),
+    ...(normalizedOperation.type === 'update_topic'
+      ? {
+          targetFingerprint: resolveImportTargetFingerprint(
+            request,
+            normalizedOperation,
+            operation,
+          ),
+        }
+      : {}),
+  }
+}
+
+function stripImportFormattingFields(operation: AiCanvasOperation): AiCanvasOperation {
+  switch (operation.type) {
+    case 'create_child':
+      return {
+        type: 'create_child',
+        parent: operation.parent,
+        title: operation.title,
+        note: operation.note,
+        resultRef: operation.resultRef,
+      }
+
+    case 'create_sibling':
+      return {
+        type: 'create_sibling',
+        anchor: operation.anchor,
+        title: operation.title,
+        note: operation.note,
+        resultRef: operation.resultRef,
+      }
+
+    case 'update_topic':
+      return {
+        type: 'update_topic',
+        target: operation.target,
+        title: operation.title,
+        note: operation.note,
+      }
+
+    default:
+      return operation
+  }
+}
+
+function normalizeSourceAnchors(
+  value: RawImportPreviewItem['sourceAnchors'] | RawImportNodePlan['sourceAnchors'],
+): TextImportPreviewItem['sourceAnchors'] {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+
+  const anchors = value
+    .map((anchor) => ({
+      lineStart:
+        typeof anchor?.lineStart === 'number' && Number.isInteger(anchor.lineStart)
+          ? anchor.lineStart
+          : null,
+      lineEnd:
+        typeof anchor?.lineEnd === 'number' && Number.isInteger(anchor.lineEnd)
+          ? anchor.lineEnd
+          : null,
+    }))
+    .filter(
+      (anchor): anchor is { lineStart: number; lineEnd: number } =>
+        anchor.lineStart !== null && anchor.lineEnd !== null,
+    )
+
+  return anchors.length > 0 ? anchors : undefined
+}
+
+function normalizeTemplateSlot(
+  value: string | null | undefined,
+): TextImportTemplateSlot | null {
+  const normalized = normalizeText(value)
+  return normalized && VALID_TEMPLATE_SLOTS.includes(normalized as TextImportTemplateSlot)
+    ? (normalized as TextImportTemplateSlot)
+    : null
+}
+
+function createFallbackImportClassification(request: TextImportRequest): TextImportClassification {
+  return {
+    archetype: request.archetype ?? 'mixed',
+    confidence: request.archetype ? 1 : 0.4,
+    rationale: request.archetype
+      ? `The request explicitly selected the ${request.archetype} archetype.`
+      : 'No explicit classification was returned, so the bridge kept a mixed fallback.',
+    secondaryArchetype: null,
+  }
+}
+
+function normalizeImportClassification(
+  value: RawImportClassification | null | undefined,
+  request: TextImportRequest,
+): TextImportClassification {
+  const fallback = createFallbackImportClassification(request)
+  if (!value || typeof value !== 'object') {
+    return fallback
+  }
+
+  const archetype = normalizeText(value.archetype)
+  const confidence = typeof value.confidence === 'number' ? value.confidence : fallback.confidence
+  const rationale = normalizeText(value.rationale)
+  const secondaryArchetype = normalizeText(value.secondaryArchetype)
+
+  return {
+    archetype:
+      archetype &&
+      ['method', 'argument', 'plan', 'report', 'meeting', 'postmortem', 'knowledge', 'mixed'].includes(archetype)
+        ? (archetype as TextImportClassification['archetype'])
+        : fallback.archetype,
+    confidence: Math.max(0, Math.min(1, confidence)),
+    rationale: rationale ?? fallback.rationale,
+    secondaryArchetype:
+      secondaryArchetype &&
+      ['method', 'argument', 'plan', 'report', 'meeting', 'postmortem', 'knowledge', 'mixed'].includes(secondaryArchetype)
+        ? (secondaryArchetype as NonNullable<TextImportClassification['secondaryArchetype']>)
+        : null,
+  }
+}
+
+function normalizeImportTemplateSummary(
+  value: RawImportTemplateSummary | null | undefined,
+  classification: TextImportClassification,
+): TextImportTemplateSummary {
+  if (!value || typeof value !== 'object') {
+    return {
+      archetype: classification.archetype,
+      visibleSlots: [],
+      foldedSlots: [],
+    }
+  }
+
+  return {
+    archetype:
+      normalizeText(value.archetype) &&
+      ['method', 'argument', 'plan', 'report', 'meeting', 'postmortem', 'knowledge', 'mixed'].includes(normalizeText(value.archetype) as string)
+        ? (normalizeText(value.archetype) as TextImportTemplateSummary['archetype'])
+        : classification.archetype,
+    visibleSlots:
+      (normalizeStringArray(value.visibleSlots) ?? []).filter((slot): slot is TextImportTemplateSlot =>
+        VALID_TEMPLATE_SLOTS.includes(slot as TextImportTemplateSlot),
+      ) ?? [],
+    foldedSlots:
+      (normalizeStringArray(value.foldedSlots) ?? []).filter((slot): slot is TextImportTemplateSlot =>
+        VALID_TEMPLATE_SLOTS.includes(slot as TextImportTemplateSlot),
+      ) ?? [],
   }
 }
 
 function normalizeImportPreviewItem(value: RawImportPreviewItem): TextImportPreviewItem {
   const title = normalizeText(value.title)
   const relation = normalizeText(value.relation)
+  const semanticRole = normalizeText(value.semanticRole)
+  const confidence = normalizeText(value.confidence)
   const order = typeof value.order === 'number' && Number.isInteger(value.order) ? value.order : null
   if (
     !title ||
@@ -834,6 +1065,55 @@ function normalizeImportPreviewItem(value: RawImportPreviewItem): TextImportPrev
     relation,
     matchedTopicId: normalizeText(value.matchedTopicId) ?? null,
     reason: normalizeText(value.reason) ?? null,
+    semanticRole:
+      semanticRole &&
+      ['section', 'summary', 'decision', 'action', 'risk', 'question', 'metric', 'timeline', 'evidence'].includes(
+        semanticRole,
+      )
+        ? (semanticRole as TextImportPreviewItem['semanticRole'])
+        : undefined,
+    confidence:
+      confidence && ['high', 'medium', 'low'].includes(confidence)
+        ? (confidence as TextImportPreviewItem['confidence'])
+        : undefined,
+    sourceAnchors: normalizeSourceAnchors(value.sourceAnchors),
+    templateSlot: normalizeTemplateSlot(value.templateSlot),
+  }
+}
+
+function normalizeImportNodePlan(value: RawImportNodePlan): TextImportNodePlan {
+  const title = normalizeText(value.title)
+  const semanticRole = normalizeText(value.semanticRole)
+  const confidence = normalizeText(value.confidence)
+  const order = typeof value.order === 'number' && Number.isInteger(value.order) ? value.order : null
+
+  if (
+    !title ||
+    order === null ||
+    !semanticRole ||
+    !['section', 'summary', 'decision', 'action', 'risk', 'question', 'metric', 'timeline', 'evidence'].includes(semanticRole) ||
+    !confidence ||
+    !['high', 'medium', 'low'].includes(confidence)
+  ) {
+    throw new CodexBridgeError('request_failed', 'Codex 返回了无效的导入节点计划。')
+  }
+
+  return {
+    id: normalizeText(value.id) ?? createImportOperationId(),
+    parentId: normalizeText(value.parentId) ?? null,
+    order,
+    title,
+    note: normalizeNote(value.note) ?? null,
+    semanticRole: semanticRole as TextImportNodePlan['semanticRole'],
+    confidence: confidence as TextImportNodePlan['confidence'],
+    sourceAnchors: normalizeSourceAnchors(value.sourceAnchors) ?? [],
+    groupKey: normalizeText(value.groupKey) ?? null,
+    priority:
+      normalizeText(value.priority) && ['primary', 'secondary', 'supporting'].includes(normalizeText(value.priority) as string)
+        ? (normalizeText(value.priority) as TextImportNodePlan['priority'])
+        : null,
+    collapsedByDefault: typeof value.collapsedByDefault === 'boolean' ? value.collapsedByDefault : null,
+    templateSlot: normalizeTemplateSlot(value.templateSlot),
   }
 }
 
@@ -942,19 +1222,61 @@ function normalizeImportPayload(
   request: TextImportRequest,
   rawPayload: RawImportPayload,
 ): TextImportResponse {
+  const normalizedWarnings = (rawPayload.warnings ?? [])
+    .map((item) => normalizeText(item))
+    .filter((item): item is string => !!item)
+  const classification = normalizeImportClassification(rawPayload.classification, request)
+  const templateSummary = normalizeImportTemplateSummary(rawPayload.templateSummary, classification)
+
+  if (Array.isArray(rawPayload.nodePlans) && rawPayload.nodePlans.length > 0) {
+    const nodePlans = rawPayload.nodePlans.map(normalizeImportNodePlan)
+    const compiled = compileTextImportNodePlans({
+      insertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+      nodePlans,
+    })
+    const qualityWarnings = buildTextImportQualityWarnings({
+      previewNodes: compiled.previewNodes,
+      nodeBudget: request.nodeBudget,
+    })
+
+    return {
+      summary: normalizeText(rawPayload.summary) ?? '智能导入预览已生成。',
+      baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
+      anchorTopicId: request.anchorTopicId,
+      classification,
+      templateSummary,
+      nodePlans,
+      previewNodes: compiled.previewNodes,
+      operations: compiled.operations,
+      conflicts: (rawPayload.conflicts ?? []).map(normalizeImportConflict),
+      warnings: [...new Set([...normalizedWarnings, ...qualityWarnings])],
+    }
+  }
+
   const previewNodes = validateImportPreviewItems(
     (rawPayload.previewNodes ?? []).map(normalizeImportPreviewItem),
   )
+  const nodePlans = deriveTextImportNodePlansFromPreviewNodes({
+    previewNodes,
+  })
+  const qualityWarnings = buildTextImportQualityWarnings({
+    previewNodes,
+    nodeBudget: request.nodeBudget,
+  })
 
   return {
     summary: normalizeText(rawPayload.summary) ?? '智能导入预览已生成。',
     baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
+    anchorTopicId: request.anchorTopicId,
+    classification,
+    templateSummary,
+    nodePlans,
     previewNodes,
-    operations: (rawPayload.operations ?? []).map(normalizeImportOperation),
+    operations: (rawPayload.operations ?? []).map((operation) =>
+      normalizeImportOperation(request, operation),
+    ),
     conflicts: (rawPayload.conflicts ?? []).map(normalizeImportConflict),
-    warnings: (rawPayload.warnings ?? [])
-      .map((item) => normalizeText(item))
-      .filter((item): item is string => !!item),
+    warnings: [...new Set([...normalizedWarnings, ...qualityWarnings])],
   }
 }
 
@@ -1029,11 +1351,13 @@ function normalizeSemanticDecision(value: RawSemanticDecision): TextImportSemant
 function normalizeSemanticAdjudicationPayload(
   rawPayload: RawSemanticAdjudicationPayload,
 ): TextImportSemanticAdjudicationResponse {
+  const normalizedWarnings = (rawPayload.warnings ?? [])
+    .map((item) => normalizeText(item))
+    .filter((item): item is string => !!item)
+
   return {
     decisions: (rawPayload.decisions ?? []).map(normalizeSemanticDecision),
-    warnings: (rawPayload.warnings ?? [])
-      .map((item) => normalizeText(item))
-      .filter((item): item is string => !!item),
+    warnings: normalizedWarnings,
   }
 }
 
@@ -1119,6 +1443,26 @@ function buildHistory(request: AiChatRequest) {
   }))
 }
 
+function buildChatScopeInstructions(request: AiChatRequest): string[] {
+  switch (request.context.scope) {
+    case 'focused_subset':
+      return [
+        '- Use only the provided subset graph context. Do not assume omitted branches or siblings exist.',
+        '- If the subset is insufficient, ask for the missing context instead of inventing it.',
+      ]
+    case 'empty':
+      return [
+        '- No graph context was supplied beyond a minimal document shell. Rely on the user message first.',
+        '- Before proposing structural edits, ask for more context when the request depends on missing map content.',
+      ]
+    case 'full_document':
+    default:
+      return [
+        '- Use the full graph context to understand the request; treat focus selection only as a hint.',
+      ]
+  }
+}
+
 function buildChatPrompt(request: AiChatRequest, prompt: LoadedSystemPrompt): string {
   return [
     prompt.fullPrompt,
@@ -1126,7 +1470,7 @@ function buildChatPrompt(request: AiChatRequest, prompt: LoadedSystemPrompt): st
     'Stage 1 goal:',
     '- Reply in natural language only.',
     '- Do not output JSON, code blocks, XML, YAML, or pseudo-schema.',
-    '- Use the full graph context to understand the request; treat focus selection only as a hint.',
+    ...buildChatScopeInstructions(request),
     '- Preserve the user’s original framing instead of forcing a methodology they did not ask for.',
     '- Mention locked-node conflicts as suggestions instead of silently ignoring them.',
     '',
@@ -1160,8 +1504,10 @@ function buildPlanningPrompt(
     '- If you create a node and want to reference it later in the same proposal, assign resultRef on the create operation and then refer to it as ref:<resultRef>.',
     '- Locked nodes have aiLocked=true. You may read them. You may create_child under a locked node or create_sibling around a locked node, but you must not update_topic, move_topic, or delete_topic on a locked node. That restriction also covers note, metadata, and style changes.',
     '- If a locked node seems wrong, mention that suggestion in warnings instead of modifying it.',
+    '- Markers and stickers are human-maintained fields. You may read existing markers/stickers from context, but you must not create or modify markers or stickers in proposal metadata.',
     '- Only use move_topic or delete_topic when the user explicitly asks to regroup, replace, delete, or reorganize existing content.',
     '- If the request is too ambiguous to apply safely, set needsMoreContext=true and ask one minimal clarification question in contextRequest.',
+    ...buildChatScopeInstructions(request),
     '',
     'Natural-language answer already shown to the user:',
     assistantMessage,
@@ -1187,10 +1533,29 @@ interface CompactImportTopicSummary {
   parentTopicId: string | null
   childTopicIds: string[]
   aiLocked: boolean
-  note?: string
   notePreview?: string
   metadata?: Partial<AiDocumentTopicContext['metadata']>
   style?: Partial<AiDocumentTopicContext['style']>
+}
+
+type ImportHintKind = TextImportRequest['preprocessedHints'][number]['kind']
+type ImportSemanticHintKind = TextImportRequest['semanticHints'][number]['kind']
+
+interface CompactImportHintSummary {
+  totalCount: number
+  structuredHintCount: number
+  countsByKind: Partial<Record<ImportHintKind, number>>
+  representativeHeadings: string[]
+  representativePaths: string[]
+  representativeListItems: string[]
+  representativeTables: string[]
+  codeBlockLanguages: string[]
+}
+
+interface CompactImportSemanticHintSummary {
+  totalCount: number
+  countsByKind: Partial<Record<ImportSemanticHintKind, number>>
+  representativeItems: string[]
 }
 
 interface BuiltTextImportPromptContext {
@@ -1198,7 +1563,11 @@ interface BuiltTextImportPromptContext {
   focusedTopicCount: number
   compactTopicCount: number
   notePreviewCount: number
+  focusedNotePreviewCount: number
+  compactNotePreviewCount: number
   preprocessedHintCount: number
+  structuredHintCount: number
+  semanticHintCount: number
   promptContextLength: number
 }
 
@@ -1206,9 +1575,8 @@ function hasMeaningfulMetadata(topic: AiDocumentTopicContext): boolean {
   return (
     topic.metadata.labels.length > 0 ||
     topic.metadata.markers.length > 0 ||
-    topic.metadata.task !== null ||
-    topic.metadata.links.length > 0 ||
-    topic.metadata.attachments.length > 0
+    (topic.metadata.stickers?.length ?? 0) > 0 ||
+    Boolean(topic.metadata.type)
   )
 }
 
@@ -1230,6 +1598,124 @@ function truncateImportNotePreview(value: string, maxLength = 220): string {
   }
 
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}…` : normalized
+}
+
+function appendUniqueSample(
+  samples: string[],
+  value: string,
+  maxSamples: number,
+): void {
+  if (!value || samples.length >= maxSamples || samples.includes(value)) {
+    return
+  }
+
+  samples.push(value)
+}
+
+function summarizeTextImportHints(
+  hints: TextImportRequest['preprocessedHints'],
+): CompactImportHintSummary {
+  const countsByKind: Partial<Record<ImportHintKind, number>> = {}
+  const representativeHeadings: string[] = []
+  const representativePaths: string[] = []
+  const representativeListItems: string[] = []
+  const representativeTables: string[] = []
+  const codeBlockLanguages: string[] = []
+  let structuredHintCount = 0
+
+  for (const hint of hints) {
+    countsByKind[hint.kind] = (countsByKind[hint.kind] ?? 0) + 1
+
+    if (
+      hint.kind === 'heading' ||
+      hint.kind === 'bullet_list' ||
+      hint.kind === 'ordered_list' ||
+      hint.kind === 'task_list' ||
+      hint.kind === 'table'
+    ) {
+      structuredHintCount += 1
+    }
+
+    if (hint.sourcePath.length > 0) {
+      appendUniqueSample(
+        representativePaths,
+        truncateImportNotePreview(hint.sourcePath.join(' > '), 96),
+        8,
+      )
+    }
+
+    if (hint.kind === 'heading') {
+      appendUniqueSample(
+        representativeHeadings,
+        truncateImportNotePreview(hint.text, 96),
+        8,
+      )
+      continue
+    }
+
+    if (
+      hint.kind === 'bullet_list' ||
+      hint.kind === 'ordered_list' ||
+      hint.kind === 'task_list'
+    ) {
+      for (const item of hint.items ?? []) {
+        appendUniqueSample(
+          representativeListItems,
+          truncateImportNotePreview(item, 84),
+          8,
+        )
+      }
+      continue
+    }
+
+    if (hint.kind === 'table') {
+      const rowCount = hint.rows?.length ?? 0
+      const columnCount = Math.max(0, ...(hint.rows ?? []).map((row) => row.length))
+      appendUniqueSample(
+        representativeTables,
+        `${rowCount}r x ${columnCount}c @${hint.lineStart}-${hint.lineEnd}`,
+        4,
+      )
+      continue
+    }
+
+    if (hint.kind === 'code_block' && hint.language?.trim()) {
+      appendUniqueSample(codeBlockLanguages, hint.language.trim(), 4)
+    }
+  }
+
+  return {
+    totalCount: hints.length,
+    structuredHintCount,
+    countsByKind,
+    representativeHeadings,
+    representativePaths,
+    representativeListItems,
+    representativeTables,
+    codeBlockLanguages,
+  }
+}
+
+function summarizeTextImportSemanticHints(
+  hints: TextImportRequest['semanticHints'],
+): CompactImportSemanticHintSummary {
+  const countsByKind: Partial<Record<ImportSemanticHintKind, number>> = {}
+  const representativeItems: string[] = []
+
+  for (const hint of hints) {
+    countsByKind[hint.kind] = (countsByKind[hint.kind] ?? 0) + 1
+    appendUniqueSample(
+      representativeItems,
+      `${hint.kind}: ${truncateImportNotePreview(hint.text, 72)}`,
+      12,
+    )
+  }
+
+  return {
+    totalCount: hints.length,
+    countsByKind,
+    representativeItems,
+  }
 }
 
 function collectAncestorTopicIds(
@@ -1287,13 +1773,15 @@ function collectDescendantTopicIds(
   }
 }
 
-function buildFocusedImportTopic(topic: AiDocumentTopicContext): CompactImportTopicSummary {
+function buildFocusedImportTopic(
+  topic: AiDocumentTopicContext,
+  options?: { includeNotePreview?: boolean },
+): CompactImportTopicSummary {
   const metadata = {
     ...(topic.metadata.labels.length > 0 ? { labels: topic.metadata.labels } : {}),
     ...(topic.metadata.markers.length > 0 ? { markers: topic.metadata.markers } : {}),
-    ...(topic.metadata.task !== null ? { task: topic.metadata.task } : {}),
-    ...(topic.metadata.links.length > 0 ? { links: topic.metadata.links } : {}),
-    ...(topic.metadata.attachments.length > 0 ? { attachments: topic.metadata.attachments } : {}),
+    ...((topic.metadata.stickers?.length ?? 0) > 0 ? { stickers: topic.metadata.stickers } : {}),
+    ...(topic.metadata.type ? { type: topic.metadata.type } : {}),
   }
   const style = {
     ...(topic.style.emphasis === 'focus' ? { emphasis: topic.style.emphasis } : {}),
@@ -1309,7 +1797,9 @@ function buildFocusedImportTopic(topic: AiDocumentTopicContext): CompactImportTo
     parentTopicId: topic.parentTopicId,
     childTopicIds: [...topic.childTopicIds],
     aiLocked: topic.aiLocked,
-    ...(topic.note.trim() ? { note: topic.note } : {}),
+    ...(options?.includeNotePreview
+      ? { notePreview: truncateImportNotePreview(topic.note, 160) || undefined }
+      : {}),
     ...(hasMeaningfulMetadata(topic) ? { metadata } : {}),
     ...(hasMeaningfulStyle(topic) ? { style } : {}),
   }
@@ -1331,6 +1821,7 @@ function buildTextImportPromptContext(request: TextImportRequest): BuiltTextImpo
   const topicsById = new Map(request.context.topics.map((topic) => [topic.topicId, topic]))
   const focusedTopicIds = new Set<string>()
   const focusRoots = new Set<string>()
+  const selectedTopicIds = new Set(request.context.focus.selectedTopicIds)
 
   if (request.context.focus.activeTopicId) {
     focusRoots.add(request.context.focus.activeTopicId)
@@ -1351,40 +1842,51 @@ function buildTextImportPromptContext(request: TextImportRequest): BuiltTextImpo
 
   const focusedTopics: CompactImportTopicSummary[] = []
   const compactTopics: CompactImportTopicSummary[] = []
+  const hintSummary = summarizeTextImportHints(request.preprocessedHints)
+  const semanticHintSummary = summarizeTextImportSemanticHints(request.semanticHints)
 
   request.context.topics.forEach((topic) => {
     if (focusedTopicIds.has(topic.topicId)) {
-      focusedTopics.push(buildFocusedImportTopic(topic))
+      focusedTopics.push(
+        buildFocusedImportTopic(topic, {
+          includeNotePreview:
+            topic.aiLocked ||
+            topic.topicId === request.context.focus.activeTopicId ||
+            selectedTopicIds.has(topic.topicId),
+        }),
+      )
       return
     }
 
     compactTopics.push(buildCompactImportTopic(topic))
   })
+  const focusedNotePreviewCount = focusedTopics.filter((topic) => typeof topic.notePreview === 'string').length
+  const compactNotePreviewCount = compactTopics.filter((topic) => typeof topic.notePreview === 'string').length
+  const anchorTopic = topicsById.get(request.anchorTopicId ?? request.context.rootTopicId)
+  const backgroundTopicTitles = compactTopics
+    .slice(0, 8)
+    .map((topic) => topic.title)
+    .filter((title) => title.trim().length > 0)
 
   const promptContext = {
     documentId: request.documentId,
     documentTitle: request.documentTitle,
     baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
     anchorTopicId: request.anchorTopicId,
+    importIntent: request.intent,
+    archetype: request.archetype ?? null,
+    archetypeMode: request.archetypeMode ?? 'auto',
+    contentProfile: request.contentProfile ?? null,
+    nodeBudget: request.nodeBudget ?? null,
     source: {
       sourceName: request.sourceName,
       sourceType: request.sourceType,
       rawText: request.rawText,
       rawTextLength: request.rawText.length,
-      preprocessedHintCount: request.preprocessedHints.length,
-      preprocessedHints: request.preprocessedHints.map((hint) => ({
-        id: hint.id,
-        kind: hint.kind,
-        text: hint.text,
-        level: hint.level,
-        lineStart: hint.lineStart,
-        lineEnd: hint.lineEnd,
-        sourcePath: hint.sourcePath,
-        language: hint.language,
-        items: hint.items,
-        checked: hint.checked,
-        rows: hint.rows,
-      })),
+      preprocessedHintCount: hintSummary.totalCount,
+      preprocessedHintSummary: hintSummary,
+      semanticHintCount: semanticHintSummary.totalCount,
+      semanticHintSummary,
     },
     focus: request.context.focus,
     mapSummary: {
@@ -1392,9 +1894,21 @@ function buildTextImportPromptContext(request: TextImportRequest): BuiltTextImpo
       topicCount: request.context.topicCount,
       focusedTopicCount: focusedTopics.length,
       compactTopicCount: compactTopics.length,
+      focusedNotePreviewCount,
+      compactNotePreviewCount,
+      structuredHintCount: hintSummary.structuredHintCount,
+      semanticHintCount: semanticHintSummary.totalCount,
     },
+    anchorTopic: anchorTopic
+      ? buildFocusedImportTopic(anchorTopic, {
+          includeNotePreview:
+            anchorTopic.aiLocked ||
+            anchorTopic.topicId === request.context.focus.activeTopicId ||
+            selectedTopicIds.has(anchorTopic.topicId),
+        })
+      : null,
     focusedTopics,
-    compactTopics,
+    backgroundTopicTitles,
   }
 
   const promptContextText = JSON.stringify(promptContext, null, 2)
@@ -1403,8 +1917,12 @@ function buildTextImportPromptContext(request: TextImportRequest): BuiltTextImpo
     promptContextText,
     focusedTopicCount: focusedTopics.length,
     compactTopicCount: compactTopics.length,
-    notePreviewCount: compactTopics.filter((topic) => typeof topic.notePreview === 'string').length,
+    notePreviewCount: focusedNotePreviewCount + compactNotePreviewCount,
+    focusedNotePreviewCount,
+    compactNotePreviewCount,
     preprocessedHintCount: request.preprocessedHints.length,
+    structuredHintCount: hintSummary.structuredHintCount,
+    semanticHintCount: request.semanticHints.length,
     promptContextLength: promptContextText.length,
   }
 }
@@ -1419,27 +1937,21 @@ function buildTextImportPrompt(
     '',
     'Text import goal:',
     '- Return valid JSON only.',
-    '- Deeply analyze the source text and the full current mind map before proposing changes.',
-     '- First decide whether the input looks like markdown, plain text, meeting notes, checklist, rough notes, or mixed material.',
-     '- Preserve all source information. Do not omit content just because you also summarized it.',
-     '- Use the preprocessing hints only as clues, not as a rigid schema.',
-     '- When structure is clear, headings and lists may become mind-map nodes.',
-     '- When the source is dialogue, chat, or meeting back-and-forth, prefer finer-grained nodes for decisions, questions, action items, disagreements, and next steps instead of collapsing everything into one note.',
-     '- When the source contains tables or semi-structured data, preserve the full table in note text and, when helpful, create finer-grained nodes for headers, entities, rows, or comparisons.',
-     '- When the source is long-form prose without explicit markdown structure, infer a concise hierarchy of themes or sections, but keep the original text preserved in the relevant notes.',
-     '- Paragraphs, quotes, code blocks, tables, and ambiguous long-form content must remain fully preserved in note text on the relevant node, even if you also create structured child nodes from them.',
-     '- Treat the selected anchor topic as the preferred insertion point, but use the full graph to deduplicate or merge safely.',
-    '- Use low risk only for clearly safe additions or merges. Use high risk for rename, move, delete, overwrite, ambiguous merge, locked-node conflicts, or any structural change that may surprise the user.',
-    '- Locked nodes have aiLocked=true. You may read them. You may create_child under a locked node or create_sibling around a locked node, but you must not update_topic, move_topic, or delete_topic on a locked node.',
-    '- Every high-risk operation should reference a conflictId, and every conflict should explain the user-facing reason clearly.',
-    '- previewNodes must be a flat array. Do not output nested children objects.',
-    '- Every preview node must include: id, parentId, order, title, note, relation, matchedTopicId, reason.',
-    '- parentId must be null for top-level preview nodes or the id of another preview node.',
-    '- order must be a stable integer among siblings, starting from 0 when possible.',
-    '- operations must use existing topic references as topic:<realTopicId>. If you need temporary references for newly created nodes, use resultRef and then ref:<resultRef>.',
+    '- Analyze the source text and the current mind map before proposing changes.',
+    '- Preserve source facts, but optimize for a mind-map structure that is easier to scan than the raw text.',
+    '- Respect importIntent, archetype, archetypeMode, contentProfile, semanticHintSummary, and nodeBudget.',
+    '- Classify the source into one archetype first: method, argument, plan, report, meeting, postmortem, knowledge, or mixed.',
+    '- Return classification and templateSummary even when you also return nodePlans.',
+    '- Prefer semantic planning first. Output nodePlans when possible, then leave previewNodes and operations empty or null unless you need them for a safe fallback.',
+    '- nodePlans must stay flat. Each node plan must include id, parentId, order, title, note, semanticRole, confidence, sourceAnchors, groupKey, priority, collapsedByDefault, and templateSlot.',
+    '- Use semanticRole to distinguish section, summary, decision, action, risk, question, metric, timeline, and evidence.',
+    '- Use templateSlot to explain the semantic slot inside the chosen archetype, for example steps, claims, evidence, risks, or metrics.',
+    '- sourceAnchors should cite the supporting line ranges from the imported source whenever possible.',
+    '- Avoid generic titles, sibling explosions, and dumping long raw notes into leaf nodes.',
+    '- Treat the selected anchor topic as the preferred insertion point, but do not mutate locked nodes or restructure existing topics unless the JSON fallback path clearly needs it.',
     mode === 'repair'
-      ? '- This is a repair attempt because the previous output was not schema-compatible or structurally valid. Be extra conservative and produce only flat previewNodes plus valid operations/conflicts.'
-      : '- Prefer a complete, stable import preview on the first attempt.',
+      ? '- This is a repair attempt because the previous output was not schema-compatible or structurally weak. Tighten the node plan, remove duplicates, and simplify titles.'
+      : '- Prefer a complete, stable semantic node plan on the first attempt.',
     '',
     'Current import context:',
     promptContextText,
@@ -1511,412 +2023,6 @@ function extractAssistantDelta(event: CodexJsonEvent): string | null {
   }
 
   return null
-}
-
-function summarizeCodexEventText(value: string | undefined, fallback: string): string {
-  if (!value) {
-    return fallback
-  }
-
-  const trimmed = value.trim()
-  if (!trimmed) {
-    return fallback
-  }
-
-  try {
-    const parsed = JSON.parse(trimmed) as { summary?: unknown; assistantMessage?: unknown }
-    if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
-      return `已生成结构化结果：${summarizeLogText(parsed.summary.trim(), 120) ?? parsed.summary.trim()}`
-    }
-    if (typeof parsed.assistantMessage === 'string' && parsed.assistantMessage.trim()) {
-      return summarizeLogText(parsed.assistantMessage.trim(), 120) ?? parsed.assistantMessage.trim()
-    }
-  } catch {
-    // Structured import often returns JSON text; if it is not valid JSON, fall through to plain-text summary.
-  }
-
-  return summarizeLogText(trimmed, 120) ?? fallback
-}
-
-function extractCodexUsageSummary(event: CodexJsonEvent): string | null {
-  const usage =
-    (event as { usage?: Record<string, unknown> }).usage ??
-    (event as { turn?: { usage?: Record<string, unknown> } }).turn?.usage
-
-  if (!usage || typeof usage !== 'object') {
-    return null
-  }
-
-  const inputTokens =
-    typeof usage.input_tokens === 'number'
-      ? usage.input_tokens
-      : typeof usage.inputTokens === 'number'
-        ? usage.inputTokens
-        : null
-  const outputTokens =
-    typeof usage.output_tokens === 'number'
-      ? usage.output_tokens
-      : typeof usage.outputTokens === 'number'
-        ? usage.outputTokens
-        : null
-
-  const parts = [
-    inputTokens !== null ? `输入 ${inputTokens.toLocaleString()} tokens` : null,
-    outputTokens !== null ? `输出 ${outputTokens.toLocaleString()} tokens` : null,
-  ].filter((part): part is string => Boolean(part))
-
-  return parts.length > 0 ? parts.join('，') : null
-}
-
-function summarizeCodexImportEvent(event: CodexJsonEvent): string {
-  const eventType = typeof event.type === 'string' && event.type ? event.type : 'unknown_event'
-
-  if (eventType === 'turn.started') {
-    return 'Codex 已开始分析导入内容'
-  }
-
-  if (eventType === 'turn.completed') {
-    const usageSummary = extractCodexUsageSummary(event)
-    return usageSummary
-      ? `Codex 已完成生成（${usageSummary}）`
-      : 'Codex 已完成生成'
-  }
-
-  if (eventType === 'turn.failed' || eventType === 'error') {
-    return (
-      summarizeLogText(event.error?.message ?? event.message, 120) ??
-      'Codex 运行失败'
-    )
-  }
-
-  const delta = extractAssistantDelta(event)
-  if (delta) {
-    return summarizeCodexEventText(delta, 'Codex 正在输出内容')
-  }
-
-  if (eventType === 'item.completed') {
-    const itemType =
-      typeof event.item?.type === 'string' && event.item.type ? event.item.type : 'unknown_item'
-    if (itemType === 'agent_message') {
-      return summarizeCodexEventText(event.item?.text, 'Codex 已完成一条消息')
-    }
-    return `Codex 已完成 ${itemType}`
-  }
-
-  if (typeof event.message === 'string' && event.message.trim()) {
-    return summarizeLogText(event.message, 120) ?? eventType
-  }
-
-  if (typeof event.item?.message === 'string' && event.item.message.trim()) {
-    return summarizeLogText(event.item.message, 120) ?? eventType
-  }
-
-  return eventType
-}
-
-function mapCodexImportEvent(
-  attempt: TextImportRunnerAttempt,
-  event: CodexJsonEvent,
-  at: number,
-  requestId?: string,
-): TextImportCodexEventUpdate | null {
-  const eventType = typeof event.type === 'string' && event.type ? event.type : 'unknown_event'
-  if (eventType === 'thread.started') {
-    return null
-  }
-
-  return {
-    attempt,
-    eventType,
-    at,
-    summary: summarizeCodexImportEvent(event),
-    rawJson: JSON.stringify(event, null, 2),
-    requestId,
-  }
-}
-
-interface CodexImportAttemptRuntimeState {
-  spawnStartedAt: number | null
-  latestEventAt: number | null
-  latestEventType: string | null
-  latestEventSummary: string | null
-  sawTurnStarted: boolean
-  sawContentEvent: boolean
-  sawCompletedMessage: boolean
-}
-
-interface ImportRuntimeExplainerContext {
-  sourceName: string
-  promptContext: BuiltTextImportPromptContext
-  attemptState: CodexImportAttemptRuntimeState
-  attempt: TextImportRunnerAttempt
-  stage: TextImportRunStage
-  at: number
-  requestId?: string
-}
-
-function createCodexImportAttemptRuntimeState(): CodexImportAttemptRuntimeState {
-  return {
-    spawnStartedAt: null,
-    latestEventAt: null,
-    latestEventType: null,
-    latestEventSummary: null,
-    sawTurnStarted: false,
-    sawContentEvent: false,
-    sawCompletedMessage: false,
-  }
-}
-
-function formatImportDuration(durationMs: number): string {
-  const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-
-  return minutes > 0
-    ? `${minutes}m ${seconds.toString().padStart(2, '0')}s`
-    : `${totalSeconds}s`
-}
-
-function formatImportEvidenceCount(label: string, count: number): string {
-  return `${label} ${count.toLocaleString()}`
-}
-
-function summarizeDiagnosticText(value: string): string {
-  return summarizeLogText(value, 120) ?? value
-}
-
-function classifyCodexDiagnosticLine(
-  rawLine: string,
-): { category: TextImportCodexDiagnosticCategory; message: string } | null {
-  const trimmed = rawLine.trim()
-  if (!trimmed) {
-    return null
-  }
-
-  const lower = trimmed.toLowerCase()
-
-  if (
-    lower.includes('plugin sync failed') ||
-    lower.includes('featured plugin ids cache failed')
-  ) {
-    return {
-      category: 'noise',
-      message: '插件目录同步失败（403），已降级为噪音诊断。',
-    }
-  }
-
-  if (lower.includes('shell snapshot not supported yet for powershell')) {
-    return {
-      category: 'capability_gap',
-      message: '当前环境不支持 PowerShell shell snapshot。',
-    }
-  }
-
-  if (
-    (lower.includes('thread/read failed') && lower.includes('includeturns')) ||
-    lower.includes('ephemeral threads do not support includeturns')
-  ) {
-    return {
-      category: 'capability_gap',
-      message: 'ephemeral 线程不支持 includeTurns 回读。',
-    }
-  }
-
-  if (
-    lower.includes('invalid_json_schema') ||
-    lower.includes('schema must have') ||
-    lower.includes('request_failed') ||
-    lower.includes('non-zero') ||
-    lower.includes('exit code')
-  ) {
-    return {
-      category: 'actionable',
-      message: summarizeDiagnosticText(trimmed),
-    }
-  }
-
-  if (lower.includes('error') || lower.includes('failed')) {
-    return {
-      category: 'actionable',
-      message: summarizeDiagnosticText(trimmed),
-    }
-  }
-
-  return null
-}
-
-function createCodexDiagnostic(
-  attempt: TextImportRunnerAttempt,
-  category: TextImportCodexDiagnosticCategory,
-  rawLine: string,
-  at: number,
-  requestId: string | undefined,
-  message?: string,
-): TextImportCodexDiagnosticUpdate {
-  return {
-    attempt,
-    category,
-    at,
-    message: message ?? summarizeDiagnosticText(rawLine),
-    rawLine,
-    requestId,
-  }
-}
-
-function updateImportAttemptRuntimeState(
-  state: CodexImportAttemptRuntimeState,
-  event: CodexJsonEvent,
-  at: number,
-  summary: string,
-): void {
-  const eventType = typeof event.type === 'string' && event.type ? event.type : 'unknown_event'
-  state.latestEventAt = at
-  state.latestEventType = eventType
-  state.latestEventSummary = summary
-
-  if (eventType === 'turn.started') {
-    state.sawTurnStarted = true
-  }
-
-  if (extractAssistantDelta(event)) {
-    state.sawContentEvent = true
-  }
-
-  if (eventType === 'item.completed' && event.item?.type === 'agent_message') {
-    state.sawContentEvent = true
-    state.sawCompletedMessage = true
-  }
-}
-
-function getExplainerAttemptForStage(stage: TextImportRunStage): TextImportRunnerAttempt | null {
-  switch (stage) {
-    case 'starting_codex_primary':
-    case 'waiting_codex_primary':
-    case 'parsing_primary_result':
-      return 'primary'
-    case 'repairing_structure':
-    case 'starting_codex_repair':
-    case 'waiting_codex_repair':
-    case 'parsing_repair_result':
-      return 'repair'
-    default:
-      return null
-  }
-}
-
-function buildRuntimeExplainerEvidence(
-  context: ImportRuntimeExplainerContext,
-  silentForMs: number | null,
-): string[] {
-  const evidence = [
-    `导入源 ${context.sourceName}`,
-    formatImportEvidenceCount('Prompt', context.promptContext.promptContextLength) + ' chars',
-    formatImportEvidenceCount('焦点节点', context.promptContext.focusedTopicCount),
-    formatImportEvidenceCount('背景摘要节点', context.promptContext.compactTopicCount),
-  ]
-
-  if (context.promptContext.preprocessedHintCount > 0) {
-    evidence.push(formatImportEvidenceCount('预处理线索', context.promptContext.preprocessedHintCount))
-  }
-
-  if (context.promptContext.notePreviewCount > 0) {
-    evidence.push(formatImportEvidenceCount('摘要 note 预览', context.promptContext.notePreviewCount))
-  }
-
-  if (context.attemptState.latestEventType) {
-    evidence.push(`最新真实事件 ${context.attemptState.latestEventType}`)
-  }
-
-  if (silentForMs !== null) {
-    evidence.push(`距上次真实事件 ${formatImportDuration(silentForMs)}`)
-  }
-
-  return evidence
-}
-
-function buildTextImportRuntimeExplainer(
-  context: ImportRuntimeExplainerContext,
-): TextImportCodexExplainerUpdate | null {
-  const silenceSinceLastEventMs =
-    context.attemptState.latestEventAt !== null
-      ? Math.max(0, context.at - context.attemptState.latestEventAt)
-      : context.attemptState.spawnStartedAt !== null
-        ? Math.max(0, context.at - context.attemptState.spawnStartedAt)
-        : null
-  const evidence = buildRuntimeExplainerEvidence(context, silenceSinceLastEventMs)
-  let headline: string | null = null
-  let reason: string | null = null
-
-  switch (context.stage) {
-    case 'starting_codex_primary':
-      headline = '正在启动主导入运行'
-      reason = '推断：bridge 已经完成上下文准备，正在启动主导入请求并等待 Codex 建立首个运行回合。'
-      break
-    case 'waiting_codex_primary':
-      if (!context.attemptState.sawTurnStarted) {
-        headline = '正在读取导入源与脑图上下文'
-        reason =
-          '推断：Codex 已启动，但首个真实 CLI 事件还没返回；当前仍在装载导入文本、脑图焦点节点和压缩背景节点，所以结果尚未可见。'
-        break
-      }
-
-      if (!context.attemptState.sawContentEvent) {
-        headline = '正在比较导入内容与现有脑图结构'
-        reason =
-          '推断：已经收到 turn.started，但还没有内容型事件；Codex 很可能正在把导入文本与当前脑图结构做对齐判断，所以还没进入结果起草阶段。'
-        break
-      }
-
-      if (!context.attemptState.sawCompletedMessage) {
-        headline = '正在起草结构化导入结果'
-        reason =
-          '推断：已经收到内容型 CLI 事件，但回合尚未结束；Codex 正在补全结构化导入结果，因此当前等待发生在结果生成阶段。'
-        break
-      }
-
-      headline = '候选结果已生成，正在完成回合并准备最终输出'
-      reason =
-        '推断：agent_message 已经完成，但 turn.completed 还没有到达；Codex 仍在收尾当前回合，并准备把最终输出交给 bridge 做后续校验。'
-      break
-    case 'parsing_primary_result':
-    case 'parsing_repair_result':
-      headline = '正在校验和标准化导入结果'
-      reason =
-        '推断：真实 CLI 生成已经结束，当前耗时来自 bridge 的 schema 校验、字段归一化和预览构建，而不是 Codex 继续生成。'
-      break
-    case 'repairing_structure':
-    case 'starting_codex_repair':
-    case 'waiting_codex_repair':
-      if (!context.attemptState.sawTurnStarted) {
-        headline = '正在修正不兼容的导入结构'
-        reason =
-          '推断：主结果没有直接通过结构要求，系统已进入 repair 重试；当前等待属于结构修正阶段，而不是首次导入生成。'
-        break
-      }
-
-      if (!context.attemptState.sawContentEvent) {
-        headline = '正在比对主结果并修正结构约束'
-        reason =
-          '推断：repair 回合已经开始，但还没有内容型事件；Codex 正在对照主结果和目标 schema 重新组织输出。'
-        break
-      }
-
-      headline = '正在生成修正后的结构化结果'
-      reason =
-        '推断：repair 回合已经开始产出内容，但仍未完成；Codex 正在重试生成满足当前结构要求的导入结果。'
-      break
-    default:
-      return null
-  }
-
-  return {
-    attempt: context.attempt,
-    at: context.at,
-    headline,
-    reason,
-    evidence,
-    requestId: context.requestId,
-  }
 }
 
 export interface CodexBridge {
@@ -2165,75 +2271,6 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
       const requestId = options?.requestId
       const topicCount = request.context.topicCount
       const promptContext = buildTextImportPromptContext(request)
-      const attemptRuntimeState: Record<TextImportRunnerAttempt, CodexImportAttemptRuntimeState> = {
-        primary: createCodexImportAttemptRuntimeState(),
-        repair: createCodexImportAttemptRuntimeState(),
-      }
-      const emittedDiagnostics = new Set<string>()
-      let latestExplainerSignature: string | null = null
-      const emitCodexDiagnostic = (diagnostic: TextImportCodexDiagnosticUpdate): void => {
-        const diagnosticKey = `${diagnostic.attempt}:${diagnostic.category}:${diagnostic.rawLine}`
-        if (emittedDiagnostics.has(diagnosticKey)) {
-          return
-        }
-
-        emittedDiagnostics.add(diagnosticKey)
-        options?.onCodexDiagnostic?.(diagnostic)
-        logInfo(
-          formatImportLog(requestId, {
-            event: 'diagnostic',
-            attempt: diagnostic.attempt,
-            category: diagnostic.category,
-            message: summarizeLogText(diagnostic.message),
-          }),
-        )
-      }
-      const emitCodexExplainer = (
-        stage: TextImportRunStage,
-        at = now(),
-      ): void => {
-        const attempt = getExplainerAttemptForStage(stage)
-        if (!attempt) {
-          return
-        }
-
-        const explainer = buildTextImportRuntimeExplainer({
-          sourceName: request.sourceName,
-          promptContext,
-          attemptState: attemptRuntimeState[attempt],
-          attempt,
-          stage,
-          at,
-          requestId,
-        })
-
-        if (!explainer) {
-          return
-        }
-
-        const signature = JSON.stringify({
-          attempt: explainer.attempt,
-          headline: explainer.headline,
-          reason: explainer.reason,
-          evidence: explainer.evidence,
-        })
-
-        if (signature === latestExplainerSignature) {
-          return
-        }
-
-        latestExplainerSignature = signature
-        options?.onCodexExplainer?.(explainer)
-        logInfo(
-          formatImportLog(requestId, {
-            event: 'explainer',
-            attempt: explainer.attempt,
-            stage,
-            headline: summarizeLogText(explainer.headline, 80),
-            reason: summarizeLogText(explainer.reason, 120),
-          }),
-        )
-      }
       const emitImportStatus = (
         stage: TextImportRunStage,
         message: string,
@@ -2253,44 +2290,6 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
             topicCount,
           }),
         )
-        emitCodexExplainer(stage)
-      }
-      const emitRunnerObservation = (
-        attempt: TextImportRunnerAttempt,
-        observation: TextImportRunnerObservationUpdate,
-      ): void => {
-        options?.onRunnerObservation?.(observation)
-        logInfo(
-          formatImportLog(requestId, {
-            event: 'runner',
-            attempt,
-            phase: observation.phase,
-            kind: observation.kind,
-            promptLength: observation.promptLength,
-            elapsedSinceSpawnMs: observation.elapsedSinceSpawnMs,
-            elapsedSinceLastEventMs: observation.elapsedSinceLastEventMs,
-            exitCode: observation.exitCode,
-            hadJsonEvent: observation.hadJsonEvent,
-          }),
-        )
-      }
-      const emitCodexEvent = (
-        attempt: TextImportRunnerAttempt,
-        event: CodexJsonEvent,
-      ): void => {
-        const eventAt = now()
-        const mapped = mapCodexImportEvent(attempt, event, eventAt, requestId)
-        if (!mapped) {
-          return
-        }
-
-        updateImportAttemptRuntimeState(
-          attemptRuntimeState[attempt],
-          event,
-          eventAt,
-          mapped.summary,
-        )
-        options?.onCodexEvent?.(mapped)
       }
       emitImportStatus(
         'analyzing_source',
@@ -2304,7 +2303,11 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
           focusedTopicCount: promptContext.focusedTopicCount,
           compactTopicCount: promptContext.compactTopicCount,
           notePreviewCount: promptContext.notePreviewCount,
+          focusedNotePreviewCount: promptContext.focusedNotePreviewCount,
+          compactNotePreviewCount: promptContext.compactNotePreviewCount,
           preprocessedHintCount: promptContext.preprocessedHintCount,
+          structuredHintCount: promptContext.structuredHintCount,
+          semanticHintCount: promptContext.semanticHintCount,
           promptContextLength: promptContext.promptContextLength,
         }),
       )
@@ -2344,7 +2347,6 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
         const parsingStage =
           mode === 'primary' ? 'parsing_primary_result' : 'parsing_repair_result'
         let currentStage: TextImportRunStage = startingStage
-        let spawnStartedAt: number | null = null
 
         emitImportStatus(
           startingStage,
@@ -2366,44 +2368,23 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
             buildTextImportPrompt(loadedPrompt, promptContext.promptContextText, mode),
             IMPORT_RESPONSE_SCHEMA,
             {
-              onEvent: (event: CodexJsonEvent) => {
-                emitCodexEvent(mode, event)
-                emitCodexExplainer(currentStage, now())
-              },
-              onStderrLine: (line: string) => {
-                const classified = classifyCodexDiagnosticLine(line)
-                if (!classified) {
-                  return
-                }
-
-                emitCodexDiagnostic(
-                  createCodexDiagnostic(
-                    mode,
-                    classified.category,
-                    line,
-                    now(),
-                    requestId,
-                    classified.message,
-                  ),
-                )
-              },
               onObservation: (event: CodexExecutionObservation) => {
-                if (event.phase === 'spawn_started') {
-                  spawnStartedAt = event.timestampMs
-                  attemptRuntimeState[mode].spawnStartedAt = event.timestampMs
-                }
-                emitRunnerObservation(mode, {
-                  attempt: mode,
-                  phase: event.phase,
-                  kind: event.kind,
-                  promptLength: event.promptLength,
-                  elapsedSinceSpawnMs:
-                    spawnStartedAt === null ? undefined : event.timestampMs - spawnStartedAt,
-                  elapsedSinceLastEventMs: event.elapsedSinceLastEventMs,
-                  exitCode: event.exitCode,
-                  hadJsonEvent: event.hadJsonEvent,
-                })
-                emitCodexExplainer(currentStage, event.timestampMs)
+                logInfo(
+                  formatImportLog(requestId, {
+                    event: 'runner',
+                    attempt: mode,
+                    stage: currentStage,
+                    timestampMs: event.timestampMs,
+                    kind: event.kind,
+                    stdoutLength: event.stdoutLength,
+                    stderrLength: event.stderrLength,
+                    phase: event.phase,
+                    promptLength: event.promptLength,
+                    elapsedSinceLastEventMs: event.elapsedSinceLastEventMs,
+                    exitCode: event.exitCode,
+                    hadJsonEvent: event.hadJsonEvent,
+                  }),
+                )
               },
             },
           )
@@ -2434,20 +2415,6 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
           return normalized
         } catch (error) {
           const stagedError = withImportStage(error, currentStage)
-          if (stagedError.rawMessage || stagedError.message) {
-            emitCodexDiagnostic(
-              createCodexDiagnostic(
-                mode,
-                stagedError.code === 'schema_invalid' || stagedError.code === 'request_failed'
-                  ? 'actionable'
-                  : 'capability_gap',
-                stagedError.rawMessage ?? stagedError.message,
-                now(),
-                requestId,
-                stagedError.message,
-              ),
-            )
-          }
           logError(
             formatImportLog(requestId, {
               event: 'attempt_failed',

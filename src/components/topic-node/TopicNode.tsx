@@ -7,6 +7,10 @@ import {
 } from '../../features/documents/topic-decorations'
 import { useEditorStore } from '../../features/editor/editor-store'
 import type { MindMapFlowNode } from '../../features/editor/layout'
+import {
+  getTopicTitleStyleVars,
+  getTopicTitleTypography,
+} from '../../features/editor/topic-title-display'
 import { Icon } from '../ui'
 import styles from './TopicNode.module.css'
 
@@ -33,7 +37,6 @@ function classNames(...values: Array<string | false | null | undefined>) {
 
 export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
   const activeTopicId = useEditorStore((state) => state.activeTopicId)
-  const selectedTopicIds = useEditorStore((state) => state.selectedTopicIds)
   const editingTopicId = useEditorStore((state) => state.editingTopicId)
   const editingSurface = useEditorStore((state) => state.editingSurface)
   const startEditing = useEditorStore((state) => state.startEditing)
@@ -44,7 +47,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
   const [hoveredIcon, setHoveredIcon] = useState<string | null>(null)
 
   const isEditing = editingTopicId === id && editingSurface === 'canvas'
-  const isSelected = selected || selectedTopicIds.includes(id)
+  const isSelected = selected
   const isActive = activeTopicId === id
   const hasNote = data.note.trim().length > 0
   const isLocked = data.aiLocked
@@ -54,19 +57,15 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
   const extraMarkerCount = Math.max(0, data.metadata.markers.length - markers.length)
   const stickers = data.metadata.stickers.slice(0, 2)
   const extraStickerCount = Math.max(0, data.metadata.stickers.length - stickers.length)
-  const hasLinks = data.metadata.links.length > 0
-  const hasAttachments = data.metadata.attachments.length > 0
-  const task = data.metadata.task
   const topicType = data.metadata?.type
+  const titleTypography = getTopicTitleTypography(data.title, data.isRoot ? 'root' : 'regular')
+  const titleStyleVars = getTopicTitleStyleVars(data.title, data.isRoot ? 'root' : 'regular')
   const showMetaRow =
     labels.length > 0 ||
     markers.length > 0 ||
     extraMarkerCount > 0 ||
     stickers.length > 0 ||
-    extraStickerCount > 0 ||
-    !!task ||
-    hasLinks ||
-    hasAttachments
+    extraStickerCount > 0
 
   useEffect(() => {
     if (!isEditing) {
@@ -133,7 +132,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
       />
 
       <div className={styles.content}>
-        {(isLocked || hasNote || topicType || task) && (
+        {(isLocked || hasNote || topicType) && (
           <div className={styles.statusBar}>
             {isLocked ? (
               <span
@@ -143,7 +142,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                 role="img"
                 aria-label="AI 锁定节点"
               >
-                <Icon name="lock" size={11} strokeWidth={2} />
+                <Icon name="lock" size={14} strokeWidth={2} />
                 {hoveredIcon === 'lock' ? (
                   <span className={styles.statusTooltip}>AI 锁定：节点不会被 AI 修改</span>
                 ) : null}
@@ -157,7 +156,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                 role="img"
                 aria-label="已添加详细内容"
               >
-                <Icon name="note" size={11} strokeWidth={2} />
+                <Icon name="note" size={14} strokeWidth={2} />
                 {hoveredIcon === 'note' ? (
                   <span className={styles.statusTooltip}>已添加详细内容</span>
                 ) : null}
@@ -171,7 +170,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                 role="img"
                 aria-label="里程碑"
               >
-                <Icon name="star" size={11} strokeWidth={2} />
+                <Icon name="star" size={14} strokeWidth={2} />
                 {hoveredIcon === 'milestone' ? (
                   <span className={styles.statusTooltip}>里程碑节点</span>
                 ) : null}
@@ -185,40 +184,9 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                 role="img"
                 aria-label="任务"
               >
-                <Icon name="checkCircle" size={11} strokeWidth={2} />
+                <Icon name="checkCircle" size={14} strokeWidth={2} />
                 {hoveredIcon === 'task' ? (
                   <span className={styles.statusTooltip}>任务节点</span>
-                ) : null}
-              </span>
-            ) : null}
-            {task ? (
-              <span
-                className={classNames(styles.statusIcon, styles.taskStatusIcon)}
-                data-task-status={task.status}
-                onMouseEnter={() => setHoveredIcon('taskStatus')}
-                onMouseLeave={() => setHoveredIcon(null)}
-                role="img"
-                aria-label={`任务状态：${task.status}`}
-              >
-                <Icon
-                  name={
-                    task.status === 'done'
-                      ? 'check'
-                      : task.status === 'in_progress'
-                        ? 'calendar'
-                        : 'history'
-                  }
-                  size={11}
-                  strokeWidth={2}
-                />
-                {hoveredIcon === 'taskStatus' ? (
-                  <span className={styles.statusTooltip}>
-                    {task.status === 'done'
-                      ? '已完成'
-                      : task.status === 'in_progress'
-                        ? '进行中'
-                        : '待办'}
-                  </span>
                 ) : null}
               </span>
             ) : null}
@@ -250,7 +218,13 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
         ) : (
           <>
             <div className={styles.titleRow}>
-              <div className={styles.title}>{data.title}</div>
+              <div
+                className={styles.title}
+                data-title-tier={titleTypography.tier}
+                style={titleStyleVars as CSSProperties}
+              >
+                {data.title}
+              </div>
             </div>
 
             {showMetaRow ? (
@@ -277,7 +251,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                       role="img"
                       aria-label={`标记：${topicMarkerLabels[marker]}`}
                     >
-                      <Icon name={markerIconMap[marker]} size={11} strokeWidth={2} />
+                      <Icon name={markerIconMap[marker]} size={14} strokeWidth={2} />
                     </span>
                   ))}
                   {extraMarkerCount > 0 ? (
@@ -299,27 +273,6 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                     <span className={styles.metaCount}>+{extraStickerCount}</span>
                   ) : null}
 
-                  {hasLinks ? (
-                    <span
-                      className={classNames(styles.metaBadge, styles.linkBadge)}
-                      data-link-indicator="true"
-                      role="img"
-                      aria-label="包含链接"
-                    >
-                      <Icon name="link" size={11} strokeWidth={2} />
-                    </span>
-                  ) : null}
-
-                  {hasAttachments ? (
-                    <span
-                      className={classNames(styles.metaBadge, styles.attachmentBadge)}
-                      data-attachment-indicator="true"
-                      role="img"
-                      aria-label="包含附件引用"
-                    >
-                      <Icon name="attachment" size={11} strokeWidth={2} />
-                    </span>
-                  ) : null}
                 </div>
               </div>
             ) : null}
