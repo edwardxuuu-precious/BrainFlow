@@ -17,7 +17,7 @@
 ## 解决的问题
 - 已将导入链路优化、GTM 导入层级修复、相关测试与任务记录整理为一次功能提交并推送到 GitHub。
 - 已排除明显无关的本地改动，未把 `package-lock.json`、`output/e2e/`、旧的无关任务记录一起提交。
-- 已把本次 push 的执行结果回写到当天任务记录，准备补充为单独日志提交。
+- 已把本次 push 的执行结果回写到当天任务记录，并完成日志提交与二次推送。
 
 ## 问题原因
 - 当前工作区是混合状态，既有导入链路相关修改，也有不属于本次提交范围的本地文件。
@@ -29,12 +29,14 @@
 3. 只显式暂存导入链路优化、GTM 修复、相关测试和任务记录文件。
 4. 以提交信息 `Optimize text import pipeline and GTM layering` 完成提交，得到提交哈希 `0a659af`。
 5. 执行 `git push -u origin codex/import-pipeline-optimization`，成功推送到 GitHub。
+6. 回写当天任务记录，追加日志提交 `Record import pipeline publish log`，并再次执行 `git push` 同步远端。
 
 ## 是否成功解决
 - 状态：成功
 - 说明：
   - 分支：`codex/import-pipeline-optimization`
-  - 提交：`0a659af`
+  - 功能提交：`0a659af`
+  - 日志提交：`8df09a3`
   - 远端：`origin`
   - 推送状态：成功
   - GitHub 提示的 PR 地址：`https://github.com/edwardxuuu-precious/BrainFlow/pull/new/codex/import-pipeline-optimization`
@@ -58,4 +60,4 @@
   - `Work_Progress/2026-04-08/230000_conservative-cleanup.md`
   - `output/e2e/`
   - `package-lock.json`
-- 当前还差把本任务记录自身补成一次单独日志提交并推送，使分支重新回到本地与远端一致。
+- 本次目标已经完成；如果后续要继续整理工作区，建议先单独确认这些剩余改动是否属于下一次提交范围。
