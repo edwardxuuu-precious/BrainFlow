@@ -106,4 +106,112 @@ describe('text-import-layering', () => {
     expect(secondNotes.task_validate.match(/priority: high/g) ?? []).toHaveLength(1)
     expect(secondNotes.task_validate.match(/definition_of_done:/g) ?? []).toHaveLength(1)
   })
+
+  it('keeps same-titled child nodes separate across different semantic branches', () => {
+    const semanticNodes: KnowledgeSemanticNode[] = [
+      {
+        id: 'root',
+        type: 'question',
+        title: 'Who should we target first?',
+        summary: 'Who should we target first?',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+      {
+        id: 'pain',
+        type: 'project',
+        title: 'Most painful segment',
+        summary: 'Most painful segment',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+      {
+        id: 'access',
+        type: 'project',
+        title: 'Easiest channel',
+        summary: 'Easiest channel',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+      {
+        id: 'pain_criteria',
+        type: 'criterion',
+        title: 'Criteria',
+        summary: 'Criteria',
+        detail: 'Look for repeated pain during interviews.',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+      {
+        id: 'access_criteria',
+        type: 'criterion',
+        title: 'Criteria',
+        summary: 'Criteria',
+        detail: 'Look for channels with immediate reach.',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+    ]
+    const semanticEdges: KnowledgeSemanticEdge[] = [
+      {
+        from: 'pain',
+        to: 'root',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'high',
+      },
+      {
+        from: 'access',
+        to: 'root',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'high',
+      },
+      {
+        from: 'pain_criteria',
+        to: 'pain',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'high',
+      },
+      {
+        from: 'access_criteria',
+        to: 'access',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'high',
+      },
+    ]
+
+    const compiled = compileSemanticLayerViews({
+      bundleId: 'bundle_gtm',
+      bundleTitle: 'Import: GTM',
+      sources: [],
+      semanticNodes,
+      semanticEdges,
+      fallbackInsertionParentTopicId: 'topic_root',
+    })
+    const projection = compiled.viewProjections[compiled.activeViewId]
+    const criteriaNodes = projection.previewNodes.filter((node) => node.title === 'Criteria')
+
+    expect(criteriaNodes).toHaveLength(2)
+    expect(criteriaNodes.map((node) => node.id).sort()).toEqual(['access_criteria', 'pain_criteria'])
+    expect(criteriaNodes.map((node) => node.parentId).sort()).toEqual(['access', 'pain'])
+    expect(criteriaNodes.map((node) => node.note)).toEqual([
+      'Look for channels with immediate reach.',
+      'Look for repeated pain during interviews.',
+    ])
+  })
 })

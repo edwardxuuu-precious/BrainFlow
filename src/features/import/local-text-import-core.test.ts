@@ -8,6 +8,7 @@ import {
 } from './local-text-import-core'
 import { preprocessTextToImportHints } from './text-import-preprocess'
 import GTM_MAIN_FIXTURE from './__fixtures__/GTM_main.md?raw'
+import { resolveTextImportPlanningOptions } from '../../../shared/text-import-semantics'
 
 describe('local-text-import-core', () => {
   it('builds a single thinking bundle for generic markdown while preserving source traceability', () => {
@@ -122,11 +123,21 @@ describe('local-text-import-core', () => {
         batchContainerTitle: 'Import batch: GTM',
       }),
     )
+
+    const previewRoots = built.response.previewNodes.filter((node) => node.parentId === null)
+    const mainFileRoot = built.response.previewNodes.find((node) => node.title === 'GTM_main')
+    const stepOneFileRoot = built.response.previewNodes.find((node) => node.title === 'GTM_step1')
+    const stepOneOneFileRoot = built.response.previewNodes.find((node) => node.title === 'GTM_step1-1')
+
+    expect(previewRoots.map((node) => node.title)).toEqual(['GTM_main'])
+    expect(mainFileRoot?.parentId).toBeNull()
+    expect(stepOneFileRoot?.parentId).toBe(mainFileRoot?.id)
+    expect(stepOneOneFileRoot?.parentId).toBe(stepOneFileRoot?.id)
     expect(built.response.views.map((view) => view.type)).toEqual(['thinking_view'])
     expect(built.response.crossFileMergeSuggestions).toEqual([])
   })
 
-  it('rebuilds the GTM import into one center question and a combined execution branch', () => {
+  it('keeps GTM imports on the generic planner path instead of the removed fixed template', () => {
     const document = createMindMapDocument('Import doc')
 
     const built = createLocalTextImportPreview({
@@ -144,46 +155,20 @@ describe('local-text-import-core', () => {
     })
 
     const root = built.response.previewNodes.find((node) => node.parentId === null)
-    const levelOne = built.response.previewNodes.filter((node) => node.parentId === root?.id)
-    const disallowed = new Set(['说明', '对话记录', '用户', '助手', '备注', '结论', '拆解', '建议下一步'])
 
-    expect(root?.title).toBe('第一波应该先打谁')
-    expect(levelOne.map((node) => node.title)).toEqual([
-      '谁最痛',
-      '谁最容易现在买',
-      '谁最容易触达',
-      '谁最容易形成案例扩散',
-      '确定第一波 beachhead segment',
-    ])
+    expect(root?.title).toBe('Import: GTM_main')
+    expect(built.response.semanticNodes.some((node) => node.id.startsWith('semantic_gtm_'))).toBe(false)
     expect(
-      built.response.previewNodes.some((node) => disallowed.has(node.title)),
+      built.response.previewNodes.some(
+        (node) => node.title === '\u7b2c\u4e00\u6ce2\u5e94\u8be5\u5148\u6253\u8c01',
+      ),
     ).toBe(false)
-    expect(built.response.previewNodes).toHaveLength(15)
     expect(built.response.previewNodes[0]?.sourceAnchors?.length ?? 0).toBeGreaterThanOrEqual(0)
     expect(built.response.sources[0]?.metadata).toMatchObject({
       headingCount: expect.any(Number),
       headings: expect.any(Array),
       segments: expect.any(Array),
     })
-
-    const decisionBranch = levelOne.find((branch) => branch.title === '确定第一波 beachhead segment')
-    const decisionChildren = built.response.previewNodes.filter((node) => node.parentId === decisionBranch?.id)
-    expect(decisionChildren.map((node) => node.title)).toEqual([
-      'Beachhead Segment 筛选',
-      '决策',
-      '收敛第一波目标市场',
-    ])
-    const branchWithDetails = levelOne.find((branch) => branch.title === '谁最痛')
-    const detailChildren = built.response.previewNodes.filter((node) => node.parentId === branchWithDetails?.id)
-    expect(detailChildren.map((node) => node.title)).toEqual(['判断标准', '证据问题', '常见误判'])
-    return
-
-    levelOne
-      .filter((branch) => branch.title !== '确定第一波 beachhead segment')
-      .forEach((branch) => {
-        const children = built.response.previewNodes.filter((node) => node.parentId === branch.id)
-        expect(children.map((node) => node.title)).toEqual(['判断标准', '证据问题', '常见误判'])
-      })
   })
 
   it('classifies method-like text and keeps slot-aware thinking nodes', () => {
@@ -191,15 +176,15 @@ describe('local-text-import-core', () => {
     const rawText = [
       '# Onboarding SOP',
       '',
-      '目标：让新成员在第一周完成环境配置。',
+      'Goal: get every new hire through environment setup in the first week.',
       '',
-      '## 步骤',
-      '1. 创建账号并加入项目组',
-      '2. 拉取仓库并运行初始化脚本',
+      '## Steps',
+      '1. Create the account and join the project.',
+      '2. Clone the repository and run the bootstrap script.',
       '',
-      '## 检验标准',
-      '- 本地可以成功启动开发环境',
-      '- 可以通过基础健康检查',
+      '## Checks',
+      '- Local development boots successfully.',
+      '- Baseline health checks pass.',
     ].join('\n')
 
     const built = createLocalTextImportPreview({
@@ -219,10 +204,12 @@ describe('local-text-import-core', () => {
     expect(built.response.classification.archetype).toBe('method')
     expect(built.response.templateSummary.visibleSlots).toContain('steps')
     expect(
-      built.response.previewNodes.some((node) => (node.note ?? '').includes('环境配置')),
+      built.response.previewNodes.some((node) => (node.note ?? '').includes('environment setup')),
     ).toBe(true)
     expect(
-      built.response.previewNodes.some((node) => node.title.includes('目标：让新成员在第一周完成环境配置。')),
+      built.response.previewNodes.some((node) =>
+        node.title.includes('Goal: get every new hire through environment setup in the first week.'),
+      ),
     ).toBe(false)
   })
 
@@ -232,16 +219,20 @@ describe('local-text-import-core', () => {
       {
         sourceName: 'weekly_report.md',
         sourceType: 'file' as const,
-        rawText: '# Weekly Report\n\n关键结果：完成上线。\n\n下一步：跟进复盘。',
-        preprocessedHints: preprocessTextToImportHints('# Weekly Report\n\n关键结果：完成上线。\n\n下一步：跟进复盘。'),
+        rawText: '# Weekly Report\n\nKey result: launched the beta.\n\nNext step: review analytics.',
+        preprocessedHints: preprocessTextToImportHints(
+          '# Weekly Report\n\nKey result: launched the beta.\n\nNext step: review analytics.',
+        ),
         semanticHints: [],
         intent: 'distill_structure' as const,
       },
       {
         sourceName: 'meeting_minutes.md',
         sourceType: 'file' as const,
-        rawText: '# Meeting\n\n结论：采用方案 A。\n\n行动项：周三前提交 PR。',
-        preprocessedHints: preprocessTextToImportHints('# Meeting\n\n结论：采用方案 A。\n\n行动项：周三前提交 PR。'),
+        rawText: '# Meeting\n\nDecision: adopt option A.\n\nAction item: open a PR by Wednesday.',
+        preprocessedHints: preprocessTextToImportHints(
+          '# Meeting\n\nDecision: adopt option A.\n\nAction item: open a PR by Wednesday.',
+        ),
         semanticHints: [],
         intent: 'distill_structure' as const,
       },
@@ -258,5 +249,67 @@ describe('local-text-import-core', () => {
 
     expect(built.response.batch?.files?.every((file) => file.classification)).toBe(true)
     expect(built.response.bundle?.views.map((view) => view.type)).toEqual(['thinking_view'])
+  })
+
+  it('captures diagnostics and artifact reuse when prepared artifacts are reused', () => {
+    const document = createMindMapDocument('Import doc')
+    const rawText = '# Launch runbook\n\n## Steps\n1. Warm the audience\n2. Ship the sequence'
+    const preprocessedHints = preprocessTextToImportHints(rawText)
+    const planning = resolveTextImportPlanningOptions({
+      sourceName: 'launch_runbook.md',
+      sourceType: 'file',
+      preprocessedHints,
+    })
+
+    createLocalTextImportPreview({
+      documentId: document.id,
+      documentTitle: document.title,
+      baseDocumentUpdatedAt: document.updatedAt,
+      context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
+      anchorTopicId: document.rootTopicId,
+      sourceName: 'launch_runbook.md',
+      sourceType: 'file',
+      intent: planning.intent,
+      archetype: planning.resolvedArchetype,
+      archetypeMode: 'auto',
+      contentProfile: planning.contentProfile,
+      nodeBudget: planning.nodeBudget,
+      rawText,
+      preprocessedHints,
+      semanticHints: planning.semanticHints,
+    }, {
+      preparedArtifacts: planning.preparedArtifacts,
+    })
+
+    const reusedPlanning = resolveTextImportPlanningOptions({
+      sourceName: 'launch_runbook.md',
+      sourceType: 'file',
+      preprocessedHints,
+    })
+
+    const reused = createLocalTextImportPreview({
+      documentId: document.id,
+      documentTitle: document.title,
+      baseDocumentUpdatedAt: document.updatedAt,
+      context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
+      anchorTopicId: document.rootTopicId,
+      sourceName: 'launch_runbook.md',
+      sourceType: 'file',
+      intent: reusedPlanning.intent,
+      archetype: reusedPlanning.resolvedArchetype,
+      archetypeMode: 'auto',
+      contentProfile: reusedPlanning.contentProfile,
+      nodeBudget: reusedPlanning.nodeBudget,
+      rawText,
+      preprocessedHints,
+      semanticHints: reusedPlanning.semanticHints,
+    }, {
+      preparedArtifacts: reusedPlanning.preparedArtifacts,
+    })
+
+    expect(reused.response.diagnostics?.artifactReuse.contentKey).toBeTruthy()
+    expect(reused.response.diagnostics?.artifactReuse.reusedSemanticHints).toBe(true)
+    expect(reused.response.diagnostics?.artifactReuse.reusedPlannedStructure).toBe(true)
+    expect(reused.response.diagnostics?.densityStats.previewNodeCount).toBeGreaterThan(0)
   })
 })

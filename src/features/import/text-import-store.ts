@@ -29,6 +29,10 @@ import {
   recompileTextImportDraft,
 } from './text-import-preview-edit'
 import {
+  buildTextImportDiagnostics,
+  createEmptyTextImportTimings,
+} from './text-import-diagnostics'
+import {
   startTextImportBatchJob,
   startTextImportJob,
   type TextImportJobEvent,
@@ -387,6 +391,47 @@ function mergePlanningSummariesWithPreview(
   return planningSummaries
 }
 
+function applyImportDiagnostics(
+  preview: TextImportResponse,
+  options: {
+    preprocessMs: number
+    planningMs: number
+    planningSummaries: TextImportSourcePlanningSummary[]
+  },
+): TextImportResponse {
+  return {
+    ...preview,
+    diagnostics: buildTextImportDiagnostics({
+      timings: {
+        ...(preview.diagnostics?.timings ?? createEmptyTextImportTimings()),
+        preprocessMs: options.preprocessMs,
+        planningMs: options.planningMs,
+        totalMs:
+          options.preprocessMs +
+          options.planningMs +
+          (preview.diagnostics?.timings.parseTreeMs ?? 0) +
+          (preview.diagnostics?.timings.batchComposeMs ?? 0) +
+          (preview.diagnostics?.timings.semanticCandidateMs ?? 0) +
+          (preview.diagnostics?.timings.semanticAdjudicationMs ?? 0) +
+          (preview.diagnostics?.timings.previewEditMs ?? 0),
+      },
+      response: preview,
+      artifactReuse:
+        preview.diagnostics?.artifactReuse ?? {
+          contentKey: 'store',
+          planKey: 'store',
+          reusedSemanticHints: false,
+          reusedSemanticUnits: false,
+          reusedPlannedStructure: false,
+        },
+      planningSummaries: options.planningSummaries,
+      semanticAdjudication: preview.diagnostics?.semanticAdjudication,
+      dirtySubtreeIds: preview.diagnostics?.dirtySubtreeIds,
+      lastEditAction: preview.diagnostics?.lastEditAction ?? null,
+    }),
+  }
+}
+
 async function startSinglePreview(
   set: (
     partial:
@@ -428,7 +473,10 @@ async function startSinglePreview(
 
   cancelActiveJob()
 
+  const preprocessStartedAt = Date.now()
   const preprocessedHints = preprocessTextToImportHints(normalizedText)
+  const preprocessMs = Date.now() - preprocessStartedAt
+  const planningStartedAt = Date.now()
   const planning = resolveTextImportPlanningOptions({
     sourceName,
     sourceType,
@@ -436,6 +484,7 @@ async function startSinglePreview(
     presetOverride,
     archetypeOverride,
   })
+  const planningMs = Date.now() - planningStartedAt
   const request = {
     documentId: document.id,
     documentTitle: document.title,
@@ -452,6 +501,9 @@ async function startSinglePreview(
     rawText: normalizedText,
     preprocessedHints,
     semanticHints: planning.semanticHints,
+    preparedArtifacts: planning.preparedArtifacts,
+  } as Parameters<typeof startTextImportJob>[0] & {
+    preparedArtifacts: typeof planning.preparedArtifacts
   }
 
   const queuedEvents: TextImportJobEvent[] = []
@@ -486,7 +538,12 @@ async function startSinglePreview(
     }
 
     if (event.type === 'preview') {
-      const preview = recompileTextImportDraft(event.data)
+      const mergedPlanningSummaries = mergePlanningSummariesWithPreview([planning.summary], event.data)
+      const preview = applyImportDiagnostics(recompileTextImportDraft(event.data), {
+        preprocessMs,
+        planningMs,
+        planningSummaries: mergedPlanningSummaries,
+      })
       set({
         activeJobMode: event.mode,
         activeJobType: event.jobType,
@@ -494,7 +551,7 @@ async function startSinglePreview(
         draftTree: buildTextImportDraftTree(preview),
         previewTree: buildTextImportPreviewTree(preview.previewNodes),
         draftConfirmed: false,
-        planningSummaries: mergePlanningSummariesWithPreview([planning.summary], event.data),
+        planningSummaries: mergedPlanningSummaries,
         crossFileMergeSuggestions: event.data.crossFileMergeSuggestions ?? [],
         approvedConflictIds: getInitialApprovedConflictIds(event.data),
         modeHint: createModeHint(event.mode, event.jobType),
@@ -540,7 +597,12 @@ async function startSinglePreview(
 
     activeJobHandle = null
     const finishedAt = Date.now()
-    const preview = recompileTextImportDraft(event.data)
+    const mergedPlanningSummaries = mergePlanningSummariesWithPreview([planning.summary], event.data)
+    const preview = applyImportDiagnostics(recompileTextImportDraft(event.data), {
+      preprocessMs,
+      planningMs,
+      planningSummaries: mergedPlanningSummaries,
+    })
     set({
       activeJobMode: event.mode,
       activeJobType: event.jobType,
@@ -548,7 +610,7 @@ async function startSinglePreview(
       draftTree: buildTextImportDraftTree(preview),
       previewTree: buildTextImportPreviewTree(preview.previewNodes),
       draftConfirmed: false,
-      planningSummaries: mergePlanningSummariesWithPreview([planning.summary], event.data),
+      planningSummaries: mergedPlanningSummaries,
       crossFileMergeSuggestions: event.data.crossFileMergeSuggestions ?? [],
       approvedConflictIds: getInitialApprovedConflictIds(event.data),
       isPreviewing: false,
@@ -685,7 +747,10 @@ async function startBatchPreview(
       const sourceName = 'name' in file ? file.name : file.sourceName
       const sourceType = 'name' in file ? ('file' as const) : file.sourceType
       const rawText = 'name' in file ? await file.text() : file.rawText
+      const preprocessStartedAt = Date.now()
       const preprocessedHints = preprocessTextToImportHints(rawText)
+      const preprocessMs = Date.now() - preprocessStartedAt
+      const planningStartedAt = Date.now()
       const planning = resolveTextImportPlanningOptions({
         sourceName,
         sourceType,
@@ -693,6 +758,7 @@ async function startBatchPreview(
         presetOverride,
         archetypeOverride,
       })
+      const planningMs = Date.now() - planningStartedAt
       return {
         sourceName,
         sourceType,
@@ -705,10 +771,15 @@ async function startBatchPreview(
         contentProfile: planning.contentProfile,
         nodeBudget: planning.nodeBudget,
         planningSummary: planning.summary,
+        preparedArtifacts: planning.preparedArtifacts,
+        preprocessMs,
+        planningMs,
       }
     }),
   )
   const sortedFiles = sortTextImportBatchSources(loadedFiles)
+  const preprocessMs = sortedFiles.reduce((total, file) => total + file.preprocessMs, 0)
+  const planningMs = sortedFiles.reduce((total, file) => total + file.planningMs, 0)
   const batchRequest: LocalTextImportBatchRequest = {
     documentId: document.id,
     documentTitle: document.title,
@@ -750,7 +821,15 @@ async function startBatchPreview(
     }
 
     if (event.type === 'preview') {
-      const preview = recompileTextImportDraft(event.data)
+      const mergedPlanningSummaries = mergePlanningSummariesWithPreview(
+        sortedFiles.map((file) => file.planningSummary),
+        event.data,
+      )
+      const preview = applyImportDiagnostics(recompileTextImportDraft(event.data), {
+        preprocessMs,
+        planningMs,
+        planningSummaries: mergedPlanningSummaries,
+      })
       set({
         activeJobMode: event.mode,
         activeJobType: event.jobType,
@@ -758,10 +837,7 @@ async function startBatchPreview(
         draftTree: buildTextImportDraftTree(preview),
         previewTree: buildTextImportPreviewTree(preview.previewNodes),
         draftConfirmed: false,
-        planningSummaries: mergePlanningSummariesWithPreview(
-          sortedFiles.map((file) => file.planningSummary),
-          event.data,
-        ),
+        planningSummaries: mergedPlanningSummaries,
         crossFileMergeSuggestions: event.data.crossFileMergeSuggestions ?? [],
         approvedConflictIds: getInitialApprovedConflictIds(event.data),
         modeHint: createModeHint(event.mode, event.jobType),
@@ -807,7 +883,15 @@ async function startBatchPreview(
 
     activeJobHandle = null
     const finishedAt = Date.now()
-    const preview = recompileTextImportDraft(event.data)
+    const mergedPlanningSummaries = mergePlanningSummariesWithPreview(
+      sortedFiles.map((file) => file.planningSummary),
+      event.data,
+    )
+    const preview = applyImportDiagnostics(recompileTextImportDraft(event.data), {
+      preprocessMs,
+      planningMs,
+      planningSummaries: mergedPlanningSummaries,
+    })
     set({
       activeJobMode: event.mode,
       activeJobType: event.jobType,
@@ -815,10 +899,7 @@ async function startBatchPreview(
       draftTree: buildTextImportDraftTree(preview),
       previewTree: buildTextImportPreviewTree(preview.previewNodes),
       draftConfirmed: false,
-      planningSummaries: mergePlanningSummariesWithPreview(
-        sortedFiles.map((file) => file.planningSummary),
-        event.data,
-      ),
+      planningSummaries: mergedPlanningSummaries,
       crossFileMergeSuggestions: event.data.crossFileMergeSuggestions ?? [],
       approvedConflictIds: getInitialApprovedConflictIds(event.data),
       isPreviewing: false,

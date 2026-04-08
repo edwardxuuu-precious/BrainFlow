@@ -13,6 +13,7 @@ import type {
   TextImportPreset,
   TextImportPreprocessHint,
   TextImportPreviewItem,
+  TextImportRecommendedRoute,
   TextImportRequest,
   TextImportSemanticHint,
   TextImportSemanticHintKind,
@@ -74,20 +75,53 @@ export interface TextImportSourcePlanningSummary {
   confidence: TextImportConfidence
   presetConfidence: TextImportConfidence
   archetypeConfidence: TextImportConfidence
+  structureScore: number
+  structureConfidence: number
+  recommendedRoute: TextImportRecommendedRoute
+  isShallowPass: boolean
+  needsDeepPass: boolean
   rationale: string
   presetRationale: string
   archetypeRationale: string
   isManual: boolean
 }
 
+export interface TextImportArtifactReuseSummary {
+  contentKey: string
+  planKey: string
+  reusedSemanticHints: boolean
+  reusedSemanticUnits: boolean
+  reusedPlannedStructure: boolean
+}
+
+export interface TextImportStructureAssessment {
+  score: number
+  confidence: number
+  recommendedRoute: TextImportRecommendedRoute
+  isShallowPass: boolean
+  needsDeepPass: boolean
+}
+
+export interface PreparedTextImportArtifacts {
+  contentKey: string
+  planKey: string
+  semanticHints: TextImportSemanticHint[]
+  semanticUnits: TextImportSemanticUnit[]
+  plannedStructure: PlannedTextImportStructure
+  artifactReuse: TextImportArtifactReuseSummary
+  structure: TextImportStructureAssessment
+}
+
 export interface ResolvedTextImportPlanningOptions {
   semanticHints: TextImportSemanticHint[]
+  semanticUnits: TextImportSemanticUnit[]
   contentProfile: TextImportContentProfile
   nodeBudget: TextImportNodeBudget
   intent: TextImportRequest['intent']
   resolvedPreset: TextImportPreset
   resolvedArchetype: TextImportArchetype
   summary: TextImportSourcePlanningSummary
+  preparedArtifacts: PreparedTextImportArtifacts
 }
 
 const GENERIC_TITLE_PATTERNS = [
@@ -285,6 +319,25 @@ const DEFAULT_NODE_BUDGETS: Record<TextImportContentProfile, TextImportNodeBudge
   procedure: { maxRoots: 6, maxDepth: 4, maxTotalNodes: 30 },
   mixed: { maxRoots: 7, maxDepth: 4, maxTotalNodes: 36 },
   brain_dump: { maxRoots: 5, maxDepth: 4, maxTotalNodes: 24 },
+}
+
+const semanticHintsCache = new Map<string, TextImportSemanticHint[]>()
+const semanticUnitsCache = new Map<string, TextImportSemanticUnit[]>()
+const plannedStructureCache = new Map<string, PlannedTextImportStructure>()
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
+      left.localeCompare(right),
+    )
+    return `{${entries
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
 }
 
 function normalizeText(value: string | null | undefined): string {
@@ -1073,6 +1126,179 @@ export function resolveTextImportPresetSelection(options: {
   }
 }
 
+function createContentArtifactKey(options: {
+  sourceName: string
+  preprocessedHints: TextImportPreprocessHint[]
+}): string {
+  return stableStringify({
+    sourceName: options.sourceName,
+    hints: options.preprocessedHints.map((hint) => ({
+      kind: hint.kind,
+      text: hint.text,
+      level: hint.level,
+      lineStart: hint.lineStart,
+      lineEnd: hint.lineEnd,
+      sourcePath: hint.sourcePath,
+      items: hint.items ?? null,
+      checked: hint.checked ?? null,
+      rows: hint.rows ?? null,
+    })),
+  })
+}
+
+function createPlannedStructureKey(options: {
+  contentKey: string
+  rootTitle: string
+  intent: TextImportRequest['intent']
+  sourceName: string
+  profile: TextImportContentProfile
+  archetype?: TextImportArchetype
+  archetypeMode?: TextImportRequest['archetypeMode']
+  nodeBudget: TextImportNodeBudget
+}): string {
+  return stableStringify({
+    contentKey: options.contentKey,
+    rootTitle: options.rootTitle,
+    intent: options.intent,
+    sourceName: options.sourceName,
+    profile: options.profile,
+    archetype: options.archetype ?? null,
+    archetypeMode: options.archetypeMode ?? 'auto',
+    nodeBudget: options.nodeBudget,
+  })
+}
+
+export function assessTextImportStructure(options: {
+  sourceName: string
+  preprocessedHints: TextImportPreprocessHint[]
+  semanticHints: TextImportSemanticHint[]
+}): TextImportStructureAssessment {
+  const totalHints = Math.max(1, options.preprocessedHints.length)
+  const structuredHintCount = options.preprocessedHints.filter((hint) =>
+    ['heading', 'bullet_list', 'ordered_list', 'task_list', 'table'].includes(hint.kind),
+  ).length
+  const headingCount = options.preprocessedHints.filter((hint) => hint.kind === 'heading').length
+  const paragraphCount = options.preprocessedHints.filter((hint) => hint.kind === 'paragraph').length
+  const actionLikeHintCount = options.semanticHints.filter((hint) =>
+    ['decision', 'action', 'risk', 'question', 'metric', 'timeline', 'owner'].includes(hint.kind),
+  ).length
+  const structuredRatio = structuredHintCount / totalHints
+  const paragraphRatio = paragraphCount / totalHints
+  const semanticDensity = options.semanticHints.length / totalHints
+  const markdownBias = /\.(md|markdown)$/i.test(options.sourceName) ? 0.08 : 0
+  const score = Math.max(
+    0,
+    Math.min(
+      1,
+      structuredRatio * 0.52 +
+        Math.min(1, headingCount / 4) * 0.18 +
+        Math.min(1, semanticDensity) * 0.16 +
+        (paragraphRatio <= 0.35 ? 0.06 : 0) +
+        markdownBias,
+    ),
+  )
+  const recommendedRoute: TextImportRecommendedRoute =
+    score >= 0.5 || (headingCount >= 2 && structuredRatio >= 0.42)
+      ? 'local_markdown'
+      : 'codex_import'
+  const confidenceBase =
+    recommendedRoute === 'local_markdown' ? score : 1 - score
+  const confidence = Math.max(0.35, Math.min(0.98, 0.35 + confidenceBase * 0.63))
+  const needsDeepPass =
+    recommendedRoute === 'codex_import' ||
+    (actionLikeHintCount >= 6 && paragraphRatio >= 0.3) ||
+    totalHints >= 18
+
+  return {
+    score,
+    confidence,
+    recommendedRoute,
+    isShallowPass: false,
+    needsDeepPass,
+  }
+}
+
+export function prepareTextImportArtifacts(options: {
+  rootTitle: string
+  sourceName: string
+  preprocessedHints: TextImportPreprocessHint[]
+  intent: TextImportRequest['intent']
+  profile: TextImportContentProfile
+  archetype?: TextImportArchetype
+  archetypeMode?: TextImportRequest['archetypeMode']
+  nodeBudget: TextImportNodeBudget
+}): PreparedTextImportArtifacts {
+  const contentKey = createContentArtifactKey({
+    sourceName: options.sourceName,
+    preprocessedHints: options.preprocessedHints,
+  })
+  const cachedSemanticHints = semanticHintsCache.get(contentKey)
+  const semanticHints = cachedSemanticHints ?? deriveTextImportSemanticHints(options.preprocessedHints)
+  if (!cachedSemanticHints) {
+    semanticHintsCache.set(contentKey, semanticHints)
+  }
+
+  const cachedSemanticUnits = semanticUnitsCache.get(contentKey)
+  const semanticUnits =
+    cachedSemanticUnits ??
+    deriveTextImportSemanticUnits({
+      preprocessedHints: options.preprocessedHints,
+      semanticHints,
+    })
+  if (!cachedSemanticUnits) {
+    semanticUnitsCache.set(contentKey, semanticUnits)
+  }
+
+  const planKey = createPlannedStructureKey({
+    contentKey,
+    rootTitle: options.rootTitle,
+    intent: options.intent,
+    sourceName: options.sourceName,
+    profile: options.profile,
+    archetype: options.archetype,
+    archetypeMode: options.archetypeMode,
+    nodeBudget: options.nodeBudget,
+  })
+  const cachedPlannedStructure = plannedStructureCache.get(planKey)
+  const plannedStructure =
+    cachedPlannedStructure ??
+    planTextImportFromSemanticHints({
+      rootTitle: options.rootTitle,
+      intent: options.intent,
+      sourceName: options.sourceName,
+      preprocessedHints: options.preprocessedHints,
+      profile: options.profile,
+      archetype: options.archetype,
+      archetypeMode: options.archetypeMode,
+      nodeBudget: options.nodeBudget,
+      semanticHints,
+      semanticUnits,
+    })
+  if (!cachedPlannedStructure) {
+    plannedStructureCache.set(planKey, plannedStructure)
+  }
+
+  return {
+    contentKey,
+    planKey,
+    semanticHints,
+    semanticUnits,
+    plannedStructure,
+    artifactReuse: {
+      contentKey,
+      planKey,
+      reusedSemanticHints: Boolean(cachedSemanticHints),
+      reusedSemanticUnits: Boolean(cachedSemanticUnits),
+      reusedPlannedStructure: Boolean(cachedPlannedStructure),
+    },
+    structure: assessTextImportStructure({
+      sourceName: options.sourceName,
+      preprocessedHints: options.preprocessedHints,
+      semanticHints,
+    }),
+  }
+}
+
 function buildTextImportPlanningSummary(options: {
   sourceName: string
   sourceType: TextImportRequest['sourceType']
@@ -1081,6 +1307,7 @@ function buildTextImportPlanningSummary(options: {
   resolvedPreset: TextImportPreset
   resolvedArchetype: TextImportArchetype
   isManual: boolean
+  structure: TextImportStructureAssessment
 }): TextImportSourcePlanningSummary {
   const presetConfidence = options.presetSelection.confidence
   const archetypeConfidence = formatTextImportClassificationConfidence(
@@ -1106,6 +1333,11 @@ function buildTextImportPlanningSummary(options: {
     confidence,
     presetConfidence,
     archetypeConfidence,
+    structureScore: Number(options.structure.score.toFixed(3)),
+    structureConfidence: Number(options.structure.confidence.toFixed(3)),
+    recommendedRoute: options.structure.recommendedRoute,
+    isShallowPass: options.structure.isShallowPass,
+    needsDeepPass: options.structure.needsDeepPass,
     rationale: `${presetRationale} ${archetypeRationale}`.trim(),
     presetRationale,
     archetypeRationale,
@@ -1120,20 +1352,34 @@ export function resolveTextImportPlanningOptions(options: {
   presetOverride?: TextImportPreset | null
   archetypeOverride?: TextImportArchetype | null
 }): ResolvedTextImportPlanningOptions {
-  const semanticHints = deriveTextImportSemanticHints(options.preprocessedHints)
+  const contentKey = createContentArtifactKey({
+    sourceName: options.sourceName,
+    preprocessedHints: options.preprocessedHints,
+  })
+  const initialSemanticHints =
+    semanticHintsCache.get(contentKey) ?? deriveTextImportSemanticHints(options.preprocessedHints)
+  if (!semanticHintsCache.has(contentKey)) {
+    semanticHintsCache.set(contentKey, initialSemanticHints)
+  }
   const presetSelection = resolveTextImportPresetSelection({
     sourceName: options.sourceName,
     preprocessedHints: options.preprocessedHints,
-    semanticHints,
+    semanticHints: initialSemanticHints,
   })
+  const initialSemanticUnits =
+    semanticUnitsCache.get(contentKey) ??
+    deriveTextImportSemanticUnits({
+      preprocessedHints: options.preprocessedHints,
+      semanticHints: initialSemanticHints,
+    })
+  if (!semanticUnitsCache.has(contentKey)) {
+    semanticUnitsCache.set(contentKey, initialSemanticUnits)
+  }
   const classification = resolveTextImportClassification({
     sourceName: options.sourceName,
     preprocessedHints: options.preprocessedHints,
-    semanticHints,
-    semanticUnits: deriveTextImportSemanticUnits({
-      preprocessedHints: options.preprocessedHints,
-      semanticHints,
-    }),
+    semanticHints: initialSemanticHints,
+    semanticUnits: initialSemanticUnits,
     explicitArchetype: options.archetypeOverride ?? undefined,
     archetypeMode: options.archetypeOverride ? 'manual' : 'auto',
   })
@@ -1144,7 +1390,7 @@ export function resolveTextImportPlanningOptions(options: {
   const contentProfile = detectTextImportContentProfile({
     sourceName: options.sourceName,
     preprocessedHints: options.preprocessedHints,
-    semanticHints,
+    semanticHints: initialSemanticHints,
     explicitArchetype: resolvedArchetype,
     archetypeMode: 'manual',
   })
@@ -1157,9 +1403,20 @@ export function resolveTextImportPlanningOptions(options: {
           maxTotalNodes: Math.max(18, Math.min(baseNodeBudget.maxTotalNodes, 24)),
         }
       : baseNodeBudget
+  const preparedArtifacts = prepareTextImportArtifacts({
+    rootTitle: options.sourceName.replace(/\.[^.]+$/, '') || options.sourceName,
+    sourceName: options.sourceName,
+    preprocessedHints: options.preprocessedHints,
+    intent,
+    profile: contentProfile,
+    archetype: resolvedArchetype,
+    archetypeMode: options.archetypeOverride ? 'manual' : 'auto',
+    nodeBudget,
+  })
 
   return {
-    semanticHints,
+    semanticHints: preparedArtifacts.semanticHints,
+    semanticUnits: preparedArtifacts.semanticUnits,
     contentProfile,
     nodeBudget,
     intent,
@@ -1173,7 +1430,9 @@ export function resolveTextImportPlanningOptions(options: {
       resolvedPreset,
       resolvedArchetype,
       isManual: Boolean(options.presetOverride || options.archetypeOverride),
+      structure: preparedArtifacts.structure,
     }),
+    preparedArtifacts,
   }
 }
 
@@ -1546,11 +1805,14 @@ export function planTextImportFromSemanticHints(options: {
   archetypeMode?: TextImportRequest['archetypeMode']
   nodeBudget: TextImportNodeBudget
   semanticHints: TextImportSemanticHint[]
+  semanticUnits?: TextImportSemanticUnit[]
 }): PlannedTextImportStructure {
-  const semanticUnits = deriveTextImportSemanticUnits({
-    preprocessedHints: options.preprocessedHints,
-    semanticHints: options.semanticHints,
-  })
+  const semanticUnits =
+    options.semanticUnits ??
+    deriveTextImportSemanticUnits({
+      preprocessedHints: options.preprocessedHints,
+      semanticHints: options.semanticHints,
+    })
   const classification = resolveTextImportClassification({
     sourceName: options.sourceName,
     preprocessedHints: options.preprocessedHints,

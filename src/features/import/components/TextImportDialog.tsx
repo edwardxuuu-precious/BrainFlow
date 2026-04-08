@@ -74,6 +74,9 @@ interface TextImportDialogProps {
   anchorMode: TextImportAnchorMode
   documentRootLabel: string
   currentSelectionLabel: string | null
+  repairLabel?: string
+  repairDescription?: string | null
+  repairDisabled?: boolean
   onClose: () => void
   onChooseFile: () => void
   onPresetChange: (value: TextImportPreset | null) => void
@@ -89,6 +92,7 @@ interface TextImportDialogProps {
   onDemotePreviewNode: (nodeId: string) => void
   onDeletePreviewNode: (nodeId: string) => void
   onApply: () => void
+  onRepair?: () => void
 }
 
 const DIALOG_STEPS = [
@@ -146,6 +150,10 @@ function formatPlanningConfidence(value: TextImportSourcePlanningSummary['confid
     default:
       return 'Low confidence'
   }
+}
+
+function formatRecommendedRoute(value: TextImportSourcePlanningSummary['recommendedRoute']): string {
+  return value === 'codex_import' ? 'Codex route' : 'Local route'
 }
 
 const IMPORT_PRESET_OPTIONS: Array<{
@@ -580,6 +588,9 @@ export function TextImportDialog({
   anchorMode,
   documentRootLabel,
   currentSelectionLabel,
+  repairLabel = 'Repair current import',
+  repairDescription = null,
+  repairDisabled = false,
   onClose,
   onChooseFile,
   onPresetChange,
@@ -595,6 +606,7 @@ export function TextImportDialog({
   onDemotePreviewNode,
   onDeletePreviewNode,
   onApply,
+  onRepair,
 }: TextImportDialogProps) {
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [showFileDetails, setShowFileDetails] = useState(false)
@@ -717,6 +729,7 @@ export function TextImportDialog({
   )
   const isBatchPlanning = effectivePlanningSummaries.length > 1
   const primaryPlanningSummary = effectivePlanningSummaries[0] ?? null
+  const diagnostics = preview?.diagnostics ?? null
   const selectedPresetOption =
     IMPORT_PRESET_OPTIONS.find((option) => option.id === presetOverride) ?? IMPORT_PRESET_OPTIONS[0]
   const selectedArchetypeOption =
@@ -1048,9 +1061,12 @@ export function TextImportDialog({
                                     {' · '}
                                     {formatTextImportArchetypeLabel(planningSummary.resolvedArchetype)}
                                     {' · '}
+                                    {formatRecommendedRoute(planningSummary.recommendedRoute)}
+                                    {' 路 '}
                                     {planningSummary.isManual
                                       ? 'Manual override'
                                       : formatPlanningConfidence(planningSummary.confidence)}
+                                    {planningSummary.needsDeepPass ? ' 路 Needs deep pass' : ''}
                                   </span>
                                 ) : null}
                               </div>
@@ -1128,6 +1144,18 @@ export function TextImportDialog({
                       </>
                     ) : null}
                     {preview?.summary ? <p className={styles.summaryText}>{preview.summary}</p> : null}
+                    {onRepair ? (
+                      <div className={styles.inputActions}>
+                        <Button
+                          tone="secondary"
+                          onClick={onRepair}
+                          disabled={isPreviewing || isApplying || repairDisabled}
+                        >
+                          {repairLabel}
+                        </Button>
+                        {repairDescription ? <p className={styles.empty}>{repairDescription}</p> : null}
+                      </div>
+                    ) : null}
                     {classification ? (
                       <div className={styles.metaGrid}>
                         <div className={styles.metaCard}>
@@ -1151,6 +1179,101 @@ export function TextImportDialog({
                           <span>{classification.rationale}</span>
                         </div>
                       </div>
+                    ) : null}
+                    {diagnostics ? (
+                      <details className={styles.diagnosticsPanel}>
+                        <summary className={styles.diagnosticsSummary}>Debug diagnostics</summary>
+                        <div className={styles.diagnosticsBody}>
+                          <div className={styles.diagnosticGroup}>
+                            <p className={styles.diagnosticGroupTitle}>Timings</p>
+                            <ul className={styles.diagnosticList}>
+                              <li className={styles.diagnosticItem}>
+                                <p className={styles.diagnosticMessage}>
+                                  Preprocess {diagnostics.timings.preprocessMs} ms | Planning {diagnostics.timings.planningMs} ms | Parse {diagnostics.timings.parseTreeMs} ms
+                                </p>
+                              </li>
+                              <li className={styles.diagnosticItem}>
+                                <p className={styles.diagnosticMessage}>
+                                  Batch compose {diagnostics.timings.batchComposeMs} ms | Candidate {diagnostics.timings.semanticCandidateMs} ms | Adjudication {diagnostics.timings.semanticAdjudicationMs} ms
+                                </p>
+                              </li>
+                              <li className={styles.diagnosticItem}>
+                                <p className={styles.diagnosticMessage}>
+                                  Preview edit {diagnostics.timings.previewEditMs} ms | Total {diagnostics.timings.totalMs} ms
+                                </p>
+                              </li>
+                            </ul>
+                          </div>
+                          <div className={styles.diagnosticGroup}>
+                            <p className={styles.diagnosticGroupTitle}>Density</p>
+                            <ul className={styles.diagnosticList}>
+                              <li className={styles.diagnosticItem}>
+                                <p className={styles.diagnosticMessage}>
+                                  Preview nodes {diagnostics.densityStats.previewNodeCount} | Semantic nodes {diagnostics.densityStats.semanticNodeCount} | Edges {diagnostics.densityStats.semanticEdgeCount}
+                                </p>
+                              </li>
+                              <li className={styles.diagnosticItem}>
+                                <p className={styles.diagnosticMessage}>
+                                  Anchors {diagnostics.densityStats.sourceAnchorCount} | Folded notes {diagnostics.densityStats.foldedNoteCount} | Evidence nodes {diagnostics.densityStats.evidenceNodeCount} | Max depth {diagnostics.densityStats.maxDepth}
+                                </p>
+                              </li>
+                            </ul>
+                          </div>
+                          <div
+                            className={styles.diagnosticGroup}
+                            data-category={
+                              diagnostics.qualitySignals.warningCount > 0 ||
+                              diagnostics.qualitySignals.needsDeepPassCount > 0
+                                ? 'actionable'
+                                : undefined
+                            }
+                          >
+                            <p className={styles.diagnosticGroupTitle}>Quality and route</p>
+                            <ul className={styles.diagnosticList}>
+                              <li className={styles.diagnosticItem}>
+                                <p className={styles.diagnosticMessage}>
+                                  Warnings {diagnostics.qualitySignals.warningCount} | Generic titles {diagnostics.qualitySignals.genericTitleCount} | Low-confidence nodes {diagnostics.qualitySignals.lowConfidenceNodeCount}
+                                </p>
+                              </li>
+                              <li className={styles.diagnosticItem}>
+                                <p className={styles.diagnosticMessage}>
+                                  Folded evidence {diagnostics.qualitySignals.foldedEvidenceCount} | Duplicate sibling groups {diagnostics.qualitySignals.duplicateSiblingGroupCount} | Needs deep pass {diagnostics.qualitySignals.needsDeepPassCount}
+                                </p>
+                              </li>
+                              <li className={styles.diagnosticItem}>
+                                <p className={styles.diagnosticMessage}>
+                                  Artifact reuse: hints {diagnostics.artifactReuse.reusedSemanticHints ? 'yes' : 'no'}, units {diagnostics.artifactReuse.reusedSemanticUnits ? 'yes' : 'no'}, plan {diagnostics.artifactReuse.reusedPlannedStructure ? 'yes' : 'no'}
+                                </p>
+                              </li>
+                            </ul>
+                          </div>
+                          <div className={styles.diagnosticGroup}>
+                            <p className={styles.diagnosticGroupTitle}>Apply and merge</p>
+                            <ul className={styles.diagnosticList}>
+                              <li className={styles.diagnosticItem}>
+                                <p className={styles.diagnosticMessage}>
+                                  Creates {diagnostics.applyEstimate.createCount} | Updates {diagnostics.applyEstimate.updateCount} | Existing merges {diagnostics.applyEstimate.mergeCount} | Cross-file merges {diagnostics.applyEstimate.crossFileMergeCount}
+                                </p>
+                              </li>
+                              <li className={styles.diagnosticItem}>
+                                <p className={styles.diagnosticMessage}>
+                                  Adjudication candidates {diagnostics.semanticAdjudication.candidateCount} | Representatives {diagnostics.semanticAdjudication.representativeCount} | Requests {diagnostics.semanticAdjudication.requestCount} | Fallbacks {diagnostics.semanticAdjudication.fallbackCount}
+                                </p>
+                              </li>
+                              {diagnostics.lastEditAction ? (
+                                <li className={styles.diagnosticItem}>
+                                  <p className={styles.diagnosticMessage}>
+                                    Last edit action: {diagnostics.lastEditAction}
+                                    {diagnostics.dirtySubtreeIds?.length
+                                      ? ` | Dirty subtrees: ${diagnostics.dirtySubtreeIds.join(', ')}`
+                                      : ''}
+                                  </p>
+                                </li>
+                              ) : null}
+                            </ul>
+                          </div>
+                        </div>
+                      </details>
                     ) : null}
                   </div>
                 </section>

@@ -178,6 +178,11 @@ function createPlanningSummary(
     confidence: 'high',
     presetConfidence: 'high',
     archetypeConfidence: 'high',
+    structureScore: 0.84,
+    structureConfidence: 0.88,
+    recommendedRoute: 'local_markdown',
+    isShallowPass: false,
+    needsDeepPass: false,
     rationale: 'Distill is the safest default. Ordered steps and criteria strongly indicate a method.',
     presetRationale: 'Distill is the safest default.',
     archetypeRationale: 'Ordered steps and criteria strongly indicate a method.',
@@ -723,5 +728,102 @@ describe('TextImportDialog', () => {
     render(<TextImportDialog {...createProps({ rawText: '# Goals', draftText: '# Goals' })} />)
 
     expect(screen.queryByRole('button', { name: 'Generate draft' })).not.toBeInTheDocument()
+  })
+
+  it('shows the repair action when a legacy import can be rebuilt', async () => {
+    const user = userEvent.setup()
+    const onRepair = vi.fn()
+
+    render(
+      <TextImportDialog
+        {...createProps({
+          preview,
+          repairLabel: '修复当前导入',
+          repairDescription: '检测到旧版 GTM 模板导入。',
+          onRepair,
+        })}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '修复当前导入' })).toBeInTheDocument()
+    expect(screen.getByText('检测到旧版 GTM 模板导入。')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '修复当前导入' }))
+
+    expect(onRepair).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders debug diagnostics when preview diagnostics are present', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <TextImportDialog
+        {...createProps({
+          preview: createPreview({
+            diagnostics: {
+              timings: {
+                preprocessMs: 3,
+                planningMs: 4,
+                parseTreeMs: 5,
+                batchComposeMs: 0,
+                semanticCandidateMs: 2,
+                semanticAdjudicationMs: 7,
+                previewEditMs: 1,
+                applyMs: 0,
+                totalMs: 22,
+              },
+              densityStats: {
+                previewNodeCount: 2,
+                semanticNodeCount: 2,
+                semanticEdgeCount: 1,
+                operationCount: 2,
+                sourceAnchorCount: 1,
+                foldedNoteCount: 1,
+                evidenceNodeCount: 0,
+                maxDepth: 1,
+              },
+              artifactReuse: {
+                contentKey: 'content',
+                planKey: 'plan',
+                reusedSemanticHints: true,
+                reusedSemanticUnits: true,
+                reusedPlannedStructure: true,
+              },
+              qualitySignals: {
+                warningCount: 1,
+                genericTitleCount: 0,
+                lowConfidenceNodeCount: 0,
+                foldedEvidenceCount: 0,
+                duplicateSiblingGroupCount: 0,
+                shallowSourceCount: 0,
+                needsDeepPassCount: 1,
+              },
+              applyEstimate: {
+                createCount: 1,
+                updateCount: 1,
+                mergeCount: 1,
+                crossFileMergeCount: 0,
+                skippedUpdateCount: 0,
+              },
+              semanticAdjudication: {
+                candidateCount: 3,
+                representativeCount: 2,
+                requestCount: 1,
+                adjudicatedCount: 2,
+                fallbackCount: 0,
+              },
+              dirtySubtreeIds: ['preview_1'],
+              lastEditAction: 'rename',
+            },
+          }),
+        })}
+      />,
+    )
+
+    await user.click(screen.getByText('Debug diagnostics'))
+
+    expect(screen.getByText(/Preprocess 3 ms \| Planning 4 ms \| Parse 5 ms/)).toBeInTheDocument()
+    expect(screen.getByText(/Artifact reuse: hints yes, units yes, plan yes/)).toBeInTheDocument()
+    expect(screen.getByText(/Last edit action: rename \| Dirty subtrees: preview_1/)).toBeInTheDocument()
   })
 })

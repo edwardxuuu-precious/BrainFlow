@@ -38,6 +38,10 @@ import { FormatPanel } from '../../features/editor/components/FormatPanel'
 import { HierarchySidebar } from '../../features/editor/components/HierarchySidebar'
 import { MarkersPanel } from '../../features/editor/components/MarkersPanel'
 import { TextImportDialog } from '../../features/import/components/TextImportDialog'
+import {
+  getLegacyGtmRepairAvailability,
+  repairKnowledgeImportBundle,
+} from '../../features/import/knowledge-import'
 import { useTextImportStore } from '../../features/import/text-import-store'
 import { PropertiesPanel } from '../../features/editor/components/PropertiesPanel'
 import { SidebarRail } from '../../features/editor/components/SidebarRail'
@@ -461,6 +465,14 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const textImportAppliedCount = useTextImportStore((state) => state.appliedCount)
   const textImportTotalOperations = useTextImportStore((state) => state.totalOperations)
   const textImportCurrentApplyLabel = useTextImportStore((state) => state.currentApplyLabel)
+  const activeTextImportBundle =
+    document?.workspace.activeImportBundleId
+      ? document.knowledgeImports[document.workspace.activeImportBundleId] ?? null
+      : null
+  const textImportRepairAvailability = useMemo(
+    () => getLegacyGtmRepairAvailability(activeTextImportBundle),
+    [activeTextImportBundle],
+  )
 
   useEditorShortcuts()
 
@@ -1318,6 +1330,24 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     await reactFlowRef.current?.fitView({ padding: 0.24, duration: 180 })
   }
 
+  const handleRepairCurrentImport = async () => {
+    if (!document?.workspace.activeImportBundleId) {
+      return
+    }
+
+    const result = repairKnowledgeImportBundle(document, document.workspace.activeImportBundleId)
+    if (!result) {
+      return
+    }
+
+    useEditorStore
+      .getState()
+      .applyExternalDocument(result.document, result.selectedTopicId ?? activeTopicId)
+    textImportResetSession()
+    textImportClose()
+    await reactFlowRef.current?.fitView({ padding: 0.24, duration: 180 })
+  }
+
   const handleRenameCommit = () => {
     if (!activeTopicId) {
       stopEditing()
@@ -1926,6 +1956,15 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
           anchorMode={textImportAnchorMode}
           documentRootLabel={textImportRootLabel}
           currentSelectionLabel={textImportCurrentSelectionLabel}
+          repairLabel="修复当前导入"
+          repairDescription={
+            textImportRepairAvailability.isLegacyGtmBundle
+              ? textImportRepairAvailability.canRepair
+                ? '检测到旧版 GTM 模板导入。将基于当前 bundle 保存的原始 sources 重新构建并替换画布结构。'
+                : textImportRepairAvailability.reason
+              : null
+          }
+          repairDisabled={!textImportRepairAvailability.canRepair}
           onClose={textImportClose}
           onChooseFile={() => textImportInputRef.current?.click()}
           onPresetChange={(value) => void handleChangeTextImportPreset(value)}
@@ -1941,6 +1980,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
           onDemotePreviewNode={textImportDemotePreviewNode}
           onDeletePreviewNode={textImportDeletePreviewNode}
           onApply={() => void handleApplyTextImport()}
+          onRepair={textImportRepairAvailability.isLegacyGtmBundle ? () => void handleRepairCurrentImport() : undefined}
         />
     </main>
   )

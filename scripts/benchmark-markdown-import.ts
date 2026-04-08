@@ -12,11 +12,14 @@ import {
   type LocalTextImportSourceInput,
 } from '../src/features/import/local-text-import-core'
 import { preprocessTextToImportHints } from '../src/features/import/text-import-preprocess'
+import { resolveTextImportPlanningOptions } from '../shared/text-import-semantics'
 
 interface SingleRunResult {
   sourceName: string
   preprocessMs: number
+  planningMs: number
   parseTreeMs: number
+  batchComposeMs: number
   candidateGenMs: number
   semanticMergeMs: number
   buildPreviewMs: number
@@ -34,12 +37,16 @@ interface SingleRunResult {
   highConfidenceMergeCount: number
   mediumConfidenceSuggestionCount: number
   fallbackCount: number
+  adjudicationRequestCount: number
+  adjudicationRepresentativeCount: number
   warningCount: number
 }
 
 interface BatchRunResult {
   preprocessMs: number
+  planningMs: number
   parseTreeMs: number
+  batchComposeMs: number
   candidateGenMs: number
   semanticMergeMs: number
   buildPreviewMs: number
@@ -53,6 +60,8 @@ interface BatchRunResult {
   highConfidenceMergeCount: number
   mediumConfidenceSuggestionCount: number
   fallbackCount: number
+  adjudicationRequestCount: number
+  adjudicationRepresentativeCount: number
   warningCount: number
 }
 
@@ -104,11 +113,24 @@ function createSelectionContext(document: MindMapDocument) {
 
 async function buildSourceInput(filePath: string): Promise<LocalTextImportSourceInput> {
   const rawText = await readFile(filePath, 'utf8')
+  const preprocessedHints = preprocessTextToImportHints(rawText)
+  const planning = resolveTextImportPlanningOptions({
+    sourceName: path.basename(filePath),
+    sourceType: 'file',
+    preprocessedHints,
+  })
   return {
     sourceName: path.basename(filePath),
     sourceType: 'file',
     rawText,
-    preprocessedHints: preprocessTextToImportHints(rawText),
+    preprocessedHints,
+    semanticHints: planning.semanticHints,
+    intent: planning.intent,
+    archetype: planning.resolvedArchetype,
+    archetypeMode: 'auto',
+    contentProfile: planning.contentProfile,
+    nodeBudget: planning.nodeBudget,
+    preparedArtifacts: planning.preparedArtifacts,
   }
 }
 
@@ -126,6 +148,13 @@ async function runSingleDeterministicBenchmark(
     const preprocessStartedAt = Date.now()
     const preprocessedHints = preprocessTextToImportHints(source.rawText)
     const preprocessMs = Date.now() - preprocessStartedAt
+    const planningStartedAt = Date.now()
+    const planning = resolveTextImportPlanningOptions({
+      sourceName: source.sourceName,
+      sourceType: source.sourceType,
+      preprocessedHints,
+    })
+    const planningMs = Date.now() - planningStartedAt
 
     const previewStartedAt = Date.now()
     const built = createLocalTextImportPreview(
@@ -138,10 +167,17 @@ async function runSingleDeterministicBenchmark(
         sourceName: source.sourceName,
         sourceType: source.sourceType,
         rawText: source.rawText,
+        intent: planning.intent,
+        archetype: planning.resolvedArchetype,
+        archetypeMode: 'auto',
+        contentProfile: planning.contentProfile,
+        nodeBudget: planning.nodeBudget,
         preprocessedHints,
+        semanticHints: planning.semanticHints,
       },
       {
         preprocessHintCount: preprocessedHints.length,
+        preparedArtifacts: planning.preparedArtifacts,
       },
     )
 
@@ -153,7 +189,9 @@ async function runSingleDeterministicBenchmark(
     results.push({
       sourceName: source.sourceName,
       preprocessMs,
+      planningMs,
       parseTreeMs: built.metrics.parseTreeMs,
+      batchComposeMs: built.metrics.batchComposeMs,
       candidateGenMs: built.metrics.candidateGenMs,
       semanticMergeMs: built.metrics.semanticMergeMs,
       buildPreviewMs: built.metrics.buildPreviewMs,
@@ -175,6 +213,9 @@ async function runSingleDeterministicBenchmark(
         (built.response.mergeSuggestions?.filter((item) => item.confidence === 'medium').length ?? 0) +
         (built.response.crossFileMergeSuggestions?.filter((item) => item.confidence === 'medium').length ?? 0),
       fallbackCount: built.response.semanticMerge?.fallbackCount ?? 0,
+      adjudicationRequestCount: built.response.diagnostics?.semanticAdjudication.requestCount ?? 0,
+      adjudicationRepresentativeCount:
+        built.response.diagnostics?.semanticAdjudication.representativeCount ?? 0,
       warningCount: built.metrics.warningCount,
     })
   }
@@ -193,7 +234,7 @@ async function runSingleDeterministicBenchmark(
 async function listCorpusFiles(directoryPath: string): Promise<string[]> {
   const entries = await readdir(directoryPath, { withFileTypes: true })
   return entries
-    .filter((entry) => entry.isFile() && /^GTM.*\.md$/i.test(entry.name))
+    .filter((entry) => entry.isFile() && /\.(md|markdown|txt)$/i.test(entry.name))
     .map((entry) => path.join(directoryPath, entry.name))
     .sort((left, right) => left.localeCompare(right))
 }
@@ -211,12 +252,31 @@ async function runBatchDeterministicBenchmark(
   const results: BatchRunResult[] = []
 
   for (let run = 0; run < runs; run += 1) {
-    const preprocessStartedAt = Date.now()
-    const sources = files.map((file) => ({
-      ...file,
-      preprocessedHints: preprocessTextToImportHints(file.rawText),
-    }))
-    const preprocessMs = Date.now() - preprocessStartedAt
+    let preprocessMs = 0
+    let planningMs = 0
+    const sources = files.map((file) => {
+      const preprocessStartedAt = Date.now()
+      const preprocessedHints = preprocessTextToImportHints(file.rawText)
+      preprocessMs += Date.now() - preprocessStartedAt
+      const planningStartedAt = Date.now()
+      const planning = resolveTextImportPlanningOptions({
+        sourceName: file.sourceName,
+        sourceType: file.sourceType,
+        preprocessedHints,
+      })
+      planningMs += Date.now() - planningStartedAt
+      return {
+        ...file,
+        preprocessedHints,
+        semanticHints: planning.semanticHints,
+        intent: planning.intent,
+        archetype: planning.resolvedArchetype,
+        archetypeMode: 'auto' as const,
+        contentProfile: planning.contentProfile,
+        nodeBudget: planning.nodeBudget,
+        preparedArtifacts: planning.preparedArtifacts,
+      }
+    })
 
     const batchRequest: LocalTextImportBatchRequest = {
       documentId: document.id,
@@ -237,7 +297,9 @@ async function runBatchDeterministicBenchmark(
 
     results.push({
       preprocessMs,
+      planningMs,
       parseTreeMs: built.metrics.parseTreeMs,
+      batchComposeMs: built.metrics.batchComposeMs,
       candidateGenMs: built.metrics.candidateGenMs,
       semanticMergeMs: built.metrics.semanticMergeMs,
       buildPreviewMs: built.metrics.buildPreviewMs,
@@ -255,6 +317,9 @@ async function runBatchDeterministicBenchmark(
         (built.response.mergeSuggestions?.filter((item) => item.confidence === 'medium').length ?? 0) +
         (built.response.crossFileMergeSuggestions?.filter((item) => item.confidence === 'medium').length ?? 0),
       fallbackCount: built.response.semanticMerge?.fallbackCount ?? 0,
+      adjudicationRequestCount: built.response.diagnostics?.semanticAdjudication.requestCount ?? 0,
+      adjudicationRepresentativeCount:
+        built.response.diagnostics?.semanticAdjudication.representativeCount ?? 0,
       warningCount: built.metrics.warningCount,
     })
   }

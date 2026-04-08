@@ -15,14 +15,24 @@ import type {
   TextImportSourceType,
 } from '../../../shared/ai-contract'
 import {
+  assessTextImportStructure,
   buildTextImportQualityWarnings,
+  type PreparedTextImportArtifacts,
 } from '../../../shared/text-import-semantics'
 import { buildImportBundlePreview } from '../../../shared/text-import-layering'
+import {
+  buildTextImportDiagnostics,
+  createEmptyTextImportTimings,
+} from './text-import-diagnostics'
 import {
   countTextImportHints,
   deriveTextImportTitle,
   preprocessTextToImportHints,
 } from './text-import-preprocess'
+import {
+  composeTextImportBatchPreview,
+  type BatchTextImportPreviewSource,
+} from './text-import-batch-compose'
 
 export type SemanticMergeStage =
   | 'idle'
@@ -41,6 +51,7 @@ export interface LocalTextImportSourceInput {
   archetypeMode?: TextImportRequest['archetypeMode']
   contentProfile?: TextImportRequest['contentProfile']
   nodeBudget?: TextImportRequest['nodeBudget']
+  preparedArtifacts?: PreparedTextImportArtifacts
 }
 
 export interface LocalTextImportBatchRequest {
@@ -59,11 +70,16 @@ export interface LocalTextImportBuildMetrics {
   tableCount: number
   codeBlockCount: number
   preprocessHintCount: number
+  preprocessMs: number
+  planningMs: number
   parseTreeMs: number
+  batchComposeMs: number
   matchExistingMs: number
   candidateGenMs: number
   semanticMergeMs: number
   buildPreviewMs: number
+  applyMs: number
+  totalReadyMs: number
   totalNodeCount: number
   edgeCount: number
   mergeSuggestionCount: number
@@ -715,10 +731,22 @@ const LEGACY_LOCAL_IMPORT_HELPERS = [
 void LEGACY_LOCAL_IMPORT_HELPERS
 
 export function shouldUseLocalMarkdownImport(request: TextImportRequest): boolean {
+  const semanticHints =
+    request.semanticHints.length > 0
+      ? request.semanticHints
+      : []
+  const structure = assessTextImportStructure({
+    sourceName: request.sourceName,
+    preprocessedHints: request.preprocessedHints,
+    semanticHints,
+  })
+  if (structure.recommendedRoute === 'local_markdown') {
+    return true
+  }
+
   const structuredHintCount = request.preprocessedHints.filter((hint) =>
     STRUCTURED_IMPORT_HINT_KINDS.has(hint.kind),
   ).length
-
   return structuredHintCount >= 3 || /^#{1,6}\s+/m.test(request.rawText)
 }
 
@@ -738,14 +766,22 @@ export function createLocalTextImportPreview(
   options?: {
     onProgress?: (update: LocalTextImportProgressUpdate) => void
     preprocessHintCount?: number
+    preparedArtifacts?: PreparedTextImportArtifacts
     now?: () => number
   },
 ): LocalTextImportBuildResult {
   const now = options?.now ?? Date.now
+  const totalStartedAt = now()
+  let preprocessMs = 0
   const effectiveHints =
     request.preprocessedHints.length > 0
       ? request.preprocessedHints
-      : preprocessTextToImportHints(request.rawText)
+      : (() => {
+          const preprocessStartedAt = now()
+          const hints = preprocessTextToImportHints(request.rawText)
+          preprocessMs = now() - preprocessStartedAt
+          return hints
+        })()
   const metrics: MutableMetrics = {
     headingCount: effectiveHints.filter((hint) => hint.kind === 'heading').length,
     listItemCount: effectiveHints.filter((hint) =>
@@ -766,6 +802,10 @@ export function createLocalTextImportPreview(
   })
   const parseTreeStartedAt = now()
   const sourceTitle = deriveTextImportTitle(request.sourceName, request.rawText)
+  const preparedArtifacts =
+    options?.preparedArtifacts ??
+    (request as TextImportRequest & { preparedArtifacts?: PreparedTextImportArtifacts })
+      .preparedArtifacts
   const layered = buildImportBundlePreview({
     bundleId: `bundle_${now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     bundleTitle: `Import: ${sourceTitle}`,
@@ -777,7 +817,7 @@ export function createLocalTextImportPreview(
         sourceType: request.sourceType,
         rawText: request.rawText,
         preprocessedHints: effectiveHints,
-        semanticHints: request.semanticHints,
+        semanticHints: preparedArtifacts?.semanticHints ?? request.semanticHints,
       },
     ],
     requestIntent: request.intent,
@@ -786,6 +826,7 @@ export function createLocalTextImportPreview(
     requestedContentProfile: request.contentProfile,
     requestedNodeBudget: request.nodeBudget,
     fallbackInsertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+    precomputedPlan: preparedArtifacts?.plannedStructure,
   })
   const parseTreeMs = now() - parseTreeStartedAt
 
@@ -868,6 +909,58 @@ export function createLocalTextImportPreview(
       fallbackCount: 0,
     },
     warnings: qualityWarnings,
+    diagnostics: buildTextImportDiagnostics({
+      timings: createEmptyTextImportTimings({
+        preprocessMs,
+        planningMs: 0,
+        parseTreeMs,
+        batchComposeMs: 0,
+        semanticCandidateMs: candidateGenMs,
+        semanticAdjudicationMs: semanticMergeMs,
+        previewEditMs: 0,
+        applyMs: 0,
+        totalMs: now() - totalStartedAt,
+      }),
+      response: {
+        previewNodes,
+        semanticNodes: layered.semanticNodes,
+        semanticEdges: layered.semanticEdges,
+        operations,
+        warnings: qualityWarnings,
+        mergeSuggestions: [],
+        crossFileMergeSuggestions: [],
+      },
+      artifactReuse:
+        preparedArtifacts?.artifactReuse ?? {
+          contentKey: `inline:${request.sourceName}`,
+          planKey: `inline:${request.sourceName}:${request.intent}`,
+          reusedSemanticHints: false,
+          reusedSemanticUnits: false,
+          reusedPlannedStructure: false,
+        },
+      planningSummaries: preparedArtifacts
+        ? [
+            {
+              sourceName: request.sourceName,
+              sourceType: request.sourceType,
+              resolvedPreset: request.intent === 'preserve_structure' ? 'preserve' : 'distill',
+              resolvedArchetype: request.archetype ?? layered.classification.archetype,
+              confidence: 'medium',
+              presetConfidence: 'medium',
+              archetypeConfidence: 'medium',
+              structureScore: preparedArtifacts.structure.score,
+              structureConfidence: preparedArtifacts.structure.confidence,
+              recommendedRoute: preparedArtifacts.structure.recommendedRoute,
+              isShallowPass: preparedArtifacts.structure.isShallowPass,
+              needsDeepPass: preparedArtifacts.structure.needsDeepPass,
+              rationale: layered.classification.rationale,
+              presetRationale: layered.classification.rationale,
+              archetypeRationale: layered.classification.rationale,
+              isManual: false,
+            },
+          ]
+        : undefined,
+    }),
     batch: {
       jobType: 'single',
       fileCount: 1,
@@ -899,11 +992,16 @@ export function createLocalTextImportPreview(
       codeBlockCount: metrics.codeBlockCount,
       preprocessHintCount:
         options?.preprocessHintCount ?? countTextImportHints(effectiveHints),
+      preprocessMs,
+      planningMs: 0,
       parseTreeMs,
+      batchComposeMs: 0,
       matchExistingMs: candidateGenMs + semanticMergeMs,
       candidateGenMs,
       semanticMergeMs,
       buildPreviewMs,
+      applyMs: 0,
+      totalReadyMs: now() - totalStartedAt,
       totalNodeCount: previewNodes.length,
       edgeCount: Math.max(0, previewNodes.filter((node) => node.parentId !== null).length),
       mergeSuggestionCount: 0,
@@ -921,10 +1019,8 @@ export function createLocalTextImportBatchPreview(
 ): LocalTextImportBatchBuildResult {
   const now = options?.now ?? Date.now
   const files = sortTextImportBatchSources(request.files)
-  const batchTitle = buildTextImportBatchTitle(files, request.batchTitle)
   const perFile: LocalTextImportBatchFileMetrics[] = []
-  const perFileResponses: Array<Pick<TextImportResponse, 'classification' | 'templateSummary'>> = []
-  const allWarnings: string[] = []
+  const builtFiles: BatchTextImportPreviewSource[] = []
   let aggregateMetrics: MutableMetrics = {
     headingCount: 0,
     listItemCount: 0,
@@ -968,6 +1064,7 @@ export function createLocalTextImportBatchPreview(
       },
       {
         preprocessHintCount: file.preprocessedHints.length,
+        preparedArtifacts: file.preparedArtifacts,
         now,
       },
     )
@@ -985,10 +1082,10 @@ export function createLocalTextImportBatchPreview(
       currentFileName: file.sourceName,
       semanticMergeStage: 'candidate_generation',
     })
-    allWarnings.push(...(built.response.warnings ?? []).map((warning) => `[${file.sourceName}] ${warning}`))
-    perFileResponses.push({
-      classification: built.response.classification,
-      templateSummary: built.response.templateSummary,
+    builtFiles.push({
+      ...file,
+      route: 'local_markdown',
+      response: built.response,
     })
 
     aggregateMetrics = {
@@ -1007,11 +1104,15 @@ export function createLocalTextImportBatchPreview(
       listItemCount: built.metrics.listItemCount,
       tableCount: built.metrics.tableCount,
       codeBlockCount: built.metrics.codeBlockCount,
+      preprocessMs: built.metrics.preprocessMs,
+      planningMs: built.metrics.planningMs,
       parseTreeMs: built.metrics.parseTreeMs,
+      batchComposeMs: built.metrics.batchComposeMs,
       matchExistingMs: built.metrics.matchExistingMs,
       candidateGenMs: built.metrics.candidateGenMs,
       semanticMergeMs: built.metrics.semanticMergeMs,
       buildPreviewMs: built.metrics.buildPreviewMs,
+      applyMs: built.metrics.applyMs,
       totalNodeCount: built.metrics.totalNodeCount,
       edgeCount: built.metrics.edgeCount,
       mergeSuggestionCount: 0,
@@ -1031,36 +1132,10 @@ export function createLocalTextImportBatchPreview(
     semanticMergeStage: 'adjudicating',
   })
   const semanticStartedAt = now()
-  const layered = buildImportBundlePreview({
-    bundleId: `import_${now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-    bundleTitle: batchTitle,
-    anchorTopicId: request.anchorTopicId,
-    createdAt: now(),
-    sources: files.map((file) => ({
-      sourceName: file.sourceName,
-      sourceType: file.sourceType,
-      rawText: file.rawText,
-      preprocessedHints: file.preprocessedHints,
-      semanticHints: file.semanticHints,
-    })),
-    requestIntent:
-      files.every((file) => file.intent === 'preserve_structure')
-        ? 'preserve_structure'
-        : 'distill_structure',
-    requestedArchetype: undefined,
-    requestedArchetypeMode: 'auto',
-    requestedContentProfile: undefined,
-    requestedNodeBudget: undefined,
-    fallbackInsertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
-  })
-  const previewNodes = layered.previewNodes
-  const nodePlans = layered.nodePlans
-  const operations = layered.operations
-  const qualityWarnings = buildTextImportQualityWarnings({
-    previewNodes,
-    nodeBudget: { maxRoots: Math.max(2, files.length + 1), maxDepth: 5, maxTotalNodes: Math.max(12, previewNodes.length) },
-  })
-  semanticMergeMs += now() - semanticStartedAt
+  const response = composeTextImportBatchPreview(request, builtFiles)
+  const previewNodes = response.previewNodes
+  const batchComposeMs = now() - semanticStartedAt
+  semanticMergeMs += batchComposeMs
 
   emitProgress(options?.onProgress, {
     stage: 'building_preview',
@@ -1074,71 +1149,78 @@ export function createLocalTextImportBatchPreview(
   })
   const buildPreviewMs = 0
 
-  const response: TextImportResponse = {
-    summary: `Built a three-layer batch import bundle with ${files.length} files and ${previewNodes.length} thinking-view nodes.`,
-    baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
-    anchorTopicId: request.anchorTopicId,
-    classification: layered.classification,
-    templateSummary: layered.templateSummary,
-    bundle: layered.bundle,
-    sources: layered.sources,
-    semanticNodes: layered.semanticNodes,
-    semanticEdges: layered.semanticEdges,
-    views: layered.views,
-    viewProjections: layered.viewProjections,
-    defaultViewId: layered.defaultViewId,
-    activeViewId: layered.activeViewId,
-    nodePlans,
-    previewNodes,
-    operations,
-    conflicts: [],
-    mergeSuggestions: [],
-    crossFileMergeSuggestions: [],
-    semanticMerge: {
-      candidateCount: 0,
-      adjudicatedCount: 0,
-      autoMergedExistingCount: 0,
-      autoMergedCrossFileCount: 0,
-      conflictCount: 0,
-      fallbackCount: 0,
-    },
-    warnings: [...allWarnings, ...qualityWarnings],
-    batch: {
-      jobType: 'batch',
-      fileCount: files.length,
-      completedFileCount: files.length,
-      currentFileName: null,
-      batchContainerTitle: batchTitle,
-      files: perFile.map((fileMetric, index) => ({
-        sourceName: fileMetric.sourceName,
-        sourceType: fileMetric.sourceType,
-        previewNodeId: `archive_${layered.sources[index]?.id ?? `source_${index + 1}`}`,
-        nodeCount: fileMetric.totalNodeCount,
-        mergeSuggestionCount: fileMetric.mergeSuggestionCount,
-        warningCount: fileMetric.warningCount,
-        classification: perFileResponses[index]?.classification ?? null,
-        templateSummary: perFileResponses[index]?.templateSummary ?? null,
-      })),
-    },
-  }
-
   return {
-    response,
+    response: {
+      ...response,
+      diagnostics: buildTextImportDiagnostics({
+        timings: createEmptyTextImportTimings({
+          preprocessMs: 0,
+          planningMs: 0,
+          parseTreeMs,
+          batchComposeMs,
+          semanticCandidateMs: candidateGenMs,
+          semanticAdjudicationMs: semanticMergeMs,
+          previewEditMs: 0,
+          applyMs: 0,
+          totalMs: parseTreeMs + candidateGenMs + semanticMergeMs + buildPreviewMs,
+        }),
+        response,
+        artifactReuse: {
+          contentKey: `batch:${files.length}`,
+          planKey: `batch:${files.map((file) => file.sourceName).join('|')}`,
+          reusedSemanticHints: files.some(
+            (file) => file.preparedArtifacts?.artifactReuse.reusedSemanticHints,
+          ),
+          reusedSemanticUnits: files.some(
+            (file) => file.preparedArtifacts?.artifactReuse.reusedSemanticUnits,
+          ),
+          reusedPlannedStructure: files.some(
+            (file) => file.preparedArtifacts?.artifactReuse.reusedPlannedStructure,
+          ),
+        },
+        planningSummaries: files
+          .filter((file) => Boolean(file.preparedArtifacts))
+          .map((file) => ({
+            sourceName: file.sourceName,
+            sourceType: file.sourceType,
+            resolvedPreset: file.intent === 'preserve_structure' ? ('preserve' as const) : ('distill' as const),
+            resolvedArchetype: file.archetype ?? response.classification.archetype,
+            confidence: 'medium' as const,
+            presetConfidence: 'medium' as const,
+            archetypeConfidence: 'medium' as const,
+            structureScore: file.preparedArtifacts?.structure.score ?? 0,
+            structureConfidence: file.preparedArtifacts?.structure.confidence ?? 0,
+            recommendedRoute:
+              file.preparedArtifacts?.structure.recommendedRoute ?? ('local_markdown' as const),
+            isShallowPass: file.preparedArtifacts?.structure.isShallowPass ?? false,
+            needsDeepPass: file.preparedArtifacts?.structure.needsDeepPass ?? false,
+            rationale: response.classification.rationale,
+            presetRationale: response.classification.rationale,
+            archetypeRationale: response.classification.rationale,
+            isManual: false,
+          })),
+      }),
+    },
     metrics: {
       headingCount: aggregateMetrics.headingCount,
       listItemCount: aggregateMetrics.listItemCount,
       tableCount: aggregateMetrics.tableCount,
       codeBlockCount: aggregateMetrics.codeBlockCount,
       preprocessHintCount,
+      preprocessMs: 0,
+      planningMs: 0,
       parseTreeMs,
+      batchComposeMs,
       matchExistingMs: candidateGenMs + semanticMergeMs,
       candidateGenMs,
       semanticMergeMs,
       buildPreviewMs,
+      applyMs: 0,
+      totalReadyMs: parseTreeMs + candidateGenMs + semanticMergeMs + buildPreviewMs,
       totalNodeCount: previewNodes.length,
       edgeCount: Math.max(0, previewNodes.filter((node) => node.parentId !== null).length),
       mergeSuggestionCount: 0,
-      warningCount: allWarnings.length + qualityWarnings.length,
+      warningCount: response.warnings?.length ?? 0,
       fileCount: files.length,
       crossFileSuggestionCount: 0,
       perFile,

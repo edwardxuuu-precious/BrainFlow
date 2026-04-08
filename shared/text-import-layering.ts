@@ -22,6 +22,7 @@ import type {
 import {
   compileTextImportNodePlans,
   detectTextImportContentProfile,
+  type PlannedTextImportStructure,
   planTextImportFromSemanticHints,
   resolveTextImportNodeBudget,
 } from './text-import-semantics.js'
@@ -38,19 +39,6 @@ const BANNED_PRIMARY_TITLES = new Set([
   '拆解',
   '建议下一步',
 ])
-
-const GTM_BRANCHES = [
-  '谁最痛',
-  '谁最容易现在买',
-  '谁最容易触达',
-  '谁最容易形成案例扩散',
-] as const
-
-const THINKING_DETAIL_TITLES = {
-  criterion: '判断标准',
-  question: '证据问题',
-  insight: '常见误判',
-} as const
 
 interface ImportLayerSourceInput {
   sourceName: string
@@ -72,6 +60,7 @@ interface ImportLayerBundleOptions {
   requestedContentProfile?: TextImportRequest['contentProfile']
   requestedNodeBudget?: TextImportRequest['nodeBudget']
   fallbackInsertionParentTopicId: string
+  precomputedPlan?: PlannedTextImportStructure
 }
 
 export interface CompileSemanticLayerViewsOptions {
@@ -132,21 +121,6 @@ function uniqueBy<T>(items: T[], keyFn: (item: T) => string): T[] {
     result.push(item)
   })
   return result
-}
-
-function titleKey(value: string): string {
-  return collapseWhitespace(value)
-    .toLowerCase()
-    .replace(/[^\p{Letter}\p{Number}]+/gu, '')
-}
-
-function createSourceRef(sourceId: string, hint: TextImportPreprocessHint): KnowledgeSourceRef {
-  return {
-    sourceId,
-    lineStart: hint.lineStart,
-    lineEnd: hint.lineEnd,
-    pathTitles: hint.sourcePath,
-  }
 }
 
 function createSourceLayer(source: ImportLayerSourceInput, sourceId: string): KnowledgeSource {
@@ -517,6 +491,7 @@ function createPlannerFallbackGraph(options: {
   requestedArchetypeMode?: TextImportRequest['archetypeMode']
   requestedContentProfile?: TextImportRequest['contentProfile']
   requestedNodeBudget?: TextImportRequest['nodeBudget']
+  precomputedPlan?: PlannedTextImportStructure
 }): {
   classification: TextImportClassification
   templateSummary: TextImportTemplateSummary
@@ -539,17 +514,19 @@ function createPlannerFallbackGraph(options: {
     profile,
     options.requestedNodeBudget,
   )
-  const planned = planTextImportFromSemanticHints({
-    rootTitle: options.bundleTitle,
-    intent: options.requestIntent,
-    sourceName: sourceTitle,
-    preprocessedHints: combinedHints,
-    profile,
-    archetype: options.requestedArchetype,
-    archetypeMode: options.requestedArchetypeMode,
-    nodeBudget,
-    semanticHints: combinedSemanticHints,
-  })
+  const planned =
+    options.precomputedPlan ??
+    planTextImportFromSemanticHints({
+      rootTitle: options.bundleTitle,
+      intent: options.requestIntent,
+      sourceName: sourceTitle,
+      preprocessedHints: combinedHints,
+      profile,
+      archetype: options.requestedArchetype,
+      archetypeMode: options.requestedArchetypeMode,
+      nodeBudget,
+      semanticHints: combinedSemanticHints,
+    })
 
   const semanticNodes = planned.nodePlans.map<KnowledgeSemanticNode>((plan) => {
     const semanticType = mapPlanNodeToSemanticType(plan)
@@ -600,306 +577,6 @@ function createPlannerFallbackGraph(options: {
   }
 }
 
-function isGtmScenario(sourceInputs: ImportLayerSourceInput[]): boolean {
-  const text = sourceInputs.map((item) => item.rawText).join('\n')
-  return (
-    /先打谁/u.test(text) ||
-    GTM_BRANCHES.every((branch) => text.includes(branch)) ||
-    /beachhead segment/i.test(text)
-  )
-}
-
-function findFirstRef(
-  sourceInputs: ImportLayerSourceInput[],
-  sources: KnowledgeSource[],
-  matcher: (hint: TextImportPreprocessHint) => boolean,
-): KnowledgeSourceRef[] {
-  for (let sourceIndex = 0; sourceIndex < sourceInputs.length; sourceIndex += 1) {
-    const source = sourceInputs[sourceIndex]
-    const match = source.preprocessedHints.find(matcher)
-    if (match) {
-      return [createSourceRef(sources[sourceIndex]?.id ?? `source_${sourceIndex + 1}`, match)]
-    }
-  }
-
-  return []
-}
-
-function buildGtmBranchDetail(
-  title: (typeof GTM_BRANCHES)[number],
-): Record<'criterion' | 'question' | 'insight', string> {
-  switch (title) {
-    case '谁最痛':
-      return {
-        criterion: '看高频、高损失、已有 workaround、失败代价高，优先判断问题是否已经迫使对方绕路补救。',
-        question: '最近一次问题发生在什么时候？现在怎么解决？替代方案最难受的地方是什么？三个月不解决会损失什么？',
-        insight: '不要把“口头说重要”误判成真实痛点；真正的痛通常伴随已存在的 workaround、时间成本或收入影响。',
-      }
-    case '谁最容易现在买':
-      return {
-        criterion: '看购买窗口是否已打开：预算、决策链、启动摩擦、是否正在比较替代方案，而不是只看兴趣表达。',
-        question: '是否已经有预算？谁拍板？决策链多长？试用和切换成本高不高？现在是否在主动找方案？',
-        insight: '不要把“喜欢产品”当成“会立即购买”；大市场但采购链长、教育成本高的人群不适合作为第一波。',
-      }
-    case '谁最容易触达':
-      return {
-        criterion: '看人群是否集中在少量渠道、社区或工作流节点，能否低成本找到前 20 到 50 个样本。',
-        question: '他们现在去哪里找答案？在哪些群组、社区、关键词和协作节点出现？是否能手动联系到？',
-        insight: '不要先从你想投什么渠道出发；应该先找他们已经在什么地方寻找解决方案。',
-      }
-    default:
-      return {
-        criterion: '看是否能被清晰描述、容易形成 before/after，并且案例能被同类快速复制。',
-        question: '他们彼此是否看得见？成功后别人会不会说“这和我很像”？是否愿意被引用为案例？',
-        insight: '不要把偶发传播当成扩散能力；优先选择能形成示范效应和 reference 的人群。',
-    }
-  }
-}
-
-function createGtmGraph(options: {
-  sources: KnowledgeSource[]
-  sourceInputs: ImportLayerSourceInput[]
-}): {
-  classification: TextImportClassification
-  templateSummary: TextImportTemplateSummary
-  semanticNodes: KnowledgeSemanticNode[]
-  semanticEdges: KnowledgeSemanticEdge[]
-} {
-  const centerId = 'semantic_gtm_center'
-  const centerRefs = findFirstRef(
-    options.sourceInputs,
-    options.sources,
-    (hint) => /先打谁/u.test(hint.text) || /先打谁/u.test(hint.raw),
-  )
-  const semanticNodes: KnowledgeSemanticNode[] = [
-    {
-      id: centerId,
-      type: 'question',
-      title: '第一波应该先打谁',
-      summary: '围绕 beachhead segment 选择第一波 GTM 人群。',
-      detail: '不是先找大市场，而是先锁定一个足够具体、可验证、可复制的 beachhead segment。',
-      source_refs: centerRefs,
-      confidence: 'high',
-      task: null,
-    },
-  ]
-  const semanticEdges: KnowledgeSemanticEdge[] = []
-
-  GTM_BRANCHES.forEach((branchTitle, branchIndex) => {
-    const branchId = `semantic_gtm_branch_${branchIndex + 1}`
-    const branchRefs = findFirstRef(
-      options.sourceInputs,
-      options.sources,
-      (hint) => hint.text.includes(branchTitle) || hint.raw.includes(branchTitle),
-    )
-    semanticNodes.push({
-      id: branchId,
-      type: 'topic',
-      title: branchTitle,
-      summary: branchTitle,
-      detail: '',
-      source_refs: branchRefs,
-      confidence: 'high',
-      task: null,
-    })
-    semanticEdges.push({
-      from: branchId,
-      to: centerId,
-      type: 'belongs_to',
-      label: null,
-      source_refs: branchRefs,
-      confidence: 'high',
-    })
-
-    const detailMap = buildGtmBranchDetail(branchTitle)
-    ;(['criterion', 'question', 'insight'] as const).forEach((detailType, detailIndex) => {
-      const nodeId = `${branchId}_${detailType}`
-      semanticNodes.push({
-        id: nodeId,
-        type: detailType,
-        title: THINKING_DETAIL_TITLES[detailType],
-        summary: THINKING_DETAIL_TITLES[detailType],
-        detail: detailMap[detailType],
-        source_refs: branchRefs,
-        confidence: 'high',
-        task: null,
-      })
-      semanticEdges.push({
-        from: nodeId,
-        to: branchId,
-        type: 'belongs_to',
-        label: null,
-        source_refs: branchRefs,
-        confidence: detailIndex === 0 ? 'high' : 'medium',
-      })
-    })
-  })
-
-  const executionNodes: KnowledgeSemanticNode[] = [
-    {
-      id: 'semantic_gtm_goal',
-      type: 'goal',
-      title: '确定第一波 beachhead segment',
-      summary: '用四维筛选机制收敛第一波目标人群。',
-      detail: '目标不是先做大市场覆盖，而是把第一波最值得先打的人群选出来。',
-      source_refs: centerRefs,
-      confidence: 'high',
-      task: null,
-    },
-    {
-      id: 'semantic_gtm_project',
-      type: 'project',
-      title: 'Beachhead Segment 筛选',
-      summary: '围绕四个问题组织 discovery 和打分。',
-      detail: '用“谁最痛 / 谁最容易现在买 / 谁最容易触达 / 谁最容易形成案例扩散”统一比较候选 segment。',
-      source_refs: centerRefs,
-      confidence: 'high',
-      task: null,
-    },
-    {
-      id: 'semantic_gtm_decision',
-      type: 'decision',
-      title: '先用四维证据筛选，不靠大市场直觉',
-      summary: 'GTM 早期先收敛，再扩展。',
-      detail: '优先寻找同时满足痛感强、购买窗口打开、触达成本低、具备扩散能力的人群。',
-      source_refs: centerRefs,
-      confidence: 'high',
-      task: null,
-    },
-    {
-      id: 'semantic_gtm_task_1',
-      type: 'task',
-      title: '列出 5 个候选人群',
-      summary: '按具体处境切分，而不是抽象画像。',
-      detail: '用“人在什么场景下，为解决什么任务，当前靠什么 workaround，为什么现在必须行动”来描述候选人群。',
-      source_refs: centerRefs,
-      confidence: 'medium',
-      task: {
-        status: 'todo',
-        owner: null,
-        due_date: null,
-        priority: 'high',
-        depends_on: [],
-        source_refs: centerRefs,
-        definition_of_done: '形成 5 个可比较的候选 segment 定义。',
-      },
-    },
-    {
-      id: 'semantic_gtm_task_2',
-      type: 'task',
-      title: '按四个维度逐个打分',
-      summary: '比较痛感、购买窗口、触达效率和案例扩散。',
-      detail: '建议起始权重为立即购买性 35%，痛感强度 30%，触达效率 20%，案例扩散性 15%。',
-      source_refs: centerRefs,
-      confidence: 'medium',
-      task: {
-        status: 'todo',
-        owner: null,
-        due_date: null,
-        priority: 'high',
-        depends_on: ['semantic_gtm_task_1'],
-        source_refs: centerRefs,
-        definition_of_done: '每个候选人群都有统一打分和排序结果。',
-      },
-    },
-    {
-      id: 'semantic_gtm_task_3',
-      type: 'task',
-      title: '补齐 customer discovery 证据',
-      summary: '把四个问题都变成证据题，而不是讨论题。',
-      detail: '围绕最近一次问题发生、当前替代方案、失败代价和现在为何行动做高密度访谈。',
-      source_refs: centerRefs,
-      confidence: 'medium',
-      task: {
-        status: 'todo',
-        owner: null,
-        due_date: null,
-        priority: 'medium',
-        depends_on: ['semantic_gtm_task_1'],
-        source_refs: centerRefs,
-        definition_of_done: '每个候选人群都有足够的一手访谈证据。',
-      },
-    },
-    {
-      id: 'semantic_gtm_review',
-      type: 'review',
-      title: '收敛第一波目标市场',
-      summary: '输出最值得先打的第一波市场。',
-      detail: '形成一句明确的 beachhead 定义，并让后续文案、渠道、销售话术与产品优先级围绕它展开。',
-      source_refs: centerRefs,
-      confidence: 'medium',
-      task: null,
-    },
-  ]
-  semanticNodes.push(...executionNodes)
-  semanticEdges.push(
-    {
-      from: 'semantic_gtm_project',
-      to: 'semantic_gtm_goal',
-      type: 'belongs_to',
-      label: null,
-      source_refs: centerRefs,
-      confidence: 'high',
-    },
-    {
-      from: 'semantic_gtm_decision',
-      to: 'semantic_gtm_goal',
-      type: 'supports',
-      label: null,
-      source_refs: centerRefs,
-      confidence: 'high',
-    },
-    {
-      from: 'semantic_gtm_task_1',
-      to: 'semantic_gtm_project',
-      type: 'belongs_to',
-      label: null,
-      source_refs: centerRefs,
-      confidence: 'high',
-    },
-    {
-      from: 'semantic_gtm_task_2',
-      to: 'semantic_gtm_project',
-      type: 'belongs_to',
-      label: null,
-      source_refs: centerRefs,
-      confidence: 'high',
-    },
-    {
-      from: 'semantic_gtm_task_3',
-      to: 'semantic_gtm_project',
-      type: 'belongs_to',
-      label: null,
-      source_refs: centerRefs,
-      confidence: 'medium',
-    },
-    {
-      from: 'semantic_gtm_review',
-      to: 'semantic_gtm_goal',
-      type: 'leads_to',
-      label: null,
-      source_refs: centerRefs,
-      confidence: 'medium',
-    },
-  )
-
-  return {
-    classification: {
-      archetype: 'argument',
-      confidence: 0.94,
-      rationale: 'The source centers on selecting a beachhead segment through a four-part evaluation framework.',
-      secondaryArchetype: 'plan',
-    },
-    templateSummary: {
-      archetype: 'argument',
-      visibleSlots: ['thesis', 'claims', 'evidence'],
-      foldedSlots: ['limitations', 'conclusion'],
-    },
-    semanticNodes,
-    semanticEdges,
-  }
-}
-
 function canonicalizeSemanticGraph(graph: {
   semanticNodes: KnowledgeSemanticNode[]
   semanticEdges: KnowledgeSemanticEdge[]
@@ -907,12 +584,9 @@ function canonicalizeSemanticGraph(graph: {
   semanticNodes: KnowledgeSemanticNode[]
   semanticEdges: KnowledgeSemanticEdge[]
 } {
-  const dedupedNodes = new Map<string, KnowledgeSemanticNode>()
-  const remap = new Map<string, string>()
-
-  graph.semanticNodes.forEach((node) => {
+  const semanticNodes = graph.semanticNodes.map<KnowledgeSemanticNode>((node) => {
     const compactTitle = compactSemanticTitle(node.title, node.type)
-    const normalized: KnowledgeSemanticNode = {
+    return {
       ...node,
       title: compactTitle,
       summary: collapseWhitespace(node.summary) || compactTitle,
@@ -925,35 +599,12 @@ function canonicalizeSemanticGraph(graph: {
         (ref) => `${ref.sourceId}:${ref.lineStart}:${ref.lineEnd}:${ref.pathTitles.join('>')}`,
       ),
     }
-    const key = `${node.type}:${titleKey(normalized.title)}`
-    const existing = dedupedNodes.get(key)
-    if (!existing) {
-      dedupedNodes.set(key, normalized)
-      remap.set(node.id, normalized.id)
-      return
-    }
-
-    existing.summary = mergeTextParts([existing.summary, normalized.summary]) || existing.summary
-    existing.detail = mergeTextParts([existing.detail, normalized.detail])
-    existing.source_refs = uniqueBy(
-      [...existing.source_refs, ...normalized.source_refs],
-      (ref) => `${ref.sourceId}:${ref.lineStart}:${ref.lineEnd}:${ref.pathTitles.join('>')}`,
-    )
-    if (normalized.type === 'task' && normalized.task) {
-      existing.task = existing.task ?? normalized.task
-    }
-    remap.set(node.id, existing.id)
   })
 
   return {
-    semanticNodes: [...dedupedNodes.values()],
+    semanticNodes,
     semanticEdges: uniqueBy(
       graph.semanticEdges
-        .map((edge) => ({
-          ...edge,
-          from: remap.get(edge.from) ?? edge.from,
-          to: remap.get(edge.to) ?? edge.to,
-        }))
         .filter((edge) => edge.from !== edge.to),
       (edge) => `${edge.from}:${edge.to}:${edge.type}:${edge.label ?? ''}`,
     ),
@@ -1064,14 +715,9 @@ function createThinkingProjection(options: {
     },
   ]
   const visited = new Set<string>([center.id])
-  const directPrimaryBranches = sortChildren(
-    center.id,
-    nodesById,
-    edgesByParent,
-    ['topic', 'project', 'goal', 'decision', 'review', 'task'],
+  const directPrimaryBranches = sortChildren(center.id, nodesById, edgesByParent).filter(
+    (node) => !BANNED_PRIMARY_TITLES.has(node.title),
   )
-    .filter((node) => !BANNED_PRIMARY_TITLES.has(node.title))
-    .slice(0, 6)
   const executionRoot =
     options.semanticNodes.find((node) => node.type === 'goal' && node.id !== center.id) ??
     options.semanticNodes.find((node) => node.type === 'project' && node.id !== center.id) ??
@@ -1130,7 +776,6 @@ function createThinkingProjection(options: {
     node: KnowledgeSemanticNode,
     parentId: string,
     order: number,
-    depth: number,
   ): void => {
     if (visited.has(node.id)) {
       return
@@ -1138,25 +783,17 @@ function createThinkingProjection(options: {
     visited.add(node.id)
     appendProjectionNode(node, parentId, order)
 
-    if (depth >= 2) {
-      return
-    }
-
-    const childTypes: KnowledgeSemanticNodeType[] =
-      depth === 0
-        ? ['criterion', 'insight', 'question', 'evidence', 'decision', 'task', 'review', 'project', 'goal', 'topic']
-        : ['task', 'decision', 'review', 'evidence', 'question', 'criterion', 'insight', 'topic']
-    const children = sortChildren(node.id, nodesById, edgesByParent, childTypes)
-      .filter((child) => !BANNED_PRIMARY_TITLES.has(child.title))
-      .slice(0, depth === 0 ? 6 : 4)
+    const children = sortChildren(node.id, nodesById, edgesByParent).filter(
+      (child) => !BANNED_PRIMARY_TITLES.has(child.title),
+    )
 
     children.forEach((child, childIndex) => {
-      walkBranch(child, node.id, childIndex, depth + 1)
+      walkBranch(child, node.id, childIndex)
     })
   }
 
   primaryBranches.forEach((branch, branchIndex) => {
-    walkBranch(branch, center.id, branchIndex, 0)
+    walkBranch(branch, center.id, branchIndex)
   })
 
   return buildProjectionFromNodes({
@@ -1347,21 +984,17 @@ export function buildImportBundlePreview(
   const sources = options.sources.map((source, index) =>
     createSourceLayer(source, `source_${index + 1}`),
   )
-  const extracted = isGtmScenario(options.sources)
-    ? createGtmGraph({
-        sources,
-        sourceInputs: options.sources,
-      })
-    : createPlannerFallbackGraph({
-        bundleTitle: options.bundleTitle,
-        sources,
-        sourceInputs: options.sources,
-        requestIntent: options.requestIntent,
-        requestedArchetype: options.requestedArchetype,
-        requestedArchetypeMode: options.requestedArchetypeMode,
-        requestedContentProfile: options.requestedContentProfile,
-        requestedNodeBudget: options.requestedNodeBudget,
-      })
+  const extracted = createPlannerFallbackGraph({
+    bundleTitle: options.bundleTitle,
+    sources,
+    sourceInputs: options.sources,
+    requestIntent: options.requestIntent,
+    requestedArchetype: options.requestedArchetype,
+    requestedArchetypeMode: options.requestedArchetypeMode,
+    requestedContentProfile: options.requestedContentProfile,
+    requestedNodeBudget: options.requestedNodeBudget,
+    precomputedPlan: options.precomputedPlan,
+  })
   const canonical = canonicalizeSemanticGraph(extracted)
 
   const thinkingViewId = `${options.bundleId}_thinking`

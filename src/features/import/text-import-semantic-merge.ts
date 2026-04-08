@@ -103,6 +103,10 @@ interface CrossFileHeuristic {
 const MAX_NOTE_SUMMARY_LENGTH = 1200
 const MAX_CROSS_FILE_CANDIDATES = 120
 
+function confidenceScore(value: 'high' | 'medium'): number {
+  return value === 'high' ? 0.92 : 0.74
+}
+
 function normalizeTitleForMatch(value: string): string {
   return value
     .toLowerCase()
@@ -157,6 +161,27 @@ function compactText(value: string | null | undefined): string {
     return normalized
   }
   return `${normalized.slice(0, MAX_NOTE_SUMMARY_LENGTH)}…`
+}
+
+function createCandidateGroupId(bundle: CandidateBundle): string {
+  if (bundle.scope === 'existing_topic') {
+    return [
+      'existing',
+      bundle.targetTopicId,
+      normalizeTitleForMatch(bundle.candidate.source.title),
+      normalizeTitleForMatch(bundle.candidate.source.parentTitle ?? ''),
+      bundle.fallbackDecision.kind,
+    ].join(':')
+  }
+
+  return [
+    'cross',
+    normalizeTitleForMatch(bundle.candidate.source.title),
+    normalizeTitleForMatch(bundle.candidate.target.title),
+    normalizeTitleForMatch(bundle.candidate.source.parentTitle ?? ''),
+    normalizeTitleForMatch(bundle.candidate.target.parentTitle ?? ''),
+    bundle.fallbackDecision.kind,
+  ].join(':')
 }
 
 function createSnapshot(
@@ -545,6 +570,21 @@ export function createTextImportSemanticDraft(
       break
     }
   }
+
+  const bundlesByGroupId = new Map<string, CandidateBundle[]>()
+  candidateBundles.forEach((bundle) => {
+    const groupId = createCandidateGroupId(bundle)
+    const bucket = bundlesByGroupId.get(groupId) ?? []
+    bucket.push(bundle)
+    bundlesByGroupId.set(groupId, bucket)
+  })
+  bundlesByGroupId.forEach((bundles, groupId) => {
+    bundles.forEach((bundle) => {
+      bundle.candidate.groupId = groupId
+      bundle.candidate.groupSize = bundles.length
+      bundle.candidate.similarityScore = confidenceScore(bundle.fallbackDecision.confidence)
+    })
+  })
 
   return {
     jobType: 'files' in request ? 'batch' : 'single',

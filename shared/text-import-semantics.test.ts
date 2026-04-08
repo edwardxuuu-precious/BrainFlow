@@ -146,6 +146,8 @@ describe('resolveTextImportPlanningOptions', () => {
 
     expect(planning.resolvedPreset).toBe('preserve')
     expect(planning.resolvedArchetype).toBe('method')
+    expect(planning.summary.recommendedRoute).toBe('local_markdown')
+    expect(planning.summary.structureScore).toBeGreaterThan(0.5)
   })
 
   it('falls back to distill for mixed prose', () => {

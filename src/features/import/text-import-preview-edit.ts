@@ -10,6 +10,10 @@ import {
   deriveTextImportNodePlansFromPreviewNodes,
 } from '../../../shared/text-import-semantics'
 import { syncTextImportResponseActiveProjection } from './knowledge-import'
+import {
+  buildTextImportDiagnostics,
+  createEmptyTextImportTimings,
+} from './text-import-diagnostics'
 import { buildTextImportPreviewTree } from './text-import-preview-tree'
 
 export type TextImportPreviewEditAction =
@@ -125,6 +129,7 @@ export function recompileTextImportDraft(response: TextImportResponse): TextImpo
     return response
   }
 
+  const recompilationStartedAt = Date.now()
   const nodePlans = getNodePlans(response)
   const compiled = compileTextImportNodePlans({
     insertionParentTopicId,
@@ -140,6 +145,31 @@ export function recompileTextImportDraft(response: TextImportResponse): TextImpo
     previewNodes: compiled.previewNodes,
     operations: compiled.operations,
     warnings: [...new Set([...(response.warnings ?? []), ...qualityWarnings])],
+    diagnostics: buildTextImportDiagnostics({
+      timings: {
+        ...(response.diagnostics?.timings ?? createEmptyTextImportTimings()),
+        previewEditMs: Date.now() - recompilationStartedAt,
+      },
+      response: {
+        previewNodes: compiled.previewNodes,
+        semanticNodes: response.semanticNodes,
+        semanticEdges: response.semanticEdges,
+        operations: compiled.operations,
+        warnings: [...new Set([...(response.warnings ?? []), ...qualityWarnings])],
+        mergeSuggestions: response.mergeSuggestions,
+        crossFileMergeSuggestions: response.crossFileMergeSuggestions,
+      },
+      artifactReuse:
+        response.diagnostics?.artifactReuse ?? {
+          contentKey: 'draft',
+          planKey: 'draft',
+          reusedSemanticHints: false,
+          reusedSemanticUnits: false,
+          reusedPlannedStructure: false,
+        },
+      semanticAdjudication: response.diagnostics?.semanticAdjudication,
+      lastEditAction: response.diagnostics?.lastEditAction ?? 'recompile',
+    }),
   }
 
   if (!response.bundle || !response.activeViewId) {
@@ -168,6 +198,7 @@ export function applyTextImportPreviewEdit(
     return response
   }
 
+  const editStartedAt = Date.now()
   const nodePlans = getNodePlans(response)
   const roots = cloneNodes(buildTextImportPreviewTree(buildDraftItemsFromNodePlans(nodePlans)))
   const found = findNode(roots, action.nodeId)
@@ -250,6 +281,32 @@ export function applyTextImportPreviewEdit(
     mergeSuggestions: [],
     crossFileMergeSuggestions: [],
     warnings,
+    diagnostics: buildTextImportDiagnostics({
+      timings: {
+        ...(response.diagnostics?.timings ?? createEmptyTextImportTimings()),
+        previewEditMs: Date.now() - editStartedAt,
+      },
+      response: {
+        previewNodes: compiled.previewNodes,
+        semanticNodes: response.semanticNodes,
+        semanticEdges: response.semanticEdges,
+        operations: compiled.operations,
+        warnings,
+        mergeSuggestions: [],
+        crossFileMergeSuggestions: [],
+      },
+      artifactReuse:
+        response.diagnostics?.artifactReuse ?? {
+          contentKey: 'draft',
+          planKey: 'draft',
+          reusedSemanticHints: false,
+          reusedSemanticUnits: false,
+          reusedPlannedStructure: false,
+        },
+      semanticAdjudication: response.diagnostics?.semanticAdjudication,
+      dirtySubtreeIds: [action.nodeId],
+      lastEditAction: action.type,
+    }),
   }
 
   if (!response.bundle || !response.activeViewId) {

@@ -269,4 +269,125 @@ describe('text-import-semantic-merge', () => {
     ).toHaveLength(1)
     expect((result.semanticMerge?.autoMergedCrossFileCount ?? 0) > 0).toBe(true)
   })
+
+  it('annotates semantic candidates with grouping metadata for bridge deduplication', () => {
+    const document = createMindMapDocument('Import doc')
+    const request = {
+      documentId: document.id,
+      documentTitle: document.title,
+      baseDocumentUpdatedAt: document.updatedAt,
+      context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
+      anchorTopicId: document.rootTopicId,
+      batchTitle: 'Import batch: Strategy',
+      files: [
+        {
+          sourceName: 'strategy_alpha.md',
+          sourceType: 'file' as const,
+          intent: 'distill_structure' as const,
+          rawText: '# Alpha',
+          preprocessedHints: [],
+          semanticHints: [],
+        },
+        {
+          sourceName: 'strategy_beta.md',
+          sourceType: 'file' as const,
+          intent: 'distill_structure' as const,
+          rawText: '# Beta',
+          preprocessedHints: [],
+          semanticHints: [],
+        },
+      ],
+    }
+
+    const response = createBaseResponse({
+      previewNodes: [
+        {
+          id: 'batch_root',
+          parentId: null,
+          order: 0,
+          title: 'Import batch: Strategy',
+          note: null,
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+        {
+          id: 'file_alpha',
+          parentId: 'batch_root',
+          order: 0,
+          title: 'Alpha',
+          note: null,
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+        {
+          id: 'alpha_positioning',
+          parentId: 'file_alpha',
+          order: 0,
+          title: 'Positioning',
+          note: 'Text A',
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+        {
+          id: 'file_beta',
+          parentId: 'batch_root',
+          order: 1,
+          title: 'Beta',
+          note: null,
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+        {
+          id: 'beta_positioning',
+          parentId: 'file_beta',
+          order: 0,
+          title: 'Positioning',
+          note: 'Text B',
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+      ],
+      batch: {
+        jobType: 'batch',
+        fileCount: 2,
+        completedFileCount: 2,
+        currentFileName: null,
+        batchContainerTitle: 'Import batch: Strategy',
+        files: [
+          {
+            sourceName: 'strategy_alpha.md',
+            sourceType: 'file',
+            previewNodeId: 'file_alpha',
+            nodeCount: 2,
+            mergeSuggestionCount: 0,
+            warningCount: 0,
+            classification: null,
+            templateSummary: null,
+          },
+          {
+            sourceName: 'strategy_beta.md',
+            sourceType: 'file',
+            previewNodeId: 'file_beta',
+            nodeCount: 2,
+            mergeSuggestionCount: 0,
+            warningCount: 0,
+            classification: null,
+            templateSummary: null,
+          },
+        ],
+      },
+    })
+
+    const draft = createTextImportSemanticDraft(request, response)
+    const crossFileCandidate = draft.candidateBundles.find((bundle) => bundle.scope === 'cross_file')
+
+    expect(crossFileCandidate?.candidate.groupId).toBeTruthy()
+    expect(crossFileCandidate?.candidate.groupSize).toBeGreaterThanOrEqual(1)
+    expect(crossFileCandidate?.candidate.similarityScore).toBeGreaterThan(0)
+  })
 })

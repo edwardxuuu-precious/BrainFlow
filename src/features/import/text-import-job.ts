@@ -640,9 +640,12 @@ export function startTextImportJob(
 
   const controller = new AbortController()
   let cancelled = false
+  const { preparedArtifacts: _preparedArtifacts, ...codexRequest } = request as TextImportRequest & {
+    preparedArtifacts?: unknown
+  }
 
   void streamCodexTextImportPreview(
-    request,
+    codexRequest,
     (event) => {
       if (cancelled) {
         return

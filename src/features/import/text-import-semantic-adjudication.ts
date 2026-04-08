@@ -2,8 +2,10 @@ import type {
   TextImportRequest,
   TextImportResponse,
   TextImportRunStage,
+  TextImportSemanticDecision,
 } from '../../../shared/ai-contract'
 import type { LocalTextImportBatchRequest, SemanticMergeStage } from './local-text-import-core'
+import { mergeTextImportDiagnostics } from './text-import-diagnostics'
 import { adjudicateTextImportCandidates } from './text-import-client'
 import {
   applyTextImportSemanticAdjudication,
@@ -33,19 +35,86 @@ function emitProgress(
   onProgress?.(update)
 }
 
+type SemanticCandidateBundle = ReturnType<typeof createTextImportSemanticDraft>['candidateBundles'][number]
+
+function shouldEscalateCandidate(bundle: SemanticCandidateBundle): boolean {
+  if (bundle.scope === 'existing_topic') {
+    return !(
+      bundle.fallbackDecision.confidence === 'high' &&
+      bundle.fallbackDecision.kind !== 'conflict'
+    )
+  }
+
+  return true
+}
+
+function selectRepresentativeBundle(
+  bundles: SemanticCandidateBundle[],
+): SemanticCandidateBundle {
+  return [...bundles].sort((left, right) => {
+    const leftScore = left.candidate.similarityScore ?? 0
+    const rightScore = right.candidate.similarityScore ?? 0
+    if (leftScore !== rightScore) {
+      return rightScore - leftScore
+    }
+    return left.candidate.candidateId.localeCompare(right.candidate.candidateId)
+  })[0]
+}
+
+function expandGroupedDecisions(
+  decisions: Array<{ decision: TextImportSemanticDecision; bundle: SemanticCandidateBundle }>,
+  groupMembersByRepresentativeId: Map<string, SemanticCandidateBundle[]>,
+) {
+  const expanded: typeof decisions[number]['decision'][] = []
+  decisions.forEach(({ decision, bundle }) => {
+    const groupMembers =
+      groupMembersByRepresentativeId.get(bundle.candidate.candidateId) ?? [bundle]
+    groupMembers.forEach((member) => {
+      expanded.push({
+        ...decision,
+        candidateId: member.candidate.candidateId,
+      })
+    })
+  })
+  return expanded
+}
+
 export async function finalizeTextImportSemanticPreview(
   jobId: string,
   request: TextImportRequest | LocalTextImportBatchRequest,
   draftResponse: TextImportResponse,
   options?: {
     onProgress?: (update: TextImportSemanticAdjudicationProgressUpdate) => void
+    now?: () => number
   },
 ): Promise<TextImportResponse> {
+  const now = options?.now ?? Date.now
+  const adjudicationStartedAt = now()
   const semanticDraft = createTextImportSemanticDraft(request, draftResponse)
   const candidateCount = semanticDraft.candidateBundles.length
   const fileCount = draftResponse.batch?.fileCount ?? 1
   const completedFileCount =
     draftResponse.batch?.completedFileCount ?? (semanticDraft.jobType === 'batch' ? 0 : 1)
+  const candidateGroups = new Map<string, SemanticCandidateBundle[]>()
+  semanticDraft.candidateBundles.forEach((bundle) => {
+    if (!shouldEscalateCandidate(bundle)) {
+      return
+    }
+    const groupId = bundle.candidate.groupId ?? bundle.candidate.candidateId
+    const bucket = candidateGroups.get(groupId) ?? []
+    bucket.push(bundle)
+    candidateGroups.set(groupId, bucket)
+  })
+  const representativeBundles = [...candidateGroups.values()].map((bundles) =>
+    selectRepresentativeBundle(bundles),
+  )
+  const groupMembersByRepresentativeId = new Map(
+    representativeBundles.map((bundle) => [
+      bundle.candidate.candidateId,
+      candidateGroups.get(bundle.candidate.groupId ?? bundle.candidate.candidateId) ?? [bundle],
+    ]),
+  )
+  const representativeCount = representativeBundles.length
 
   if (candidateCount === 0) {
     emitProgress(options?.onProgress, {
@@ -71,18 +140,53 @@ export async function finalizeTextImportSemanticPreview(
         conflictCount: 0,
         fallbackCount: 0,
       },
+      diagnostics: mergeTextImportDiagnostics(draftResponse.diagnostics, {
+        semanticAdjudication: {
+          candidateCount: 0,
+          representativeCount: 0,
+          requestCount: 0,
+          adjudicatedCount: 0,
+          fallbackCount: 0,
+        },
+        timings: {
+          semanticAdjudicationMs: now() - adjudicationStartedAt,
+        },
+      }),
+    }
+  }
+
+  if (representativeCount === 0) {
+    const applied = applyTextImportSemanticAdjudication(draftResponse, semanticDraft, {
+      decisions: [],
+      warnings: [],
+    })
+    return {
+      ...applied,
+      diagnostics: mergeTextImportDiagnostics(applied.diagnostics, {
+        semanticAdjudication: {
+          candidateCount,
+          representativeCount: 0,
+          requestCount: 0,
+          adjudicatedCount: 0,
+          fallbackCount: 0,
+        },
+        timings: {
+          semanticAdjudicationMs: now() - adjudicationStartedAt,
+        },
+      }),
     }
   }
 
   const batches: typeof semanticDraft.candidateBundles[] = []
-  for (let index = 0; index < semanticDraft.candidateBundles.length; index += 12) {
-    batches.push(semanticDraft.candidateBundles.slice(index, index + 12))
+  for (let index = 0; index < representativeBundles.length; index += 12) {
+    batches.push(representativeBundles.slice(index, index + 12))
   }
 
-  const allDecisions = []
+  const allDecisions: Array<{ decision: TextImportSemanticDecision; bundle: SemanticCandidateBundle }> = []
   const warnings: string[] = []
   let adjudicatedCount = 0
   let fallbackCount = 0
+  let requestCount = 0
 
   emitProgress(options?.onProgress, {
     stage: 'semantic_candidate_generation',
@@ -115,6 +219,7 @@ export async function finalizeTextImportSemanticPreview(
     })
 
     try {
+      requestCount += 1
       const response = await adjudicateTextImportCandidates({
         jobId,
         documentId: request.documentId,
@@ -122,7 +227,14 @@ export async function finalizeTextImportSemanticPreview(
         batchTitle: semanticDraft.batchTitle,
         candidates: batch.map((item) => item.candidate),
       })
-      allDecisions.push(...response.decisions)
+      const bundleByCandidateId = new Map(batch.map((item) => [item.candidate.candidateId, item]))
+      response.decisions.forEach((decision, decisionIndex) => {
+        const bundle = bundleByCandidateId.get(decision.candidateId) ?? batch[decisionIndex]
+        if (!bundle) {
+          return
+        }
+        allDecisions.push({ decision, bundle })
+      })
       warnings.push(...(response.warnings ?? []))
       adjudicatedCount += batch.length
     } catch (error) {
@@ -149,15 +261,30 @@ export async function finalizeTextImportSemanticPreview(
     semanticFallbackCount: fallbackCount,
   })
 
-  return applyTextImportSemanticAdjudication(
+  const applied = applyTextImportSemanticAdjudication(
     draftResponse,
     semanticDraft,
     {
-      decisions: allDecisions,
+      decisions: expandGroupedDecisions(allDecisions, groupMembersByRepresentativeId),
       warnings,
     },
     {
       warnings,
     },
   )
+  return {
+    ...applied,
+    diagnostics: mergeTextImportDiagnostics(applied.diagnostics, {
+      semanticAdjudication: {
+        candidateCount,
+        representativeCount,
+        requestCount,
+        adjudicatedCount,
+        fallbackCount,
+      },
+      timings: {
+        semanticAdjudicationMs: now() - adjudicationStartedAt,
+      },
+    }),
+  }
 }

@@ -294,6 +294,7 @@ export interface AiChatResponse {
 export type TextImportSourceType = 'file' | 'paste'
 export type TextImportIntent = 'preserve_structure' | 'distill_structure'
 export type TextImportPreset = 'preserve' | 'distill' | 'action_first'
+export type TextImportRecommendedRoute = 'local_markdown' | 'codex_import'
 export type TextImportContentProfile =
   | 'report'
   | 'meeting_notes'
@@ -591,6 +592,9 @@ export interface TextImportSemanticCandidate {
   scope: 'existing_topic' | 'cross_file'
   source: TextImportSemanticTargetSnapshot
   target: TextImportSemanticTargetSnapshot
+  groupId?: string | null
+  groupSize?: number
+  similarityScore?: number | null
 }
 
 export interface TextImportSemanticAdjudicationRequest {
@@ -644,6 +648,74 @@ export interface TextImportSemanticMergeSummary {
   fallbackCount: number
 }
 
+export interface TextImportTimingDiagnostics {
+  preprocessMs: number
+  planningMs: number
+  parseTreeMs: number
+  batchComposeMs: number
+  semanticCandidateMs: number
+  semanticAdjudicationMs: number
+  previewEditMs: number
+  applyMs: number
+  totalMs: number
+}
+
+export interface TextImportDensityStats {
+  previewNodeCount: number
+  semanticNodeCount: number
+  semanticEdgeCount: number
+  operationCount: number
+  sourceAnchorCount: number
+  foldedNoteCount: number
+  evidenceNodeCount: number
+  maxDepth: number
+}
+
+export interface TextImportArtifactReuseSummary {
+  contentKey: string
+  planKey: string
+  reusedSemanticHints: boolean
+  reusedSemanticUnits: boolean
+  reusedPlannedStructure: boolean
+}
+
+export interface TextImportQualitySignalSummary {
+  warningCount: number
+  genericTitleCount: number
+  lowConfidenceNodeCount: number
+  foldedEvidenceCount: number
+  duplicateSiblingGroupCount: number
+  shallowSourceCount: number
+  needsDeepPassCount: number
+}
+
+export interface TextImportApplyEstimate {
+  createCount: number
+  updateCount: number
+  mergeCount: number
+  crossFileMergeCount: number
+  skippedUpdateCount: number
+}
+
+export interface TextImportSemanticAdjudicationDiagnostics {
+  candidateCount: number
+  representativeCount: number
+  requestCount: number
+  adjudicatedCount: number
+  fallbackCount: number
+}
+
+export interface TextImportDiagnostics {
+  timings: TextImportTimingDiagnostics
+  densityStats: TextImportDensityStats
+  artifactReuse: TextImportArtifactReuseSummary
+  qualitySignals: TextImportQualitySignalSummary
+  applyEstimate: TextImportApplyEstimate
+  semanticAdjudication: TextImportSemanticAdjudicationDiagnostics
+  dirtySubtreeIds?: string[]
+  lastEditAction?: string | null
+}
+
 export type AiImportOperation = AiCanvasOperation & {
   id: string
   risk: AiImportOperationRisk
@@ -674,6 +746,7 @@ export interface TextImportResponse {
   crossFileMergeSuggestions?: TextImportCrossFileMergeSuggestion[]
   semanticMerge?: TextImportSemanticMergeSummary | null
   batch?: TextImportBatchSummary | null
+  diagnostics?: TextImportDiagnostics | null
   warnings?: string[]
 }
 

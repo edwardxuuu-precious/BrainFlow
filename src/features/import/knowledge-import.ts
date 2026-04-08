@@ -16,8 +16,15 @@ import {
 import {
   compileTextImportNodePlans,
   deriveTextImportNodePlansFromPreviewNodes,
+  resolveTextImportPlanningOptions,
 } from '../../../shared/text-import-semantics'
+import { buildAiContext } from '../ai/ai-context'
 import { buildTextImportPreviewTree } from './text-import-preview-tree'
+import {
+  createLocalTextImportBatchPreview,
+  createLocalTextImportPreview,
+} from './local-text-import-core'
+import { preprocessTextToImportHints } from './text-import-preprocess'
 import { createDefaultTopicMetadata, createDefaultTopicStyle } from '../documents/topic-defaults'
 import { createTopicRichTextFromPlainText } from '../documents/topic-rich-text'
 import type { MindMapDocument, TopicNode } from '../documents/types'
@@ -38,6 +45,12 @@ interface SwitchKnowledgeViewResult {
   selectedTopicId: string | null
 }
 
+export interface LegacyGtmRepairAvailability {
+  isLegacyGtmBundle: boolean
+  canRepair: boolean
+  reason: string | null
+}
+
 function cloneDocument(document: MindMapDocument): MindMapDocument {
   return structuredClone(document)
 }
@@ -55,13 +68,66 @@ function getPrimaryViewId(bundleId: string): string {
   return `${bundleId}_thinking`
 }
 
-function createLegacyPrimaryProjection(bundle: KnowledgeImportBundle): KnowledgeViewProjection | null {
+function getPrimaryProjection(bundle: KnowledgeImportBundle): KnowledgeViewProjection | null {
   const thinkingViewId = bundle.views.find((view) => view.type === PRIMARY_KNOWLEDGE_VIEW_TYPE)?.id ?? null
-  const legacyProjection =
-    (thinkingViewId ? bundle.viewProjections[thinkingViewId] : null) ??
-    Object.values(bundle.viewProjections)[0] ??
-    null
+  return (thinkingViewId ? bundle.viewProjections[thinkingViewId] : null) ?? Object.values(bundle.viewProjections)[0] ?? null
+}
 
+function hasRepeatedTitlePrefix(title: string, note: string | null | undefined): boolean {
+  const normalizedTitle = title.trim()
+  const normalizedNote = note?.trim() ?? ''
+  if (!normalizedTitle || !normalizedNote) {
+    return false
+  }
+
+  const repeatedPrefix = `${normalizedTitle} ${normalizedTitle} ${normalizedTitle} ${normalizedTitle}`
+  return normalizedNote.startsWith(repeatedPrefix)
+}
+
+export function getLegacyGtmRepairAvailability(bundle: KnowledgeImportBundle | null | undefined): LegacyGtmRepairAvailability {
+  if (!bundle) {
+    return {
+      isLegacyGtmBundle: false,
+      canRepair: false,
+      reason: null,
+    }
+  }
+
+  const hasLegacySemanticNodeIds = bundle.semanticNodes.some((node) => node.id.startsWith('semantic_gtm_'))
+  const primaryProjection = getPrimaryProjection(bundle)
+  const topLevelTitles = new Set(
+    (primaryProjection?.previewNodes ?? [])
+      .filter((node) => node.parentId === null)
+      .map((node) => node.title.trim()),
+  )
+  const hasLegacyTopLevelShape =
+    topLevelTitles.has('第一波应该先打谁') ||
+    ['谁最痛', '谁最容易现在买', '谁最容易触达', '谁最容易形成案例扩散'].every((title) =>
+      bundle.semanticNodes.some((node) => node.title === title),
+    )
+  const hasRepeatedSummaryNote = (primaryProjection?.previewNodes ?? []).some((node) =>
+    hasRepeatedTitlePrefix(node.title, node.note),
+  )
+  const isLegacyGtmBundle = hasLegacySemanticNodeIds || hasLegacyTopLevelShape || hasRepeatedSummaryNote
+
+  if (!isLegacyGtmBundle) {
+    return {
+      isLegacyGtmBundle: false,
+      canRepair: false,
+      reason: null,
+    }
+  }
+
+  const hasRepairableSources = bundle.sources.every((source) => typeof source.raw_content === 'string' && source.raw_content.trim().length > 0)
+  return {
+    isLegacyGtmBundle: true,
+    canRepair: hasRepairableSources,
+    reason: hasRepairableSources ? null : '当前旧导入缺少可重建的原始 source，只能重新导入。',
+  }
+}
+
+function createLegacyPrimaryProjection(bundle: KnowledgeImportBundle): KnowledgeViewProjection | null {
+  const legacyProjection = getPrimaryProjection(bundle)
   if (!legacyProjection) {
     return null
   }
@@ -447,6 +513,136 @@ export function syncActiveKnowledgeViewProjection(document: MindMapDocument): Mi
   )
   nextDocument.workspace.activeKnowledgeViewId = PRIMARY_KNOWLEDGE_VIEW_TYPE
   return nextDocument
+}
+
+function resolveBundleSourceName(source: KnowledgeImportBundle['sources'][number]): string {
+  const metadataSourceName = source.metadata?.sourceName
+  if (typeof metadataSourceName === 'string' && metadataSourceName.trim()) {
+    return metadataSourceName.trim()
+  }
+
+  return source.title.trim() || 'Imported source'
+}
+
+function rebuildLegacyBundleResponse(
+  document: MindMapDocument,
+  bundle: KnowledgeImportBundle,
+): TextImportResponse | null {
+  const availability = getLegacyGtmRepairAvailability(bundle)
+  if (!availability.isLegacyGtmBundle || !availability.canRepair) {
+    return null
+  }
+
+  const anchorTopicId =
+    bundle.anchorTopicId && document.topics[bundle.anchorTopicId] ? bundle.anchorTopicId : document.rootTopicId
+  const context = buildAiContext(document, [anchorTopicId], anchorTopicId)
+
+  if (bundle.sources.length === 1) {
+    const source = bundle.sources[0]
+    const sourceName = resolveBundleSourceName(source)
+    const rawText = source.raw_content
+    const preprocessedHints = preprocessTextToImportHints(rawText)
+    const planning = resolveTextImportPlanningOptions({
+      sourceName,
+      sourceType: source.type,
+      preprocessedHints,
+    })
+    const rebuilt = createLocalTextImportPreview({
+      documentId: document.id,
+      documentTitle: document.title,
+      baseDocumentUpdatedAt: document.updatedAt,
+      context,
+      anchorTopicId,
+      sourceName,
+      sourceType: source.type,
+      intent: planning.intent,
+      archetype: planning.resolvedArchetype,
+      archetypeMode: 'auto',
+      contentProfile: planning.contentProfile,
+      nodeBudget: planning.nodeBudget,
+      rawText,
+      preprocessedHints,
+      semanticHints: planning.semanticHints,
+    }, {
+      preparedArtifacts: planning.preparedArtifacts,
+    })
+
+    return rebuilt.response
+  }
+
+  const rebuilt = createLocalTextImportBatchPreview({
+    documentId: document.id,
+    documentTitle: document.title,
+    baseDocumentUpdatedAt: document.updatedAt,
+    context,
+    anchorTopicId,
+    batchTitle: bundle.title,
+    files: bundle.sources.map((source) => {
+      const sourceName = resolveBundleSourceName(source)
+      const rawText = source.raw_content
+      const preprocessedHints = preprocessTextToImportHints(rawText)
+      const planning = resolveTextImportPlanningOptions({
+        sourceName,
+        sourceType: source.type,
+        preprocessedHints,
+      })
+
+      return {
+        sourceName,
+        sourceType: source.type,
+        rawText,
+        preprocessedHints,
+        semanticHints: planning.semanticHints,
+        intent: planning.intent,
+        archetype: planning.resolvedArchetype,
+        archetypeMode: 'auto' as const,
+        contentProfile: planning.contentProfile,
+        nodeBudget: planning.nodeBudget,
+        preparedArtifacts: planning.preparedArtifacts,
+      }
+    }),
+  })
+
+  return rebuilt.response
+}
+
+function rekeyBundleResponse(
+  response: TextImportResponse,
+  bundleId: string,
+  anchorTopicId: string | null,
+): TextImportResponse {
+  if (!response.bundle) {
+    return response
+  }
+
+  return {
+    ...response,
+    anchorTopicId,
+    bundle: {
+      ...response.bundle,
+      id: bundleId,
+      anchorTopicId,
+    },
+  }
+}
+
+export function repairKnowledgeImportBundle(
+  document: MindMapDocument,
+  bundleId: string,
+): SwitchKnowledgeViewResult | null {
+  const bundle = document.knowledgeImports[bundleId]
+  if (!bundle) {
+    return null
+  }
+
+  const rebuiltResponse = rebuildLegacyBundleResponse(document, bundle)
+  if (!rebuiltResponse) {
+    return null
+  }
+
+  const anchorTopicId =
+    bundle.anchorTopicId && document.topics[bundle.anchorTopicId] ? bundle.anchorTopicId : document.rootTopicId
+  return applyKnowledgeBundleToDocument(document, rekeyBundleResponse(rebuiltResponse, bundleId, anchorTopicId))
 }
 
 function buildBundleFromResponse(response: TextImportResponse): KnowledgeImportBundle | null {
