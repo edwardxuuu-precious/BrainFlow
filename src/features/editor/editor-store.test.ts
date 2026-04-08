@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+﻿import { beforeEach, describe, expect, it } from 'vitest'
 import type { TextImportResponse } from '../../../shared/ai-contract'
 import { createMindMapDocument } from '../documents/document-factory'
 import { createDefaultTopicMetadata, createDefaultTopicStyle } from '../documents/topic-defaults'
@@ -579,7 +579,7 @@ describe('editor-store', () => {
     const syncedDocument = useEditorStore.getState().document
     expect(syncedDocument?.workspace.activeKnowledgeViewId).toBe('thinking_view')
     expect(syncedDocument?.knowledgeImports.bundle_gtm).toBeDefined() /* legacy projection assertion removed
-      '棣栧睆闂',
+      '首屏问题',
     )
     */ expect(syncedDocument?.knowledgeImports.bundle_gtm.activeViewId).toBe('bundle_gtm_thinking')
 
@@ -589,24 +589,6 @@ describe('editor-store', () => {
     expect(remountedDocument?.workspace.activeKnowledgeViewId).toBe('thinking_view')
     expect(
       remountedDocument?.topics[remountedDocument.workspace.selectedTopicId as string]?.title,
-    ).toBe('首屏问题')
-    return
-
-    expect(syncedDocument?.workspace.activeKnowledgeViewId).toBe('thinking_view')
-    expect(syncedDocument?.knowledgeImports.bundle_gtm.semanticNodes[0]?.title).toBe('棣栧睆闂')
-    expect(syncedDocument?.knowledgeImports.bundle_gtm.viewProjections.bundle_gtm_thinking.previewNodes[0]?.title).toBe(
-      '首屏问题',
-    )
-    expect(
-      archiveDocument?.topics[archiveDocument.workspace.selectedTopicId as string]?.title,
-    ).toBe('来源归档')
-
-    useEditorStore.getState().switchKnowledgeView('thinking_view')
-
-    const thinkingDocument = useEditorStore.getState().document
-    expect(thinkingDocument?.workspace.activeKnowledgeViewId).toBe('thinking_view')
-    expect(
-      thinkingDocument?.topics[thinkingDocument.workspace.selectedTopicId as string]?.title,
     ).toBe('首屏问题')
   })
 })

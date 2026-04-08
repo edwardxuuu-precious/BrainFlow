@@ -352,4 +352,124 @@ describe('text-import-apply', () => {
       ]),
     )
   })
+
+  it('keeps sequential single-file imports as sibling roots when both previews target the document root', async () => {
+    const document = createMindMapDocument('Import doc')
+    const rootId = document.rootTopicId
+
+    const firstResult = await applyTextImportPreview(
+      document,
+      createPreviewResponse({
+        anchorTopicId: rootId,
+        baseDocumentUpdatedAt: document.updatedAt,
+        previewNodes: [
+          {
+            id: 'preview_root_main',
+            parentId: null,
+            order: 0,
+            title: 'Import: GTM_main',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+          },
+        ],
+      }),
+      [],
+    )
+    const firstImportedTopic = Object.values(firstResult.document.topics).find(
+      (topic) => topic.title === 'Import: GTM_main',
+    )
+
+    expect(firstImportedTopic?.parentId).toBe(rootId)
+
+    const secondResult = await applyTextImportPreview(
+      firstResult.document,
+      createPreviewResponse({
+        anchorTopicId: rootId,
+        baseDocumentUpdatedAt: firstResult.document.updatedAt,
+        previewNodes: [
+          {
+            id: 'preview_root_step1',
+            parentId: null,
+            order: 0,
+            title: 'Import: GTM_step1',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+          },
+        ],
+      }),
+      [],
+    )
+    const importedTopics = Object.values(secondResult.document.topics).filter((topic) =>
+      topic.title.startsWith('Import: GTM_'),
+    )
+    const secondImportedTopic = importedTopics.find((topic) => topic.title === 'Import: GTM_step1')
+
+    expect(importedTopics).toHaveLength(2)
+    expect(secondImportedTopic?.parentId).toBe(rootId)
+    expect(firstImportedTopic?.id).not.toBe(secondImportedTopic?.id)
+    expect(secondResult.document.topics[rootId].childIds).toEqual(
+      expect.arrayContaining([firstImportedTopic!.id, secondImportedTopic!.id]),
+    )
+  })
+
+  it('nests the second sequential single-file import under the current selection when the preview anchor is explicit', async () => {
+    const document = createMindMapDocument('Import doc')
+    const rootId = document.rootTopicId
+
+    const firstResult = await applyTextImportPreview(
+      document,
+      createPreviewResponse({
+        anchorTopicId: rootId,
+        baseDocumentUpdatedAt: document.updatedAt,
+        previewNodes: [
+          {
+            id: 'preview_root_main_nested',
+            parentId: null,
+            order: 0,
+            title: 'Import: GTM_main',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+          },
+        ],
+      }),
+      [],
+    )
+    const firstImportedTopic = Object.values(firstResult.document.topics).find(
+      (topic) => topic.title === 'Import: GTM_main',
+    )
+
+    expect(firstImportedTopic?.parentId).toBe(rootId)
+
+    const secondResult = await applyTextImportPreview(
+      firstResult.document,
+      createPreviewResponse({
+        anchorTopicId: firstImportedTopic?.id ?? null,
+        baseDocumentUpdatedAt: firstResult.document.updatedAt,
+        previewNodes: [
+          {
+            id: 'preview_root_step1_nested',
+            parentId: null,
+            order: 0,
+            title: 'Import: GTM_step1',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+          },
+        ],
+      }),
+      [],
+    )
+    const secondImportedTopic = Object.values(secondResult.document.topics).find(
+      (topic) => topic.title === 'Import: GTM_step1',
+    )
+
+    expect(secondImportedTopic?.parentId).toBe(firstImportedTopic?.id)
+  })
 })

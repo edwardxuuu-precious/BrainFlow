@@ -124,7 +124,7 @@ export function StorageConflictDialog({
   const orderedResolutions = orderResolutions(conflict.recommendedResolution, actionableResolutions)
 
   return (
-    <div className={styles.overlay} onClick={onDismiss}>
+    <div className={styles.overlay} data-testid="storage-conflict-dialog" onClick={onDismiss}>
       <SurfacePanel
         frosted
         className={styles.dialog}
@@ -137,7 +137,12 @@ export function StorageConflictDialog({
               检测到本地缓存版本和云端权威版本存在冲突。系统只会给出建议，不会自动覆盖任何一侧内容。
             </p>
           </div>
-          <button type="button" className={styles.closeButton} onClick={onDismiss}>
+          <button
+            type="button"
+            className={styles.closeButton}
+            data-testid="storage-conflict-dismiss"
+            onClick={onDismiss}
+          >
             稍后处理
           </button>
         </div>
@@ -165,7 +170,11 @@ export function StorageConflictDialog({
           </div>
         </div>
 
-        <section className={styles.analysisPanel} aria-live="polite">
+        <section
+          className={styles.analysisPanel}
+          data-testid="storage-conflict-analysis"
+          aria-live="polite"
+        >
           <div className={styles.analysisHead}>
             <span className={styles.analysisLabel}>分析结果</span>
             <span className={styles.analysisMeta}>
@@ -174,7 +183,7 @@ export function StorageConflictDialog({
           </div>
 
           {isAnalyzing ? (
-            <div className={styles.pendingState}>
+            <div className={styles.pendingState} data-testid="storage-conflict-analysis-pending">
               <div className={styles.spinner} aria-hidden="true" />
               <div>
                 <strong className={styles.pendingTitle}>正在分析冲突</strong>
@@ -184,8 +193,11 @@ export function StorageConflictDialog({
               </div>
             </div>
           ) : (
-            <div className={styles.analysisReady}>
-              <div className={styles.recommendCard}>
+            <div className={styles.analysisReady} data-testid="storage-conflict-analysis-ready">
+              <div
+                className={styles.recommendCard}
+                data-testid="storage-conflict-recommendation-card"
+              >
                 <span className={styles.recommendLabel}>推荐动作</span>
                 <strong className={styles.recommendValue}>
                   {describeResolution(conflict.recommendedResolution)}
@@ -209,7 +221,7 @@ export function StorageConflictDialog({
           )}
         </section>
 
-        <div className={styles.actions}>
+        <div className={styles.actions} data-testid="storage-conflict-actions">
           {isAnalyzing ? (
             <Button tone="primary" disabled>
               正在分析…
@@ -224,6 +236,7 @@ export function StorageConflictDialog({
                 <Button
                   key={resolution}
                   tone={isPrimary ? 'primary' : 'secondary'}
+                  data-testid={`storage-conflict-action-${resolution}`}
                   disabled={disabled}
                   onClick={() =>
                     void onResolve(

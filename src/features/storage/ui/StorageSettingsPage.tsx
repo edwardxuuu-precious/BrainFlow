@@ -199,7 +199,11 @@ export function StorageSettingsPage() {
         </SurfacePanel>
 
         <section className={styles.secondaryGrid}>
-          <SurfacePanel frosted className={styles.panel}>
+          <SurfacePanel
+            frosted
+            className={styles.panel}
+            data-testid="storage-settings-conflict-queue"
+          >
             <div className={styles.panelHead}>
               <div>
                 <span className={styles.panelLabel}>Backup Relay</span>
@@ -251,7 +255,11 @@ export function StorageSettingsPage() {
                 {displayConflicts.map((item) => {
                   const conflict = item.conflict
                   return (
-                    <li key={item.key} className={styles.listItem}>
+                    <li
+                      key={item.key}
+                      className={styles.listItem}
+                      data-testid={`storage-settings-conflict-${conflict.id}`}
+                    >
                       <span className={styles.listTitle}>
                         {conflict.entityType === 'document' ? '文档冲突' : 'AI 会话冲突'}：{item.title}
                       </span>
@@ -289,7 +297,9 @@ export function StorageSettingsPage() {
                 })}
               </ul>
             ) : (
-              <p className={styles.panelText}>当前没有检测到需要人工决策的云端冲突。</p>
+              <p className={styles.panelText} data-testid="storage-settings-no-conflicts">
+                当前没有检测到需要人工决策的云端冲突。
+              </p>
             )}
           </SurfacePanel>
         </section>

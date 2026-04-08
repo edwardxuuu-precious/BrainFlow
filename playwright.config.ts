@@ -4,10 +4,16 @@ export default defineConfig({
   testDir: './src/test/e2e',
   timeout: 30_000,
   fullyParallel: false,
+  outputDir: 'output/e2e/artifacts',
+  reporter: [
+    ['list'],
+    ['json', { outputFile: 'output/e2e/playwright-report.json' }],
+  ],
   use: {
     baseURL: 'http://127.0.0.1:4173',
     headless: true,
-    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+    trace: 'retain-on-failure',
   },
   webServer: {
     command: 'pnpm dev',
