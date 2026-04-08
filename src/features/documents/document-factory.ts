@@ -55,6 +55,7 @@ export function createMindMapDocument(title = '未命名脑图'): MindMapDocumen
       [leftId]: left,
       [rightId]: right,
     },
+    knowledgeImports: {},
     createdAt: now,
     updatedAt: now,
     viewport: {
@@ -69,6 +70,8 @@ export function createMindMapDocument(title = '未命名脑图'): MindMapDocumen
         rightSidebarOpen: true,
       },
       hierarchyCollapsedTopicIds: [],
+      activeImportBundleId: null,
+      activeKnowledgeViewId: null,
     },
     theme: defaultTheme,
   }

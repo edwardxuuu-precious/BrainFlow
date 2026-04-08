@@ -1,3 +1,5 @@
+import type { KnowledgeImportBundle, KnowledgeViewType } from '../../../shared/ai-contract'
+
 export type BranchSide = 'auto' | 'left' | 'right'
 
 export const TOPIC_MARKERS = [
@@ -144,6 +146,8 @@ export interface MindMapWorkspaceState {
   selectedTopicId: string | null
   chrome: MindMapEditorChromeState
   hierarchyCollapsedTopicIds: string[]
+  activeImportBundleId: string | null
+  activeKnowledgeViewId: KnowledgeViewType | null
 }
 
 export interface MindMapDocument {
@@ -151,6 +155,7 @@ export interface MindMapDocument {
   title: string
   rootTopicId: string
   topics: Record<string, TopicNode>
+  knowledgeImports: Record<string, KnowledgeImportBundle>
   createdAt: number
   updatedAt: number
   viewport: MindMapViewport

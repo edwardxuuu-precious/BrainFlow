@@ -1627,6 +1627,7 @@ export function deriveTextImportNodePlansFromPreviewNodes(options: {
       title: normalizeText(node.title) || 'Untitled',
       note: normalizeText(node.note) || null,
       semanticRole: node.semanticRole ?? (hasChildren || isRoot ? 'section' : 'summary'),
+      semanticType: node.semanticType ?? null,
       confidence: node.confidence ?? (isRoot ? 'high' : 'medium'),
       sourceAnchors: node.sourceAnchors?.map((anchor) => ({ ...anchor })) ?? [],
       groupKey: null,
@@ -1655,6 +1656,7 @@ export function compileTextImportPreviewNodesToOperations(options: {
       parent: parentTarget,
       title: node.title,
       note: node.note ?? undefined,
+      metadata: node.semanticType === 'task' ? { type: 'task' } : undefined,
       resultRef: node.id,
     }
 
@@ -1684,6 +1686,7 @@ export function compileTextImportNodePlans(options: {
       matchedTopicId: null,
       reason: null,
       semanticRole: plan.semanticRole,
+      semanticType: plan.semanticType ?? null,
       confidence: plan.confidence,
       sourceAnchors: plan.sourceAnchors.map((anchor) => ({ ...anchor })),
       templateSlot: plan.templateSlot ?? null,

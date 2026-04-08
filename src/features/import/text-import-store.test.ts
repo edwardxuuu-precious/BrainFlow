@@ -33,6 +33,14 @@ describe('text-import-store', () => {
         visibleSlots: ['summary', 'next_steps'],
         foldedSlots: ['metrics'],
       },
+      bundle: null,
+      sources: [],
+      semanticNodes: [],
+      semanticEdges: [],
+      views: [],
+      viewProjections: {},
+      defaultViewId: null,
+      activeViewId: null,
       nodePlans: [
         {
           id: 'preview_root',
@@ -415,6 +423,14 @@ describe('text-import-store', () => {
         visibleSlots: ['steps'],
         foldedSlots: ['goal'],
       },
+      bundle: null,
+      sources: [],
+      semanticNodes: [],
+      semanticEdges: [],
+      views: [],
+      viewProjections: {},
+      defaultViewId: null,
+      activeViewId: null,
       nodePlans: [
         {
           id: 'preview_root',

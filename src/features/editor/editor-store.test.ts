@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { TextImportResponse } from '../../../shared/ai-contract'
 import { createMindMapDocument } from '../documents/document-factory'
 import { createDefaultTopicMetadata, createDefaultTopicStyle } from '../documents/topic-defaults'
+import { applyTextImportPreview } from '../import/text-import-apply'
 import { resetEditorStore, useEditorStore } from './editor-store'
 
 function appendChildTopic(
@@ -34,6 +36,236 @@ function appendChildTopic(
   }
 
   return topicId
+}
+
+function createKnowledgePreviewResponse(anchorTopicId: string): TextImportResponse {
+  const thinkingProjection = {
+    viewId: 'bundle_gtm_thinking',
+    viewType: 'thinking_view' as const,
+    summary: 'Thinking view',
+    nodePlans: [
+      {
+        id: 'question_root',
+        parentId: null,
+        order: 0,
+        title: '第一波应该先打谁',
+        note: '中心问题',
+        semanticRole: 'question' as const,
+        semanticType: 'question' as const,
+        confidence: 'high' as const,
+        sourceAnchors: [],
+        groupKey: 'thinking',
+        priority: 'primary' as const,
+        collapsedByDefault: false,
+        templateSlot: null,
+      },
+    ],
+    previewNodes: [
+      {
+        id: 'question_root',
+        parentId: null,
+        order: 0,
+        title: '第一波应该先打谁',
+        note: '中心问题',
+        relation: 'new' as const,
+        matchedTopicId: null,
+        reason: null,
+        semanticRole: 'question' as const,
+        semanticType: 'question' as const,
+        confidence: 'high' as const,
+        sourceAnchors: [],
+        templateSlot: null,
+      },
+    ],
+    operations: [
+      {
+        id: 'thinking_root',
+        type: 'create_child' as const,
+        parent: `topic:${anchorTopicId}` as const,
+        title: '第一波应该先打谁',
+        note: '中心问题',
+        risk: 'low' as const,
+        resultRef: 'question_root',
+      },
+    ],
+  }
+  const archiveProjection = {
+    viewId: 'bundle_gtm_archive',
+    viewType: 'archive_view' as const,
+    summary: 'Archive view',
+    nodePlans: [
+      {
+        id: 'archive_root',
+        parentId: null,
+        order: 0,
+        title: '来源归档',
+        note: null,
+        semanticRole: 'section' as const,
+        semanticType: null,
+        confidence: 'high' as const,
+        sourceAnchors: [],
+        groupKey: 'archive',
+        priority: 'primary' as const,
+        collapsedByDefault: false,
+        templateSlot: null,
+      },
+    ],
+    previewNodes: [
+      {
+        id: 'archive_root',
+        parentId: null,
+        order: 0,
+        title: '来源归档',
+        note: null,
+        relation: 'new' as const,
+        matchedTopicId: null,
+        reason: null,
+        semanticRole: 'section' as const,
+        semanticType: null,
+        confidence: 'high' as const,
+        sourceAnchors: [],
+        templateSlot: null,
+      },
+    ],
+    operations: [
+      {
+        id: 'archive_root_op',
+        type: 'create_child' as const,
+        parent: `topic:${anchorTopicId}` as const,
+        title: '来源归档',
+        risk: 'low' as const,
+        resultRef: 'archive_root',
+      },
+    ],
+  }
+  const executionProjection = {
+    viewId: 'bundle_gtm_execution',
+    viewType: 'execution_view' as const,
+    summary: 'Execution view',
+    nodePlans: [
+      {
+        id: 'execution_root',
+        parentId: null,
+        order: 0,
+        title: '执行闭环',
+        note: null,
+        semanticRole: 'section' as const,
+        semanticType: 'goal' as const,
+        confidence: 'high' as const,
+        sourceAnchors: [],
+        groupKey: 'execution',
+        priority: 'primary' as const,
+        collapsedByDefault: false,
+        templateSlot: 'goal' as const,
+      },
+    ],
+    previewNodes: [
+      {
+        id: 'execution_root',
+        parentId: null,
+        order: 0,
+        title: '执行闭环',
+        note: null,
+        relation: 'new' as const,
+        matchedTopicId: null,
+        reason: null,
+        semanticRole: 'section' as const,
+        semanticType: 'goal' as const,
+        confidence: 'high' as const,
+        sourceAnchors: [],
+        templateSlot: 'goal' as const,
+      },
+    ],
+    operations: [
+      {
+        id: 'execution_root_op',
+        type: 'create_child' as const,
+        parent: `topic:${anchorTopicId}` as const,
+        title: '执行闭环',
+        risk: 'low' as const,
+        resultRef: 'execution_root',
+      },
+    ],
+  }
+
+  return {
+    summary: 'Knowledge import preview',
+    baseDocumentUpdatedAt: 1,
+    anchorTopicId,
+    classification: {
+      archetype: 'mixed',
+      confidence: 0.8,
+      rationale: 'Fixture response.',
+      secondaryArchetype: null,
+    },
+    templateSummary: {
+      archetype: 'mixed',
+      visibleSlots: ['themes'],
+      foldedSlots: ['summary'],
+    },
+    bundle: {
+      id: 'bundle_gtm',
+      title: 'GTM import',
+      createdAt: 1,
+      anchorTopicId,
+      defaultViewId: thinkingProjection.viewId,
+      activeViewId: thinkingProjection.viewId,
+      mountedRootTopicId: null,
+      sources: [
+        {
+          id: 'source_1',
+          type: 'file',
+          title: 'GTM_main',
+          raw_content: '# GTM main',
+          metadata: { headingCount: 1 },
+        },
+      ],
+      semanticNodes: [],
+      semanticEdges: [],
+      views: [
+        { id: archiveProjection.viewId, type: 'archive_view', visible_node_ids: ['archive_root'], layout_type: 'archive' },
+        { id: thinkingProjection.viewId, type: 'thinking_view', visible_node_ids: ['question_root'], layout_type: 'mindmap' },
+        { id: executionProjection.viewId, type: 'execution_view', visible_node_ids: ['execution_root'], layout_type: 'execution' },
+      ],
+      viewProjections: {
+        [archiveProjection.viewId]: archiveProjection,
+        [thinkingProjection.viewId]: thinkingProjection,
+        [executionProjection.viewId]: executionProjection,
+      },
+    },
+    sources: [
+      {
+        id: 'source_1',
+        type: 'file',
+        title: 'GTM_main',
+        raw_content: '# GTM main',
+        metadata: { headingCount: 1 },
+      },
+    ],
+    semanticNodes: [],
+    semanticEdges: [],
+    views: [
+      { id: archiveProjection.viewId, type: 'archive_view', visible_node_ids: ['archive_root'], layout_type: 'archive' },
+      { id: thinkingProjection.viewId, type: 'thinking_view', visible_node_ids: ['question_root'], layout_type: 'mindmap' },
+      { id: executionProjection.viewId, type: 'execution_view', visible_node_ids: ['execution_root'], layout_type: 'execution' },
+    ],
+    viewProjections: {
+      [archiveProjection.viewId]: archiveProjection,
+      [thinkingProjection.viewId]: thinkingProjection,
+      [executionProjection.viewId]: executionProjection,
+    },
+    defaultViewId: thinkingProjection.viewId,
+    activeViewId: thinkingProjection.viewId,
+    nodePlans: thinkingProjection.nodePlans,
+    previewNodes: thinkingProjection.previewNodes,
+    operations: thinkingProjection.operations,
+    conflicts: [],
+    mergeSuggestions: [],
+    crossFileMergeSuggestions: [],
+    semanticMerge: null,
+    batch: null,
+    warnings: [],
+  }
 }
 
 describe('editor-store', () => {
@@ -326,5 +558,41 @@ describe('editor-store', () => {
 
     expect(useEditorStore.getState().isDirty).toBe(false)
     expect(useEditorStore.getState().hasPendingWorkspaceSave).toBe(false)
+  })
+
+  it('switches knowledge views and keeps edited thinking snapshots', async () => {
+    const document = createMindMapDocument()
+    const anchorTopicId = document.topics[document.rootTopicId].childIds[0]
+    const applied = await applyTextImportPreview(
+      document,
+      createKnowledgePreviewResponse(anchorTopicId),
+      [],
+    )
+
+    useEditorStore.getState().setDocument(applied.document)
+    const mountedRootTopicId = useEditorStore.getState().document?.workspace.selectedTopicId
+
+    expect(mountedRootTopicId).not.toBeNull()
+    expect(useEditorStore.getState().document?.workspace.activeKnowledgeViewId).toBe('thinking_view')
+
+    useEditorStore.getState().renameTopic(mountedRootTopicId as string, '首屏问题')
+    useEditorStore.getState().switchKnowledgeView('archive_view')
+
+    const archiveDocument = useEditorStore.getState().document
+    expect(archiveDocument?.workspace.activeKnowledgeViewId).toBe('archive_view')
+    expect(archiveDocument?.knowledgeImports.bundle_gtm.viewProjections.bundle_gtm_thinking.previewNodes[0]?.title).toBe(
+      '首屏问题',
+    )
+    expect(
+      archiveDocument?.topics[archiveDocument.workspace.selectedTopicId as string]?.title,
+    ).toBe('来源归档')
+
+    useEditorStore.getState().switchKnowledgeView('thinking_view')
+
+    const thinkingDocument = useEditorStore.getState().document
+    expect(thinkingDocument?.workspace.activeKnowledgeViewId).toBe('thinking_view')
+    expect(
+      thinkingDocument?.topics[thinkingDocument.workspace.selectedTopicId as string]?.title,
+    ).toBe('首屏问题')
   })
 })

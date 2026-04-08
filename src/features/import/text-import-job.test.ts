@@ -103,6 +103,14 @@ function createPreviewResponse(rootTitle: string, childTitle: string): TextImpor
       visibleSlots: ['themes'],
       foldedSlots: ['summary'],
     },
+    bundle: null,
+    sources: [],
+    semanticNodes: [],
+    semanticEdges: [],
+    views: [],
+    viewProjections: {},
+    defaultViewId: null,
+    activeViewId: null,
     nodePlans: [
       {
         id: 'preview_root',

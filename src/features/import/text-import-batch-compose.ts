@@ -1,7 +1,6 @@
 import type {
   AiImportOperation,
   TextImportMergeSuggestion,
-  TextImportPreviewItem,
   TextImportPreviewNode,
   TextImportResponse,
 } from '../../../shared/ai-contract'
@@ -11,10 +10,7 @@ import {
   type LocalTextImportBatchRequest,
   type LocalTextImportSourceInput,
 } from './local-text-import-core'
-import {
-  compileTextImportPreviewNodesToOperations,
-  deriveTextImportNodePlansFromPreviewNodes,
-} from '../../../shared/text-import-semantics'
+import { buildImportBundlePreview } from '../../../shared/text-import-layering'
 import { deriveTextImportTitle } from './text-import-preprocess'
 import { buildTextImportPreviewTree } from './text-import-preview-tree'
 
@@ -97,30 +93,6 @@ function createFileRoot(
   return syntheticRoot
 }
 
-function flattenPreviewTree(root: TextImportPreviewNode): TextImportPreviewItem[] {
-  const items: TextImportPreviewItem[] = []
-  const visit = (node: TextImportPreviewNode): void => {
-    items.push({
-      id: node.id,
-      parentId: node.parentId,
-      order: node.order,
-      title: node.title,
-      note: node.note,
-      relation: node.relation,
-      matchedTopicId: node.matchedTopicId,
-      reason: node.reason,
-      semanticRole: node.semanticRole,
-      confidence: node.confidence,
-      sourceAnchors: node.sourceAnchors?.map((anchor) => ({ ...anchor })),
-      templateSlot: node.templateSlot ?? null,
-    })
-    node.children.forEach(visit)
-  }
-
-  visit(root)
-  return items
-}
-
 function countTreeNodes(root: TextImportPreviewNode): number {
   let count = 0
   const queue = [root]
@@ -186,33 +158,46 @@ export function composeTextImportBatchPreview(
   })
 
   batchRoot.children = fileRoots
-  const previewNodes = flattenPreviewTree(batchRoot)
-  const nodePlans = deriveTextImportNodePlansFromPreviewNodes({
-    previewNodes,
-  })
-  const structuralOperations = compileTextImportPreviewNodesToOperations({
-    insertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
-    previewNodes,
+  const layered = buildImportBundlePreview({
+    bundleId: `import_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    bundleTitle: batchRoot.title,
+    anchorTopicId: request.anchorTopicId,
+    createdAt: Date.now(),
+    sources: sortedFiles.map((file) => ({
+      sourceName: file.sourceName,
+      sourceType: file.sourceType,
+      rawText: file.rawText,
+      preprocessedHints: file.preprocessedHints,
+      semanticHints: file.semanticHints,
+    })),
+    requestIntent:
+      sortedFiles.every((file) => file.intent === 'preserve_structure')
+        ? 'preserve_structure'
+        : 'distill_structure',
+    requestedArchetype: undefined,
+    requestedArchetypeMode: 'auto',
+    requestedContentProfile: undefined,
+    requestedNodeBudget: undefined,
+    fallbackInsertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
   })
 
   return {
-    summary: `Created a batch import tree with ${sortedFiles.length} files and ${previewNodes.length} preview nodes.`,
+    summary: `Created a three-layer batch import bundle with ${sortedFiles.length} files and ${layered.previewNodes.length} thinking-view nodes.`,
     baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
     anchorTopicId: request.anchorTopicId,
-    classification: {
-      archetype: 'mixed',
-      confidence: 0.4,
-      rationale: 'Batch imports preserve per-file archetypes and use a mixed top-level container.',
-      secondaryArchetype: null,
-    },
-    templateSummary: {
-      archetype: 'mixed',
-      visibleSlots: ['themes', 'actions'],
-      foldedSlots: ['summary', 'evidence', 'open_questions'],
-    },
-    nodePlans,
-    previewNodes,
-    operations: [...structuralOperations, ...semanticUpdates],
+    classification: layered.classification,
+    templateSummary: layered.templateSummary,
+    bundle: layered.bundle,
+    sources: layered.sources,
+    semanticNodes: layered.semanticNodes,
+    semanticEdges: layered.semanticEdges,
+    views: layered.views,
+    viewProjections: layered.viewProjections,
+    defaultViewId: layered.defaultViewId,
+    activeViewId: layered.activeViewId,
+    nodePlans: layered.nodePlans,
+    previewNodes: layered.previewNodes,
+    operations: [...layered.operations, ...semanticUpdates.filter((operation) => operation.type !== 'create_child')],
     conflicts: [],
     mergeSuggestions,
     crossFileMergeSuggestions: [],
@@ -234,7 +219,7 @@ export function composeTextImportBatchPreview(
       files: sortedFiles.map((file, index) => ({
         sourceName: file.sourceName,
         sourceType: file.sourceType,
-        previewNodeId: fileRoots[index]?.id ?? `missing_${index}`,
+        previewNodeId: `archive_${layered.sources[index]?.id ?? `source_${index + 1}`}`,
         nodeCount: countTreeNodes(fileRoots[index] ?? createFallbackFileRoot(file)),
         mergeSuggestionCount: (file.response.mergeSuggestions ?? []).length,
         warningCount: (file.response.warnings ?? []).length,

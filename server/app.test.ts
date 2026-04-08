@@ -234,6 +234,14 @@ describe('codex app', () => {
         visibleSlots: ['actions', 'risks'],
         foldedSlots: ['goal'],
       },
+      bundle: null,
+      sources: [],
+      semanticNodes: [],
+      semanticEdges: [],
+      views: [],
+      viewProjections: {},
+      defaultViewId: null,
+      activeViewId: null,
       nodePlans: [
         {
           id: 'preview_1',

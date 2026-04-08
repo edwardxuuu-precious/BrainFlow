@@ -7,21 +7,20 @@ import {
   sortTextImportBatchSources,
 } from './local-text-import-core'
 import { preprocessTextToImportHints } from './text-import-preprocess'
+import GTM_MAIN_FIXTURE from './__fixtures__/GTM_main.md?raw'
 
 describe('local-text-import-core', () => {
-  it('builds a deterministic preview tree for markdown headings and lists', () => {
+  it('builds a three-layer bundle for generic markdown while preserving source traceability', () => {
     const document = createMindMapDocument('Import doc')
-    const leftBranchId = document.topics[document.rootTopicId].childIds[0]
-    document.topics[leftBranchId].title = 'Goals'
+    const rawText = '# Goals\n\nLaunch plan\n\n- Owner alignment\n- Weekly checkpoint\n'
 
-    const rawText = '# Goals\n\nIntro paragraph.\n\n- Launch plan\n- Owner alignment\n'
     const built = createLocalTextImportPreview({
       documentId: document.id,
       documentTitle: document.title,
       baseDocumentUpdatedAt: document.updatedAt,
       context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
       anchorTopicId: document.rootTopicId,
-      sourceName: 'GTM_main.md',
+      sourceName: 'launch_notes.md',
       sourceType: 'file',
       intent: 'preserve_structure',
       rawText,
@@ -29,27 +28,23 @@ describe('local-text-import-core', () => {
       semanticHints: [],
     })
 
-    expect(built.response.previewNodes.map((item) => item.title)).toEqual(
-      expect.arrayContaining(['Import: GTM_main', 'Goals', 'Launch plan', 'Owner alignment']),
-    )
-    expect(built.response.mergeSuggestions).toEqual([])
-    expect(built.response.operations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: 'create_child',
-          title: 'Import: GTM_main',
-          parent: `topic:${document.rootTopicId}`,
-        }),
-        expect.objectContaining({
-          type: 'create_child',
-          title: 'Goals',
-        }),
-      ]),
-    )
-    expect(built.response.operations.every((operation) => operation.type === 'create_child')).toBe(true)
+    expect(built.response.bundle).not.toBeNull()
+    expect(built.response.sources).toHaveLength(1)
+    expect(built.response.sources[0]?.raw_content).toContain('Owner alignment')
+    expect(built.response.sources[0]?.metadata).toMatchObject({
+      sourceName: 'launch_notes.md',
+      headingCount: 1,
+    })
+    expect(built.response.views.map((view) => view.type)).toEqual([
+      'archive_view',
+      'thinking_view',
+      'execution_view',
+    ])
+    expect(built.response.activeViewId).toBe(built.response.defaultViewId)
+    expect(built.response.previewNodes.length).toBeGreaterThan(0)
   })
 
-  it('anchors additive create_child operations under the requested topic', () => {
+  it('anchors the generated projection under the requested topic', () => {
     const document = createMindMapDocument('Import doc')
     const anchorTopicId = document.topics[document.rootTopicId].childIds[0]
     const rawText = '# Goals\n\n- Launch plan\n'
@@ -60,7 +55,7 @@ describe('local-text-import-core', () => {
       baseDocumentUpdatedAt: document.updatedAt,
       context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
       anchorTopicId,
-      sourceName: 'GTM_main.md',
+      sourceName: 'launch_notes.md',
       sourceType: 'file',
       intent: 'preserve_structure',
       rawText,
@@ -77,7 +72,7 @@ describe('local-text-import-core', () => {
     )
   })
 
-  it('sorts GTM files hierarchically and creates a batch import container', () => {
+  it('sorts GTM files hierarchically and keeps batch previews in the bundle model', () => {
     const document = createMindMapDocument('Import doc')
     const files = sortTextImportBatchSources([
       {
@@ -122,6 +117,8 @@ describe('local-text-import-core', () => {
       files,
     })
 
+    expect(built.response.bundle).not.toBeNull()
+    expect(built.response.sources).toHaveLength(3)
     expect(built.response.batch).toEqual(
       expect.objectContaining({
         jobType: 'batch',
@@ -129,15 +126,56 @@ describe('local-text-import-core', () => {
         batchContainerTitle: 'Import batch: GTM',
       }),
     )
-    expect(built.response.previewNodes[0]).toEqual(
-      expect.objectContaining({
-        title: 'Import batch: GTM',
-      }),
-    )
+    expect(built.response.views.map((view) => view.type)).toContain('archive_view')
     expect(built.response.crossFileMergeSuggestions).toEqual([])
   })
 
-  it('classifies method-like text and builds template-slot-aware distilled nodes', () => {
+  it('rebuilds the GTM import into one center question and four first-level branches', () => {
+    const document = createMindMapDocument('Import doc')
+
+    const built = createLocalTextImportPreview({
+      documentId: document.id,
+      documentTitle: document.title,
+      baseDocumentUpdatedAt: document.updatedAt,
+      context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
+      anchorTopicId: document.rootTopicId,
+      sourceName: 'GTM_main.md',
+      sourceType: 'file',
+      intent: 'distill_structure',
+      rawText: GTM_MAIN_FIXTURE,
+      preprocessedHints: preprocessTextToImportHints(GTM_MAIN_FIXTURE),
+      semanticHints: [],
+    })
+
+    const root = built.response.previewNodes.find((node) => node.parentId === null)
+    const levelOne = built.response.previewNodes.filter((node) => node.parentId === root?.id)
+    const disallowed = new Set(['说明', '对话记录', '用户', '助手', '备注', '结论', '拆解', '建议下一步'])
+
+    expect(root?.title).toBe('第一波应该先打谁')
+    expect(levelOne.map((node) => node.title)).toEqual([
+      '谁最痛',
+      '谁最容易现在买',
+      '谁最容易触达',
+      '谁最容易形成案例扩散',
+    ])
+    expect(
+      built.response.previewNodes.some((node) => disallowed.has(node.title)),
+    ).toBe(false)
+    expect(built.response.previewNodes).toHaveLength(17)
+    expect(built.response.previewNodes[0]?.sourceAnchors?.length ?? 0).toBeGreaterThanOrEqual(0)
+    expect(built.response.sources[0]?.metadata).toMatchObject({
+      headingCount: expect.any(Number),
+      headings: expect.any(Array),
+      segments: expect.any(Array),
+    })
+
+    levelOne.forEach((branch) => {
+      const children = built.response.previewNodes.filter((node) => node.parentId === branch.id)
+      expect(children.map((node) => node.title)).toEqual(['判断标准', '证据问题', '常见误判'])
+    })
+  })
+
+  it('classifies method-like text and keeps slot-aware thinking nodes', () => {
     const document = createMindMapDocument('Import doc')
     const rawText = [
       '# Onboarding SOP',
@@ -169,11 +207,12 @@ describe('local-text-import-core', () => {
 
     expect(built.response.classification.archetype).toBe('method')
     expect(built.response.templateSummary.visibleSlots).toContain('steps')
-    expect(built.response.previewNodes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ title: '步骤', templateSlot: 'steps' }),
-      ]),
-    )
+    expect(
+      built.response.previewNodes.some((node) => (node.note ?? '').includes('环境配置')),
+    ).toBe(true)
+    expect(
+      built.response.previewNodes.some((node) => node.title.includes('目标：让新成员在第一周完成环境配置。')),
+    ).toBe(false)
   })
 
   it('keeps per-file archetype summaries in batch previews', () => {
@@ -207,6 +246,6 @@ describe('local-text-import-core', () => {
     })
 
     expect(built.response.batch?.files?.every((file) => file.classification)).toBe(true)
-    expect(built.response.classification.archetype).toBe('mixed')
+    expect(built.response.bundle?.views.map((view) => view.type)).toContain('execution_view')
   })
 })

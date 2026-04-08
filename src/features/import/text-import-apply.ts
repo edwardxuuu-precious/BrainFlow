@@ -10,6 +10,11 @@ import {
   type AiProposalApplyResult,
 } from '../ai/ai-proposal'
 import type { MindMapDocument, TopicNode } from '../documents/types'
+import {
+  applyKnowledgeBundleToDocument,
+  collectApprovedNonStructuralOperations,
+  syncActiveKnowledgeViewProjection,
+} from './knowledge-import'
 
 function stripImportOperationMetadata(
   operation: TextImportResponse['operations'][number],
@@ -76,6 +81,19 @@ function buildStructuralOperationsFromPreview(
   })
 }
 
+function createProposalFromOperations(
+  summary: string,
+  baseDocumentUpdatedAt: number,
+  operations: TextImportResponse['operations'],
+): AiCanvasProposal {
+  return {
+    id: `import_preview_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    summary,
+    baseDocumentUpdatedAt,
+    operations: operations.map(stripImportOperationMetadata),
+  }
+}
+
 export async function applyTextImportPreview(
   document: MindMapDocument,
   response: TextImportResponse,
@@ -94,6 +112,57 @@ export async function applyTextImportPreview(
 
   if (response.anchorTopicId && insertionParentTopicId !== response.anchorTopicId) {
     warnings.push('The original import anchor is missing. Applied the import at the document root instead.')
+  }
+
+  const approvedOperations = new Set(approvedConflictIds)
+
+  if (response.bundle) {
+    const mounted = applyKnowledgeBundleToDocument(document, response)
+    if (mounted) {
+      const structuralOperationCount =
+        response.operations.filter(
+          (operation) =>
+            operation.type === 'create_child' &&
+            (operation.risk === 'low' || (operation.conflictId && approvedOperations.has(operation.conflictId))),
+        ).length || response.previewNodes.length
+      const semanticOperations = collectApprovedNonStructuralOperations(
+        mounted.document,
+        response,
+        approvedOperations,
+        warnings,
+      )
+
+      if (semanticOperations.length === 0) {
+        const syncedDocument = syncActiveKnowledgeViewProjection(mounted.document)
+        return {
+          document: syncedDocument,
+          selectedTopicId: mounted.selectedTopicId,
+          appliedSummary: `${response.summary} | Applied ${structuralOperationCount}`,
+          warnings,
+          appliedCount: structuralOperationCount,
+          skippedCount: 0,
+          skippedOperations: [],
+        }
+      }
+
+      const result = await applyAiProposalAsync(
+        mounted.document,
+        createProposalFromOperations(response.summary, mounted.document.updatedAt, semanticOperations),
+        {
+          onProgress: options?.onProgress,
+          batchSize: options?.batchSize,
+        },
+      )
+      const syncedDocument = syncActiveKnowledgeViewProjection(result.document)
+      return {
+        ...result,
+        document: syncedDocument,
+        selectedTopicId: result.selectedTopicId ?? mounted.selectedTopicId,
+        appliedSummary: `${response.summary} | Applied ${structuralOperationCount + result.appliedCount}`,
+        appliedCount: structuralOperationCount + result.appliedCount,
+        warnings: [...result.warnings, ...warnings],
+      }
+    }
   }
 
   const structuralOperations = buildStructuralOperationsFromPreview(

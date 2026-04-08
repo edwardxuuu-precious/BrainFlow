@@ -7,6 +7,18 @@ import { applyTextImportPreview } from './text-import-apply'
 function createPreviewResponse(
   overrides: Partial<TextImportResponse>,
 ): TextImportResponse {
+  const {
+    bundle = null,
+    sources = [],
+    semanticNodes = [],
+    semanticEdges = [],
+    views = [],
+    viewProjections = {},
+    defaultViewId = null,
+    activeViewId = null,
+    ...rest
+  } = overrides
+
   return {
     summary: 'Import preview',
     baseDocumentUpdatedAt: 0,
@@ -22,13 +34,21 @@ function createPreviewResponse(
       visibleSlots: ['themes'],
       foldedSlots: ['summary'],
     },
+    bundle,
+    sources,
+    semanticNodes,
+    semanticEdges,
+    views,
+    viewProjections,
+    defaultViewId,
+    activeViewId,
     nodePlans: [],
     previewNodes: [],
     operations: [],
     conflicts: [],
     mergeSuggestions: [],
     warnings: [],
-    ...overrides,
+    ...rest,
   }
 }
 

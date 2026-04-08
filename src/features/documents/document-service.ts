@@ -6,6 +6,20 @@ import {
   normalizeTopicRichText,
 } from './topic-rich-text'
 import type {
+  AiImportOperation,
+  KnowledgeImportBundle,
+  KnowledgeSemanticEdge,
+  KnowledgeSemanticNode,
+  KnowledgeSemanticTaskFields,
+  KnowledgeSource,
+  KnowledgeSourceRef,
+  KnowledgeView,
+  KnowledgeViewProjection,
+  KnowledgeViewType,
+  TextImportNodePlan,
+  TextImportPreviewItem,
+} from '../../../shared/ai-contract'
+import type {
   DocumentService,
   DocumentSummary,
   MindMapDocument,
@@ -135,16 +149,433 @@ function normalizeHierarchyCollapsedTopicIds(
   })
 }
 
+function normalizeKnowledgeViewType(value: unknown): KnowledgeViewType | null {
+  return value === 'archive_view' || value === 'thinking_view' || value === 'execution_view'
+    ? value
+    : null
+}
+
+function normalizeKnowledgeSourceRef(value: Partial<KnowledgeSourceRef> | undefined): KnowledgeSourceRef | null {
+  if (!value || typeof value.sourceId !== 'string' || !value.sourceId.trim()) {
+    return null
+  }
+
+  return {
+    sourceId: value.sourceId,
+    lineStart: typeof value.lineStart === 'number' ? value.lineStart : 0,
+    lineEnd: typeof value.lineEnd === 'number' ? value.lineEnd : 0,
+    pathTitles: Array.isArray(value.pathTitles)
+      ? value.pathTitles.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : [],
+  }
+}
+
+function normalizeKnowledgeSource(value: Partial<KnowledgeSource> | undefined): KnowledgeSource | null {
+  if (!value || typeof value.id !== 'string' || !value.id.trim()) {
+    return null
+  }
+
+  return {
+    id: value.id,
+    type: value.type === 'paste' ? 'paste' : 'file',
+    title: typeof value.title === 'string' && value.title.trim().length > 0 ? value.title : 'Imported source',
+    raw_content: typeof value.raw_content === 'string' ? value.raw_content : '',
+    metadata:
+      value.metadata && typeof value.metadata === 'object' && !Array.isArray(value.metadata)
+        ? (value.metadata as Record<string, unknown>)
+        : {},
+  }
+}
+
+function normalizeKnowledgeTaskFields(
+  value: Partial<KnowledgeSemanticTaskFields> | null | undefined,
+): KnowledgeSemanticTaskFields | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  return {
+    status:
+      value.status === 'in_progress' || value.status === 'blocked' || value.status === 'done'
+        ? value.status
+        : 'todo',
+    owner: typeof value.owner === 'string' && value.owner.trim().length > 0 ? value.owner : null,
+    due_date:
+      typeof value.due_date === 'string' && value.due_date.trim().length > 0 ? value.due_date : null,
+    priority:
+      value.priority === 'low' || value.priority === 'medium' || value.priority === 'high'
+        ? value.priority
+        : null,
+    depends_on: Array.isArray(value.depends_on)
+      ? value.depends_on.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : [],
+    source_refs: Array.isArray(value.source_refs)
+      ? value.source_refs
+          .map((item) => normalizeKnowledgeSourceRef(item))
+          .filter((item): item is KnowledgeSourceRef => item !== null)
+      : [],
+    definition_of_done:
+      typeof value.definition_of_done === 'string' && value.definition_of_done.trim().length > 0
+        ? value.definition_of_done
+        : null,
+  }
+}
+
+function normalizeKnowledgeSemanticNode(
+  value: Partial<KnowledgeSemanticNode> | undefined,
+): KnowledgeSemanticNode | null {
+  if (!value || typeof value.id !== 'string' || !value.id.trim() || typeof value.type !== 'string') {
+    return null
+  }
+
+  const validTypeSet = new Set([
+    'topic',
+    'criterion',
+    'insight',
+    'question',
+    'evidence',
+    'decision',
+    'goal',
+    'project',
+    'task',
+    'review',
+  ])
+  if (!validTypeSet.has(value.type)) {
+    return null
+  }
+
+  return {
+    id: value.id,
+    type: value.type,
+    title: typeof value.title === 'string' && value.title.trim().length > 0 ? value.title : 'Untitled',
+    summary: typeof value.summary === 'string' ? value.summary : '',
+    detail: typeof value.detail === 'string' ? value.detail : '',
+    source_refs: Array.isArray(value.source_refs)
+      ? value.source_refs
+          .map((item) => normalizeKnowledgeSourceRef(item))
+          .filter((item): item is KnowledgeSourceRef => item !== null)
+      : [],
+    confidence:
+      value.confidence === 'high' || value.confidence === 'medium' || value.confidence === 'low'
+        ? value.confidence
+        : 'low',
+    task: normalizeKnowledgeTaskFields(value.task),
+  }
+}
+
+function normalizeKnowledgeSemanticEdge(
+  value: Partial<KnowledgeSemanticEdge> | undefined,
+): KnowledgeSemanticEdge | null {
+  if (
+    !value ||
+    typeof value.from !== 'string' ||
+    typeof value.to !== 'string' ||
+    typeof value.type !== 'string'
+  ) {
+    return null
+  }
+
+  const validTypeSet = new Set([
+    'belongs_to',
+    'supports',
+    'contradicts',
+    'leads_to',
+    'depends_on',
+    'derived_from',
+  ])
+  if (!validTypeSet.has(value.type)) {
+    return null
+  }
+
+  return {
+    from: value.from,
+    to: value.to,
+    type: value.type,
+    label: typeof value.label === 'string' ? value.label : null,
+    source_refs: Array.isArray(value.source_refs)
+      ? value.source_refs
+          .map((item) => normalizeKnowledgeSourceRef(item))
+          .filter((item): item is KnowledgeSourceRef => item !== null)
+      : [],
+    confidence:
+      value.confidence === 'high' || value.confidence === 'medium' || value.confidence === 'low'
+        ? value.confidence
+        : 'low',
+  }
+}
+
+function normalizePreviewNode(value: Partial<TextImportPreviewItem> | undefined): TextImportPreviewItem | null {
+  if (!value || typeof value.id !== 'string' || !value.id.trim()) {
+    return null
+  }
+
+  return {
+    id: value.id,
+    parentId: typeof value.parentId === 'string' ? value.parentId : null,
+    order: typeof value.order === 'number' ? value.order : 0,
+    title: typeof value.title === 'string' && value.title.trim().length > 0 ? value.title : 'Untitled',
+    note: typeof value.note === 'string' ? value.note : null,
+    relation:
+      value.relation === 'merge' || value.relation === 'conflict' ? value.relation : 'new',
+    matchedTopicId: typeof value.matchedTopicId === 'string' ? value.matchedTopicId : null,
+    reason: typeof value.reason === 'string' ? value.reason : null,
+    semanticRole:
+      value.semanticRole === 'section' ||
+      value.semanticRole === 'summary' ||
+      value.semanticRole === 'decision' ||
+      value.semanticRole === 'action' ||
+      value.semanticRole === 'risk' ||
+      value.semanticRole === 'question' ||
+      value.semanticRole === 'metric' ||
+      value.semanticRole === 'timeline' ||
+      value.semanticRole === 'evidence'
+        ? value.semanticRole
+        : undefined,
+    semanticType:
+      value.semanticType === 'topic' ||
+      value.semanticType === 'criterion' ||
+      value.semanticType === 'insight' ||
+      value.semanticType === 'question' ||
+      value.semanticType === 'evidence' ||
+      value.semanticType === 'decision' ||
+      value.semanticType === 'goal' ||
+      value.semanticType === 'project' ||
+      value.semanticType === 'task' ||
+      value.semanticType === 'review'
+        ? value.semanticType
+        : null,
+    confidence:
+      value.confidence === 'high' || value.confidence === 'medium' || value.confidence === 'low'
+        ? value.confidence
+        : undefined,
+    sourceAnchors: Array.isArray(value.sourceAnchors)
+      ? value.sourceAnchors
+          .map((anchor) =>
+            anchor &&
+            typeof anchor.lineStart === 'number' &&
+            typeof anchor.lineEnd === 'number'
+              ? { lineStart: anchor.lineStart, lineEnd: anchor.lineEnd }
+              : null,
+          )
+          .filter((anchor): anchor is { lineStart: number; lineEnd: number } => anchor !== null)
+      : [],
+    templateSlot: typeof value.templateSlot === 'string' ? value.templateSlot : null,
+  }
+}
+
+function normalizeNodePlan(value: Partial<TextImportNodePlan> | undefined): TextImportNodePlan | null {
+  if (!value || typeof value.id !== 'string' || !value.id.trim()) {
+    return null
+  }
+
+  return {
+    id: value.id,
+    parentId: typeof value.parentId === 'string' ? value.parentId : null,
+    order: typeof value.order === 'number' ? value.order : 0,
+    title: typeof value.title === 'string' && value.title.trim().length > 0 ? value.title : 'Untitled',
+    note: typeof value.note === 'string' ? value.note : null,
+    semanticRole:
+      value.semanticRole === 'section' ||
+      value.semanticRole === 'summary' ||
+      value.semanticRole === 'decision' ||
+      value.semanticRole === 'action' ||
+      value.semanticRole === 'risk' ||
+      value.semanticRole === 'question' ||
+      value.semanticRole === 'metric' ||
+      value.semanticRole === 'timeline' ||
+      value.semanticRole === 'evidence'
+        ? value.semanticRole
+        : 'summary',
+    semanticType:
+      value.semanticType === 'topic' ||
+      value.semanticType === 'criterion' ||
+      value.semanticType === 'insight' ||
+      value.semanticType === 'question' ||
+      value.semanticType === 'evidence' ||
+      value.semanticType === 'decision' ||
+      value.semanticType === 'goal' ||
+      value.semanticType === 'project' ||
+      value.semanticType === 'task' ||
+      value.semanticType === 'review'
+        ? value.semanticType
+        : null,
+    confidence:
+      value.confidence === 'high' || value.confidence === 'medium' || value.confidence === 'low'
+        ? value.confidence
+        : 'low',
+    sourceAnchors: Array.isArray(value.sourceAnchors)
+      ? value.sourceAnchors
+          .map((anchor) =>
+            anchor &&
+            typeof anchor.lineStart === 'number' &&
+            typeof anchor.lineEnd === 'number'
+              ? { lineStart: anchor.lineStart, lineEnd: anchor.lineEnd }
+              : null,
+          )
+          .filter((anchor): anchor is { lineStart: number; lineEnd: number } => anchor !== null)
+      : [],
+    groupKey: typeof value.groupKey === 'string' ? value.groupKey : null,
+    priority:
+      value.priority === 'primary' || value.priority === 'secondary' || value.priority === 'supporting'
+        ? value.priority
+        : null,
+    collapsedByDefault: typeof value.collapsedByDefault === 'boolean' ? value.collapsedByDefault : null,
+    templateSlot: typeof value.templateSlot === 'string' ? value.templateSlot : null,
+  }
+}
+
+function normalizeImportOperation(value: Partial<AiImportOperation> | undefined): AiImportOperation | null {
+  if (!value || typeof value.id !== 'string' || !value.id.trim() || typeof value.type !== 'string') {
+    return null
+  }
+
+  return value as AiImportOperation
+}
+
+function normalizeKnowledgeViewProjection(
+  value: Partial<KnowledgeViewProjection> | undefined,
+): KnowledgeViewProjection | null {
+  const viewType = normalizeKnowledgeViewType(value?.viewType)
+  if (!value || typeof value.viewId !== 'string' || !value.viewId.trim() || !viewType) {
+    return null
+  }
+
+  return {
+    viewId: value.viewId,
+    viewType,
+    summary: typeof value.summary === 'string' ? value.summary : '',
+    nodePlans: Array.isArray(value.nodePlans)
+      ? value.nodePlans
+          .map((item) => normalizeNodePlan(item))
+          .filter((item): item is TextImportNodePlan => item !== null)
+      : [],
+    previewNodes: Array.isArray(value.previewNodes)
+      ? value.previewNodes
+          .map((item) => normalizePreviewNode(item))
+          .filter((item): item is TextImportPreviewItem => item !== null)
+      : [],
+    operations: Array.isArray(value.operations)
+      ? value.operations
+          .map((item) => normalizeImportOperation(item))
+          .filter((item): item is AiImportOperation => item !== null)
+      : [],
+  }
+}
+
+function normalizeKnowledgeView(value: Partial<KnowledgeView> | undefined): KnowledgeView | null {
+  const viewType = normalizeKnowledgeViewType(value?.type)
+  if (!value || typeof value.id !== 'string' || !value.id.trim() || !viewType) {
+    return null
+  }
+
+  return {
+    id: value.id,
+    type: viewType,
+    visible_node_ids: Array.isArray(value.visible_node_ids)
+      ? value.visible_node_ids.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : [],
+    layout_type:
+      value.layout_type === 'archive' || value.layout_type === 'execution' ? value.layout_type : 'mindmap',
+  }
+}
+
+function normalizeKnowledgeImportBundle(
+  value: Partial<KnowledgeImportBundle> | undefined,
+): KnowledgeImportBundle | null {
+  if (!value || typeof value.id !== 'string' || !value.id.trim()) {
+    return null
+  }
+
+  const views = Array.isArray(value.views)
+    ? value.views
+        .map((item) => normalizeKnowledgeView(item))
+        .filter((item): item is KnowledgeView => item !== null)
+    : []
+  const viewProjections = Object.fromEntries(
+    Object.entries(value.viewProjections ?? {}).flatMap(([viewId, projection]) => {
+      const normalized = normalizeKnowledgeViewProjection(projection)
+      return normalized ? [[viewId, normalized] as const] : []
+    }),
+  )
+  const defaultViewId =
+    typeof value.defaultViewId === 'string' && value.defaultViewId.trim().length > 0
+      ? value.defaultViewId
+      : (views[0]?.id ?? '')
+  const activeViewId =
+    typeof value.activeViewId === 'string' && value.activeViewId.trim().length > 0
+      ? value.activeViewId
+      : defaultViewId
+
+  return {
+    id: value.id,
+    title: typeof value.title === 'string' && value.title.trim().length > 0 ? value.title : 'Imported knowledge',
+    createdAt: typeof value.createdAt === 'number' ? value.createdAt : 0,
+    anchorTopicId: typeof value.anchorTopicId === 'string' ? value.anchorTopicId : null,
+    defaultViewId,
+    activeViewId,
+    mountedRootTopicId:
+      typeof value.mountedRootTopicId === 'string' && value.mountedRootTopicId.trim().length > 0
+        ? value.mountedRootTopicId
+        : null,
+    sources: Array.isArray(value.sources)
+      ? value.sources
+          .map((item) => normalizeKnowledgeSource(item))
+          .filter((item): item is KnowledgeSource => item !== null)
+      : [],
+    semanticNodes: Array.isArray(value.semanticNodes)
+      ? value.semanticNodes
+          .map((item) => normalizeKnowledgeSemanticNode(item))
+          .filter((item): item is KnowledgeSemanticNode => item !== null)
+      : [],
+    semanticEdges: Array.isArray(value.semanticEdges)
+      ? value.semanticEdges
+          .map((item) => normalizeKnowledgeSemanticEdge(item))
+          .filter((item): item is KnowledgeSemanticEdge => item !== null)
+      : [],
+    views,
+    viewProjections,
+  }
+}
+
+function normalizeKnowledgeImports(
+  knowledgeImports: MindMapDocument['knowledgeImports'] | undefined,
+): MindMapDocument['knowledgeImports'] {
+  return Object.fromEntries(
+    Object.entries(knowledgeImports ?? {}).flatMap(([bundleId, bundle]) => {
+      const normalized = normalizeKnowledgeImportBundle(bundle)
+      return normalized ? [[bundleId, normalized] as const] : []
+    }),
+  )
+}
+
 function normalizeWorkspace(doc: MindMapDocument): MindMapWorkspaceState {
   const selectedTopicId =
     doc.workspace?.selectedTopicId && doc.topics[doc.workspace.selectedTopicId]
       ? doc.workspace.selectedTopicId
       : doc.rootTopicId
+  const knowledgeImports = doc.knowledgeImports ?? {}
+  const activeImportBundleId =
+    doc.workspace?.activeImportBundleId && knowledgeImports[doc.workspace.activeImportBundleId]
+      ? doc.workspace.activeImportBundleId
+      : null
+  const activeBundle = activeImportBundleId ? knowledgeImports[activeImportBundleId] : null
+  const activeKnowledgeViewId =
+    activeBundle &&
+    doc.workspace?.activeKnowledgeViewId &&
+    activeBundle.views.some(
+      (view) =>
+        view.type === doc.workspace.activeKnowledgeViewId &&
+        activeBundle.viewProjections[view.id],
+    )
+      ? doc.workspace.activeKnowledgeViewId
+      : null
 
   return {
     selectedTopicId,
     chrome: normalizeChromeState(doc.workspace?.chrome),
     hierarchyCollapsedTopicIds: normalizeHierarchyCollapsedTopicIds(doc, doc.workspace?.hierarchyCollapsedTopicIds),
+    activeImportBundleId,
+    activeKnowledgeViewId,
   }
 }
 
@@ -321,16 +752,19 @@ function repairTopicTree(
 
 function normalizeDocument(doc: MindMapDocument): MindMapDocument {
   const repairedTree = repairTopicTree(doc.topics, doc.rootTopicId)
+  const knowledgeImports = normalizeKnowledgeImports(doc.knowledgeImports)
 
   return {
     ...doc,
     rootTopicId: repairedTree.rootTopicId,
     topics: repairedTree.topics,
+    knowledgeImports,
     viewport: normalizeViewport(doc.viewport),
     workspace: normalizeWorkspace({
       ...doc,
       rootTopicId: repairedTree.rootTopicId,
       topics: repairedTree.topics,
+      knowledgeImports,
     }),
     theme: normalizeTheme(doc.theme),
   }

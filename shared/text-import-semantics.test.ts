@@ -64,7 +64,7 @@ describe('compileTextImportNodePlans', () => {
       expect(operation).toMatchObject({
         type: 'create_child',
       })
-      expect(operation).not.toHaveProperty('metadata')
+      expect('metadata' in operation ? operation.metadata : undefined).toBeUndefined()
       expect(operation).not.toHaveProperty('style')
       expect(operation).not.toHaveProperty('presentation')
     })

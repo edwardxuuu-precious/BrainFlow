@@ -12,6 +12,13 @@ import type {
   CodexBridgeIssue,
   CodexSettings,
   CodexStatus,
+  KnowledgeImportBundle,
+  KnowledgeSemanticEdge,
+  KnowledgeSemanticNode,
+  KnowledgeSource,
+  KnowledgeSourceRef,
+  KnowledgeView,
+  KnowledgeViewProjection,
   TextImportSemanticAdjudicationRequest,
   TextImportSemanticAdjudicationResponse,
   TextImportSemanticDecision,
@@ -32,6 +39,7 @@ import {
   compileTextImportNodePlans,
   deriveTextImportNodePlansFromPreviewNodes,
 } from '../shared/text-import-semantics.js'
+import { compileSemanticLayerViews } from '../shared/text-import-layering.js'
 import {
   createCodexRunner,
   type CodexExecutionObservation,
@@ -136,10 +144,94 @@ interface RawImportTemplateSummary {
   foldedSlots?: string[] | null
 }
 
+interface RawKnowledgeSourceRef {
+  sourceId?: string | null
+  lineStart?: number | null
+  lineEnd?: number | null
+  pathTitles?: string[] | null
+}
+
+interface RawKnowledgeSource {
+  id?: string | null
+  type?: string | null
+  title?: string | null
+  raw_content?: string | null
+  metadata?: Record<string, unknown> | null
+}
+
+interface RawKnowledgeSemanticTaskFields {
+  status?: string | null
+  owner?: string | null
+  due_date?: string | null
+  priority?: string | null
+  depends_on?: string[] | null
+  source_refs?: RawKnowledgeSourceRef[] | null
+  definition_of_done?: string | null
+}
+
+interface RawKnowledgeSemanticNode {
+  id?: string | null
+  type?: string | null
+  title?: string | null
+  summary?: string | null
+  detail?: string | null
+  source_refs?: RawKnowledgeSourceRef[] | null
+  confidence?: string | null
+  task?: RawKnowledgeSemanticTaskFields | null
+}
+
+interface RawKnowledgeSemanticEdge {
+  from?: string | null
+  to?: string | null
+  type?: string | null
+  label?: string | null
+  source_refs?: RawKnowledgeSourceRef[] | null
+  confidence?: string | null
+}
+
+interface RawKnowledgeView {
+  id?: string | null
+  type?: string | null
+  visible_node_ids?: string[] | null
+  layout_type?: string | null
+}
+
+interface RawKnowledgeViewProjection {
+  viewId?: string | null
+  viewType?: string | null
+  summary?: string | null
+  nodePlans?: RawImportNodePlan[] | null
+  previewNodes?: RawImportPreviewItem[] | null
+  operations?: RawImportOperation[] | null
+}
+
+interface RawKnowledgeImportBundle {
+  id?: string | null
+  title?: string | null
+  createdAt?: number | null
+  anchorTopicId?: string | null
+  defaultViewId?: string | null
+  activeViewId?: string | null
+  mountedRootTopicId?: string | null
+  sources?: RawKnowledgeSource[] | null
+  semanticNodes?: RawKnowledgeSemanticNode[] | null
+  semanticEdges?: RawKnowledgeSemanticEdge[] | null
+  views?: RawKnowledgeView[] | null
+  viewProjections?: Record<string, RawKnowledgeViewProjection> | null
+}
+
 interface RawImportPayload {
   summary?: string | null
   classification?: RawImportClassification | null
   templateSummary?: RawImportTemplateSummary | null
+  bundle?: RawKnowledgeImportBundle | null
+  sources?: RawKnowledgeSource[] | null
+  semanticNodes?: RawKnowledgeSemanticNode[] | null
+  semanticEdges?: RawKnowledgeSemanticEdge[] | null
+  views?: RawKnowledgeView[] | null
+  viewProjections?: Record<string, RawKnowledgeViewProjection> | null
+  defaultViewId?: string | null
+  activeViewId?: string | null
   nodePlans?: RawImportNodePlan[] | null
   previewNodes?: RawImportPreviewItem[] | null
   operations?: RawImportOperation[] | null
@@ -1042,6 +1134,208 @@ function normalizeImportTemplateSummary(
   }
 }
 
+function normalizeKnowledgeSourceRef(
+  value: RawKnowledgeSourceRef | null | undefined,
+): KnowledgeSourceRef | null {
+  const sourceId = normalizeText(value?.sourceId)
+  if (!sourceId) {
+    return null
+  }
+
+  return {
+    sourceId,
+    lineStart: typeof value?.lineStart === 'number' ? Math.max(1, Math.floor(value.lineStart)) : 1,
+    lineEnd: typeof value?.lineEnd === 'number' ? Math.max(1, Math.floor(value.lineEnd)) : 1,
+    pathTitles: normalizeStringArray(value?.pathTitles) ?? [],
+  }
+}
+
+function normalizeKnowledgeSource(
+  value: RawKnowledgeSource | null | undefined,
+  request: TextImportRequest,
+  fallbackId: string,
+): KnowledgeSource {
+  const sourceType = normalizeText(value?.type) ?? request.sourceType
+
+  return {
+    id: normalizeText(value?.id) ?? fallbackId,
+    type:
+      sourceType === 'paste' || sourceType === 'file'
+        ? sourceType
+        : request.sourceType,
+    title: normalizeText(value?.title) ?? request.sourceName,
+    raw_content: normalizeText(value?.raw_content) ?? request.rawText,
+    metadata:
+      value?.metadata && typeof value.metadata === 'object'
+        ? value.metadata
+        : { sourceName: request.sourceName },
+  }
+}
+
+function normalizeKnowledgeSemanticNode(
+  value: RawKnowledgeSemanticNode | null | undefined,
+): KnowledgeSemanticNode | null {
+  const id = normalizeText(value?.id)
+  const type = normalizeText(value?.type)
+  const title = normalizeText(value?.title)
+  if (
+    !id ||
+    !type ||
+    !title ||
+    !['topic', 'criterion', 'insight', 'question', 'evidence', 'decision', 'goal', 'project', 'task', 'review'].includes(type)
+  ) {
+    return null
+  }
+
+  return {
+    id,
+    type: type as KnowledgeSemanticNode['type'],
+    title,
+    summary: normalizeText(value?.summary) ?? '',
+    detail: normalizeText(value?.detail) ?? '',
+    source_refs: (value?.source_refs ?? [])
+      .map((item) => normalizeKnowledgeSourceRef(item))
+      .filter((item): item is KnowledgeSourceRef => item !== null),
+    confidence:
+      value?.confidence === 'high' || value?.confidence === 'low' ? value.confidence : 'medium',
+    task:
+      value?.task && typeof value.task === 'object'
+        ? {
+            status:
+              value.task.status === 'in_progress' ||
+              value.task.status === 'blocked' ||
+              value.task.status === 'done'
+                ? value.task.status
+                : 'todo',
+            owner: normalizeText(value.task.owner) ?? null,
+            due_date: normalizeText(value.task.due_date) ?? null,
+            priority:
+              value.task.priority === 'low' || value.task.priority === 'high'
+                ? value.task.priority
+                : value.task.priority === 'medium'
+                  ? 'medium'
+                  : null,
+            depends_on: normalizeStringArray(value.task.depends_on) ?? [],
+            source_refs: (value.task.source_refs ?? [])
+              .map((item) => normalizeKnowledgeSourceRef(item))
+              .filter((item): item is KnowledgeSourceRef => item !== null),
+            definition_of_done: normalizeText(value.task.definition_of_done) ?? null,
+          }
+        : null,
+  }
+}
+
+function normalizeKnowledgeSemanticEdge(
+  value: RawKnowledgeSemanticEdge | null | undefined,
+): KnowledgeSemanticEdge | null {
+  const from = normalizeText(value?.from)
+  const to = normalizeText(value?.to)
+  const type = normalizeText(value?.type)
+  if (
+    !from ||
+    !to ||
+    !type ||
+    !['belongs_to', 'supports', 'contradicts', 'leads_to', 'depends_on', 'derived_from'].includes(type)
+  ) {
+    return null
+  }
+
+  return {
+    from,
+    to,
+    type: type as KnowledgeSemanticEdge['type'],
+    label: normalizeText(value?.label) ?? null,
+    source_refs: (value?.source_refs ?? [])
+      .map((item) => normalizeKnowledgeSourceRef(item))
+      .filter((item): item is KnowledgeSourceRef => item !== null),
+    confidence:
+      value?.confidence === 'high' || value?.confidence === 'low' ? value.confidence : 'medium',
+  }
+}
+
+function normalizeKnowledgeView(value: RawKnowledgeView | null | undefined): KnowledgeView | null {
+  const id = normalizeText(value?.id)
+  const type = normalizeText(value?.type)
+  if (!id || !type || !['archive_view', 'thinking_view', 'execution_view'].includes(type)) {
+    return null
+  }
+
+  return {
+    id,
+    type: type as KnowledgeView['type'],
+    visible_node_ids: normalizeStringArray(value?.visible_node_ids) ?? [],
+    layout_type:
+      value?.layout_type === 'archive' || value?.layout_type === 'execution'
+        ? value.layout_type
+        : 'mindmap',
+  }
+}
+
+function normalizeKnowledgeViewProjection(
+  request: TextImportRequest,
+  value: RawKnowledgeViewProjection | null | undefined,
+  fallbackViewId: string,
+): KnowledgeViewProjection {
+  const viewId = normalizeText(value?.viewId) ?? fallbackViewId
+  const viewType =
+    value?.viewType === 'archive_view' ||
+    value?.viewType === 'execution_view' ||
+    value?.viewType === 'thinking_view'
+      ? value.viewType
+      : fallbackViewId.endsWith('_archive')
+        ? 'archive_view'
+        : fallbackViewId.endsWith('_execution')
+          ? 'execution_view'
+          : 'thinking_view'
+  const nodePlans = Array.isArray(value?.nodePlans)
+    ? value.nodePlans.map(normalizeImportNodePlan)
+    : []
+  if (nodePlans.length > 0) {
+    const compiled = compileTextImportNodePlans({
+      insertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+      nodePlans,
+    })
+    return {
+      viewId,
+      viewType,
+      summary: normalizeText(value?.summary) ?? `${viewType} projection`,
+      nodePlans,
+      previewNodes: compiled.previewNodes,
+      operations: compiled.operations,
+    }
+  }
+
+  const previewNodes = Array.isArray(value?.previewNodes)
+    ? validateImportPreviewItems(value.previewNodes.map(normalizeImportPreviewItem))
+    : []
+  if (previewNodes.length > 0) {
+    const derivedNodePlans = deriveTextImportNodePlansFromPreviewNodes({ previewNodes })
+    const compiled = compileTextImportNodePlans({
+      insertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+      nodePlans: derivedNodePlans,
+    })
+    return {
+      viewId,
+      viewType,
+      summary: normalizeText(value?.summary) ?? `${viewType} projection`,
+      nodePlans: derivedNodePlans,
+      previewNodes: compiled.previewNodes,
+      operations: compiled.operations,
+    }
+  }
+
+  return {
+    viewId,
+    viewType,
+    summary: normalizeText(value?.summary) ?? `${viewType} projection`,
+    nodePlans: [],
+    previewNodes: [],
+    operations: Array.isArray(value?.operations)
+      ? value.operations.map((operation) => normalizeImportOperation(request, operation))
+      : [],
+  }
+}
+
 function normalizeImportPreviewItem(value: RawImportPreviewItem): TextImportPreviewItem {
   const title = normalizeText(value.title)
   const relation = normalizeText(value.relation)
@@ -1227,6 +1521,140 @@ function normalizeImportPayload(
     .filter((item): item is string => !!item)
   const classification = normalizeImportClassification(rawPayload.classification, request)
   const templateSummary = normalizeImportTemplateSummary(rawPayload.templateSummary, classification)
+  const normalizedSources =
+    (rawPayload.sources ?? rawPayload.bundle?.sources ?? []).map((source, index) =>
+      normalizeKnowledgeSource(source, request, `source_${index + 1}`),
+    )
+  const normalizedSemanticNodes = (rawPayload.semanticNodes ?? rawPayload.bundle?.semanticNodes ?? [])
+    .map((item) => normalizeKnowledgeSemanticNode(item))
+    .filter((item): item is KnowledgeSemanticNode => item !== null)
+  const normalizedSemanticEdges = (rawPayload.semanticEdges ?? rawPayload.bundle?.semanticEdges ?? [])
+    .map((item) => normalizeKnowledgeSemanticEdge(item))
+    .filter((item): item is KnowledgeSemanticEdge => item !== null)
+  let normalizedViews = (rawPayload.views ?? rawPayload.bundle?.views ?? [])
+    .map((item) => normalizeKnowledgeView(item))
+    .filter((item): item is KnowledgeView => item !== null)
+  let normalizedViewProjections = Object.fromEntries(
+    Object.entries(rawPayload.viewProjections ?? rawPayload.bundle?.viewProjections ?? {}).map(
+      ([viewId, projection]) => [
+        viewId,
+        normalizeKnowledgeViewProjection(request, projection, viewId),
+      ],
+    ),
+  )
+  let compiledDefaultViewId: string | null = null
+  let compiledActiveViewId: string | null = null
+  const hasLayerPayload =
+    rawPayload.bundle !== undefined ||
+    (rawPayload.sources?.length ?? 0) > 0 ||
+    (rawPayload.semanticNodes?.length ?? 0) > 0 ||
+    (rawPayload.semanticEdges?.length ?? 0) > 0 ||
+    (rawPayload.views?.length ?? 0) > 0 ||
+    rawPayload.viewProjections !== undefined
+
+  if (hasLayerPayload) {
+    const bundleId =
+      normalizeText(rawPayload.bundle?.id) ??
+      `bundle_${Math.random().toString(36).slice(2, 8)}`
+    const bundleTitle =
+      normalizeText(rawPayload.bundle?.title) ??
+      normalizeText(rawPayload.summary) ??
+      request.sourceName
+
+    if (Object.keys(normalizedViewProjections).length === 0) {
+      const compiledViews = compileSemanticLayerViews({
+        bundleId,
+        bundleTitle,
+        sources:
+          normalizedSources.length > 0
+            ? normalizedSources
+            : [normalizeKnowledgeSource(null, request, 'source_1')],
+        semanticNodes: normalizedSemanticNodes,
+        semanticEdges: normalizedSemanticEdges,
+        fallbackInsertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+      })
+      normalizedViews = compiledViews.views
+      normalizedViewProjections = compiledViews.viewProjections
+      compiledDefaultViewId = compiledViews.defaultViewId
+      compiledActiveViewId = compiledViews.activeViewId
+    }
+
+    if (normalizedViews.length === 0) {
+      normalizedViews = Object.values(normalizedViewProjections).map((projection) => ({
+        id: projection.viewId,
+        type: projection.viewType,
+        visible_node_ids: projection.previewNodes.map((node) => node.id),
+        layout_type:
+          projection.viewType === 'archive_view'
+            ? 'archive'
+            : projection.viewType === 'execution_view'
+              ? 'execution'
+              : 'mindmap',
+      }))
+    }
+
+    const defaultViewId =
+      normalizeText(rawPayload.defaultViewId) ??
+      normalizeText(rawPayload.bundle?.defaultViewId) ??
+      compiledDefaultViewId ??
+      normalizedViews[0]?.id ??
+      Object.keys(normalizedViewProjections)[0] ??
+      null
+    const activeViewId =
+      normalizeText(rawPayload.activeViewId) ??
+      normalizeText(rawPayload.bundle?.activeViewId) ??
+      compiledActiveViewId ??
+      defaultViewId
+    const selectedViewId =
+      (activeViewId && normalizedViewProjections[activeViewId] ? activeViewId : null) ??
+      (defaultViewId && normalizedViewProjections[defaultViewId] ? defaultViewId : null) ??
+      Object.keys(normalizedViewProjections)[0] ??
+      null
+    const selectedProjection = selectedViewId ? normalizedViewProjections[selectedViewId] : null
+    const qualityWarnings = buildTextImportQualityWarnings({
+      previewNodes: selectedProjection?.previewNodes ?? [],
+      nodeBudget: request.nodeBudget,
+    })
+    const bundle: KnowledgeImportBundle = {
+      id: bundleId,
+      title: bundleTitle,
+      createdAt:
+        typeof rawPayload.bundle?.createdAt === 'number' ? rawPayload.bundle.createdAt : Date.now(),
+      anchorTopicId: normalizeText(rawPayload.bundle?.anchorTopicId) ?? request.anchorTopicId,
+      defaultViewId: defaultViewId ?? selectedViewId ?? `${bundleId}_thinking`,
+      activeViewId: selectedViewId ?? defaultViewId ?? `${bundleId}_thinking`,
+      mountedRootTopicId: normalizeText(rawPayload.bundle?.mountedRootTopicId) ?? null,
+      sources:
+        normalizedSources.length > 0
+          ? normalizedSources
+          : [normalizeKnowledgeSource(null, request, 'source_1')],
+      semanticNodes: normalizedSemanticNodes,
+      semanticEdges: normalizedSemanticEdges,
+      views: normalizedViews,
+      viewProjections: normalizedViewProjections,
+    }
+
+    return {
+      summary: normalizeText(rawPayload.summary) ?? '智能导入预览已生成。',
+      baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
+      anchorTopicId: request.anchorTopicId,
+      classification,
+      templateSummary,
+      bundle,
+      sources: bundle.sources,
+      semanticNodes: bundle.semanticNodes,
+      semanticEdges: bundle.semanticEdges,
+      views: bundle.views,
+      viewProjections: bundle.viewProjections,
+      defaultViewId: bundle.defaultViewId,
+      activeViewId: bundle.activeViewId,
+      nodePlans: selectedProjection?.nodePlans ?? [],
+      previewNodes: selectedProjection?.previewNodes ?? [],
+      operations: selectedProjection?.operations ?? [],
+      conflicts: (rawPayload.conflicts ?? []).map(normalizeImportConflict),
+      warnings: [...new Set([...normalizedWarnings, ...qualityWarnings])],
+    }
+  }
 
   if (Array.isArray(rawPayload.nodePlans) && rawPayload.nodePlans.length > 0) {
     const nodePlans = rawPayload.nodePlans.map(normalizeImportNodePlan)
@@ -1245,6 +1673,14 @@ function normalizeImportPayload(
       anchorTopicId: request.anchorTopicId,
       classification,
       templateSummary,
+      bundle: null,
+      sources: [],
+      semanticNodes: [],
+      semanticEdges: [],
+      views: [],
+      viewProjections: {},
+      defaultViewId: null,
+      activeViewId: null,
       nodePlans,
       previewNodes: compiled.previewNodes,
       operations: compiled.operations,
@@ -1270,6 +1706,14 @@ function normalizeImportPayload(
     anchorTopicId: request.anchorTopicId,
     classification,
     templateSummary,
+    bundle: null,
+    sources: [],
+    semanticNodes: [],
+    semanticEdges: [],
+    views: [],
+    viewProjections: {},
+    defaultViewId: null,
+    activeViewId: null,
     nodePlans,
     previewNodes,
     operations: (rawPayload.operations ?? []).map((operation) =>

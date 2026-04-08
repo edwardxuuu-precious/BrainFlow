@@ -364,6 +364,108 @@ describe('createCodexBridge', () => {
     )
   })
 
+  it('normalizes layer-only import payloads and compiles local projections', async () => {
+    const execute = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        summary: 'Layer preview ready',
+        classification: {
+          archetype: 'mixed',
+          confidence: 0.81,
+          rationale: 'Semantic layer fixture.',
+          secondaryArchetype: null,
+        },
+        templateSummary: {
+          archetype: 'mixed',
+          visibleSlots: ['themes'],
+          foldedSlots: ['summary'],
+        },
+        bundle: {
+          id: 'bundle_layered',
+          title: 'GTM import',
+          createdAt: 1,
+          anchorTopicId: 'root',
+          sources: [
+            {
+              id: 'source_1',
+              type: 'file',
+              title: 'GTM_main',
+              raw_content: '# GTM',
+              metadata: {
+                segments: [
+                  {
+                    kind: 'heading',
+                    text: 'GTM_main',
+                    lineStart: 1,
+                    lineEnd: 1,
+                    pathTitles: ['GTM_main'],
+                  },
+                ],
+              },
+            },
+          ],
+          semanticNodes: [
+            {
+              id: 'question_root',
+              type: 'question',
+              title: '第一波应该先打谁',
+              summary: '中心问题',
+              detail: '',
+              source_refs: [],
+              confidence: 'high',
+              task: null,
+            },
+            {
+              id: 'criterion_1',
+              type: 'criterion',
+              title: '判断标准',
+              summary: '是否有明确预算',
+              detail: '',
+              source_refs: [],
+              confidence: 'medium',
+              task: null,
+            },
+          ],
+          semanticEdges: [
+            {
+              from: 'criterion_1',
+              to: 'question_root',
+              type: 'belongs_to',
+              label: null,
+              source_refs: [],
+              confidence: 'high',
+            },
+          ],
+          views: [],
+          viewProjections: {},
+        },
+        conflicts: [],
+        warnings: [],
+      }),
+    )
+
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockResolvedValue(readyStatus),
+        execute,
+        executeMessage: vi.fn(),
+      },
+      promptStore: createPromptStore(),
+    })
+
+    const result = await bridge.previewTextImport(baseImportRequest)
+
+    expect(result.bundle).not.toBeNull()
+    expect(result.views.map((view) => view.type)).toEqual([
+      'archive_view',
+      'thinking_view',
+      'execution_view',
+    ])
+    expect(result.previewNodes[0]).toMatchObject({
+      title: '第一波应该先打谁',
+    })
+    expect(result.viewProjections[result.activeViewId as string]?.previewNodes.length).toBeGreaterThan(0)
+  })
+
   it('strips formatting fields from imported structural operations', async () => {
     const execute = vi.fn().mockResolvedValue(
       JSON.stringify({

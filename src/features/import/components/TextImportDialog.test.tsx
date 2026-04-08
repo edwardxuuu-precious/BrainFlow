@@ -24,6 +24,18 @@ const previewTree = draftTree
 function createPreview(
   overrides: Partial<TextImportResponse> = {},
 ): TextImportResponse {
+  const {
+    bundle = null,
+    sources = [],
+    semanticNodes = [],
+    semanticEdges = [],
+    views = [],
+    viewProjections = {},
+    defaultViewId = null,
+    activeViewId = null,
+    ...rest
+  } = overrides
+
   return {
     summary: 'Preview ready for review.',
     baseDocumentUpdatedAt: 1,
@@ -108,6 +120,14 @@ function createPreview(
       { id: 'op_1', type: 'create_child', parent: 'topic:root', title: 'Import: GTM main', risk: 'low', resultRef: 'preview_root' },
       { id: 'op_2', type: 'update_topic', target: 'topic:topic_1', title: 'Step 1', risk: 'high' },
     ],
+    bundle,
+    sources,
+    semanticNodes,
+    semanticEdges,
+    views,
+    viewProjections,
+    defaultViewId,
+    activeViewId,
     mergeSuggestions: [
       {
         id: 'merge_1',
@@ -120,7 +140,7 @@ function createPreview(
       },
     ],
     warnings: ['One warning remains.'],
-    ...overrides,
+    ...rest,
   }
 }
 

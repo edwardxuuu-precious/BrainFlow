@@ -146,6 +146,8 @@ describe('documentService', () => {
           rightSidebarOpen: true,
         },
         hierarchyCollapsedTopicIds: [legacy.rootTopicId],
+        activeImportBundleId: null,
+        activeKnowledgeViewId: null,
       },
     })
 
@@ -222,6 +224,8 @@ describe('documentService', () => {
           rightSidebarOpen: true,
         },
         hierarchyCollapsedTopicIds: [selectedTopicId],
+        activeImportBundleId: null,
+        activeKnowledgeViewId: null,
       },
     })
 
@@ -236,6 +240,8 @@ describe('documentService', () => {
         rightSidebarOpen: true,
       },
       hierarchyCollapsedTopicIds: [],
+      activeImportBundleId: null,
+      activeKnowledgeViewId: null,
     })
   })
 
@@ -253,6 +259,8 @@ describe('documentService', () => {
           rightSidebarOpen: false,
         },
         hierarchyCollapsedTopicIds: [selectedTopicId],
+        activeImportBundleId: null,
+        activeKnowledgeViewId: null,
       },
     })
 
@@ -267,6 +275,8 @@ describe('documentService', () => {
         rightSidebarOpen: false,
       },
       hierarchyCollapsedTopicIds: [],
+      activeImportBundleId: null,
+      activeKnowledgeViewId: null,
     })
   })
 

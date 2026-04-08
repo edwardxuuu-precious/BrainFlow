@@ -1,15 +1,48 @@
 import { describe, expect, it } from 'vitest'
+import type { TextImportResponse } from '../../../shared/ai-contract'
 import { buildAiContext } from '../ai/ai-context'
 import { createMindMapDocument } from '../documents/document-factory'
-import {
-  createLocalTextImportBatchPreview,
-  createLocalTextImportPreview,
-} from './local-text-import-core'
 import {
   applyTextImportSemanticAdjudication,
   createTextImportSemanticDraft,
 } from './text-import-semantic-merge'
-import { preprocessTextToImportHints } from './text-import-preprocess'
+
+function createBaseResponse(overrides: Partial<TextImportResponse> = {}): TextImportResponse {
+  return {
+    summary: 'Semantic merge preview',
+    baseDocumentUpdatedAt: 1,
+    anchorTopicId: 'root',
+    classification: {
+      archetype: 'mixed',
+      confidence: 0.6,
+      rationale: 'Fixture response.',
+      secondaryArchetype: null,
+    },
+    templateSummary: {
+      archetype: 'mixed',
+      visibleSlots: ['themes'],
+      foldedSlots: ['summary'],
+    },
+    bundle: null,
+    sources: [],
+    semanticNodes: [],
+    semanticEdges: [],
+    views: [],
+    viewProjections: {},
+    defaultViewId: null,
+    activeViewId: null,
+    nodePlans: [],
+    previewNodes: [],
+    operations: [],
+    conflicts: [],
+    mergeSuggestions: [],
+    crossFileMergeSuggestions: [],
+    semanticMerge: null,
+    batch: null,
+    warnings: [],
+    ...overrides,
+  }
+}
 
 describe('text-import-semantic-merge', () => {
   it('turns a high-confidence existing-topic adjudication into a note+title update', () => {
@@ -17,27 +50,52 @@ describe('text-import-semantic-merge', () => {
     const targetId = document.topics[document.rootTopicId].childIds[0]
     document.topics[targetId].title = 'Goals'
 
-    const rawText = '# Goals\n\nImported detail'
     const request = {
       documentId: document.id,
       documentTitle: document.title,
       baseDocumentUpdatedAt: document.updatedAt,
       context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
       anchorTopicId: document.rootTopicId,
-      sourceName: 'GTM_main.md',
+      sourceName: 'import_goals.md',
       sourceType: 'file' as const,
-      intent: 'preserve_structure' as const,
-      rawText,
-      preprocessedHints: preprocessTextToImportHints(rawText),
+      intent: 'distill_structure' as const,
+      rawText: '# Goals',
+      preprocessedHints: [],
       semanticHints: [],
     }
 
-    const built = createLocalTextImportPreview(request)
-    const draft = createTextImportSemanticDraft(request, built.response)
+    const response = createBaseResponse({
+      baseDocumentUpdatedAt: document.updatedAt,
+      anchorTopicId: document.rootTopicId,
+      previewNodes: [
+        {
+          id: 'preview_root',
+          parentId: null,
+          order: 0,
+          title: 'Import',
+          note: null,
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+        {
+          id: 'preview_goals',
+          parentId: 'preview_root',
+          order: 0,
+          title: 'Goals',
+          note: 'Imported detail',
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+      ],
+    })
+
+    const draft = createTextImportSemanticDraft(request, response)
     const bundle = draft.candidateBundles.find((candidate) => candidate.scope === 'existing_topic')
     expect(bundle).toBeDefined()
 
-    const result = applyTextImportSemanticAdjudication(built.response, draft, {
+    const result = applyTextImportSemanticAdjudication(response, draft, {
       decisions: [
         {
           candidateId: bundle!.candidate.candidateId,
@@ -73,65 +131,124 @@ describe('text-import-semantic-merge', () => {
 
   it('canonicalizes high-confidence cross-file matches into a single apply node', () => {
     const document = createMindMapDocument('Import doc')
-    const built = createLocalTextImportBatchPreview({
-      documentId: document.id,
-      documentTitle: document.title,
-      baseDocumentUpdatedAt: document.updatedAt,
-      context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
-      anchorTopicId: document.rootTopicId,
-      batchTitle: 'Import batch: GTM',
-      files: [
-        {
-          sourceName: 'GTM_step1.md',
-          sourceType: 'file',
-          intent: 'preserve_structure' as const,
-          rawText: '# Step 1\n\n## Positioning\n\nText A',
-          preprocessedHints: preprocessTextToImportHints('# Step 1\n\n## Positioning\n\nText A'),
-          semanticHints: [],
-        },
-        {
-          sourceName: 'GTM_step1-1.md',
-          sourceType: 'file',
-          intent: 'preserve_structure' as const,
-          rawText: '# Step 1-1\n\n## Positioning\n\nText B',
-          preprocessedHints: preprocessTextToImportHints('# Step 1-1\n\n## Positioning\n\nText B'),
-          semanticHints: [],
-        },
-      ],
-    })
-
     const request = {
       documentId: document.id,
       documentTitle: document.title,
       baseDocumentUpdatedAt: document.updatedAt,
       context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
       anchorTopicId: document.rootTopicId,
-      batchTitle: 'Import batch: GTM',
+      batchTitle: 'Import batch: Strategy',
       files: [
         {
-          sourceName: 'GTM_step1.md',
+          sourceName: 'strategy_alpha.md',
           sourceType: 'file' as const,
-          intent: 'preserve_structure' as const,
-          rawText: '# Step 1\n\n## Positioning\n\nText A',
-          preprocessedHints: preprocessTextToImportHints('# Step 1\n\n## Positioning\n\nText A'),
+          intent: 'distill_structure' as const,
+          rawText: '# Alpha',
+          preprocessedHints: [],
           semanticHints: [],
         },
         {
-          sourceName: 'GTM_step1-1.md',
+          sourceName: 'strategy_beta.md',
           sourceType: 'file' as const,
-          intent: 'preserve_structure' as const,
-          rawText: '# Step 1-1\n\n## Positioning\n\nText B',
-          preprocessedHints: preprocessTextToImportHints('# Step 1-1\n\n## Positioning\n\nText B'),
+          intent: 'distill_structure' as const,
+          rawText: '# Beta',
+          preprocessedHints: [],
           semanticHints: [],
         },
       ],
     }
 
-    const draft = createTextImportSemanticDraft(request, built.response)
+    const response = createBaseResponse({
+      baseDocumentUpdatedAt: document.updatedAt,
+      anchorTopicId: document.rootTopicId,
+      previewNodes: [
+        {
+          id: 'batch_root',
+          parentId: null,
+          order: 0,
+          title: 'Import batch: Strategy',
+          note: null,
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+        {
+          id: 'file_alpha',
+          parentId: 'batch_root',
+          order: 0,
+          title: 'Alpha',
+          note: null,
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+        {
+          id: 'alpha_positioning',
+          parentId: 'file_alpha',
+          order: 0,
+          title: 'Positioning',
+          note: 'Text A',
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+        {
+          id: 'file_beta',
+          parentId: 'batch_root',
+          order: 1,
+          title: 'Beta',
+          note: null,
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+        {
+          id: 'beta_positioning',
+          parentId: 'file_beta',
+          order: 0,
+          title: 'Positioning',
+          note: 'Text B',
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+      ],
+      batch: {
+        jobType: 'batch',
+        fileCount: 2,
+        completedFileCount: 2,
+        currentFileName: null,
+        batchContainerTitle: 'Import batch: Strategy',
+        files: [
+          {
+            sourceName: 'strategy_alpha.md',
+            sourceType: 'file',
+            previewNodeId: 'file_alpha',
+            nodeCount: 2,
+            mergeSuggestionCount: 0,
+            warningCount: 0,
+            classification: null,
+            templateSummary: null,
+          },
+          {
+            sourceName: 'strategy_beta.md',
+            sourceType: 'file',
+            previewNodeId: 'file_beta',
+            nodeCount: 2,
+            mergeSuggestionCount: 0,
+            warningCount: 0,
+            classification: null,
+            templateSummary: null,
+          },
+        ],
+      },
+    })
+
+    const draft = createTextImportSemanticDraft(request, response)
     const crossFileBundle = draft.candidateBundles.find((candidate) => candidate.scope === 'cross_file')
     expect(crossFileBundle).toBeDefined()
 
-    const result = applyTextImportSemanticAdjudication(built.response, draft, {
+    const result = applyTextImportSemanticAdjudication(response, draft, {
       decisions: [
         {
           candidateId: crossFileBundle!.candidate.candidateId,

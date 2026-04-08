@@ -83,10 +83,114 @@ export type AiCanvasTarget = `topic:${string}` | `ref:${string}`
 
 export type TextImportNodePriority = 'primary' | 'secondary' | 'supporting'
 
+export type KnowledgeSemanticNodeType =
+  | 'topic'
+  | 'criterion'
+  | 'insight'
+  | 'question'
+  | 'evidence'
+  | 'decision'
+  | 'goal'
+  | 'project'
+  | 'task'
+  | 'review'
+
+export type KnowledgeSemanticEdgeType =
+  | 'belongs_to'
+  | 'supports'
+  | 'contradicts'
+  | 'leads_to'
+  | 'depends_on'
+  | 'derived_from'
+
+export type KnowledgeViewType = 'archive_view' | 'thinking_view' | 'execution_view'
+
+export type KnowledgeViewLayoutType = 'mindmap' | 'archive' | 'execution'
+
+export type KnowledgeTaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done'
+
+export type KnowledgeTaskPriority = 'low' | 'medium' | 'high'
+
 export interface TextImportPresentationHints {
   collapsedByDefault?: boolean
   groupKey?: string | null
   priority?: TextImportNodePriority | null
+}
+
+export interface KnowledgeSource {
+  id: string
+  type: TextImportSourceType
+  title: string
+  raw_content: string
+  metadata: Record<string, unknown>
+}
+
+export interface KnowledgeSourceRef {
+  sourceId: string
+  lineStart: number
+  lineEnd: number
+  pathTitles: string[]
+}
+
+export interface KnowledgeSemanticTaskFields {
+  status: KnowledgeTaskStatus
+  owner: string | null
+  due_date: string | null
+  priority: KnowledgeTaskPriority | null
+  depends_on: string[]
+  source_refs: KnowledgeSourceRef[]
+  definition_of_done: string | null
+}
+
+export interface KnowledgeSemanticNode {
+  id: string
+  type: KnowledgeSemanticNodeType
+  title: string
+  summary: string
+  detail: string
+  source_refs: KnowledgeSourceRef[]
+  confidence: TextImportConfidence
+  task: KnowledgeSemanticTaskFields | null
+}
+
+export interface KnowledgeSemanticEdge {
+  from: string
+  to: string
+  type: KnowledgeSemanticEdgeType
+  label: string | null
+  source_refs: KnowledgeSourceRef[]
+  confidence: TextImportConfidence
+}
+
+export interface KnowledgeView {
+  id: string
+  type: KnowledgeViewType
+  visible_node_ids: string[]
+  layout_type: KnowledgeViewLayoutType
+}
+
+export interface KnowledgeViewProjection {
+  viewId: string
+  viewType: KnowledgeViewType
+  summary: string
+  nodePlans: TextImportNodePlan[]
+  previewNodes: TextImportPreviewItem[]
+  operations: AiImportOperation[]
+}
+
+export interface KnowledgeImportBundle {
+  id: string
+  title: string
+  createdAt: number
+  anchorTopicId: string | null
+  defaultViewId: string
+  activeViewId: string
+  mountedRootTopicId: string | null
+  sources: KnowledgeSource[]
+  semanticNodes: KnowledgeSemanticNode[]
+  semanticEdges: KnowledgeSemanticEdge[]
+  views: KnowledgeView[]
+  viewProjections: Record<string, KnowledgeViewProjection>
 }
 
 export type AiCanvasOperation =
@@ -365,6 +469,7 @@ export interface TextImportNodePlan {
   title: string
   note: string | null
   semanticRole: TextImportSemanticRole
+  semanticType?: KnowledgeSemanticNodeType | null
   confidence: TextImportConfidence
   sourceAnchors: TextImportSourceAnchor[]
   groupKey?: string | null
@@ -436,6 +541,7 @@ export interface TextImportPreviewItem {
   matchedTopicId: string | null
   reason: string | null
   semanticRole?: TextImportSemanticRole
+  semanticType?: KnowledgeSemanticNodeType | null
   confidence?: TextImportConfidence
   sourceAnchors?: TextImportSourceAnchor[]
   templateSlot?: TextImportTemplateSlot | null
@@ -550,6 +656,14 @@ export interface TextImportResponse {
   anchorTopicId: string | null
   classification: TextImportClassification
   templateSummary: TextImportTemplateSummary
+  bundle: KnowledgeImportBundle | null
+  sources: KnowledgeSource[]
+  semanticNodes: KnowledgeSemanticNode[]
+  semanticEdges: KnowledgeSemanticEdge[]
+  views: KnowledgeView[]
+  viewProjections: Record<string, KnowledgeViewProjection>
+  defaultViewId: string | null
+  activeViewId: string | null
   nodePlans: TextImportNodePlan[]
   previewNodes: TextImportPreviewItem[]
   operations: AiImportOperation[]

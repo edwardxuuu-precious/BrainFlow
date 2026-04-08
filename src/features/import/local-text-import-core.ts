@@ -1,8 +1,3 @@
-import { toString } from 'mdast-util-to-string'
-import type { Content, ListItem, Root } from 'mdast'
-import remarkGfm from 'remark-gfm'
-import remarkParse from 'remark-parse'
-import { unified } from 'unified'
 import type {
   AiCanvasTarget,
   AiDocumentTopicContext,
@@ -10,36 +5,24 @@ import type {
   AiSelectionContext,
   TextImportArchetype,
   TextImportCrossFileMergeSuggestion,
-  TextImportClassification,
   TextImportMergeSuggestion,
   TextImportPreviewItem,
   TextImportHintKind,
   TextImportPreprocessHint,
-  TextImportPreviewNode,
   TextImportRequest,
   TextImportResponse,
   TextImportRunStage,
   TextImportSourceType,
-  TextImportNodePlan,
-  TextImportSemanticRole,
-  TextImportTemplateSummary,
 } from '../../../shared/ai-contract'
 import {
   buildTextImportQualityWarnings,
-  compileTextImportPreviewNodesToOperations,
-  compileTextImportNodePlans,
-  deriveTextImportNodePlansFromPreviewNodes,
-  inferTextImportSemanticHintKind,
-  detectTextImportContentProfile,
-  planTextImportFromSemanticHints,
-  resolveTextImportNodeBudget,
 } from '../../../shared/text-import-semantics'
+import { buildImportBundlePreview } from '../../../shared/text-import-layering'
 import {
   countTextImportHints,
   deriveTextImportTitle,
   preprocessTextToImportHints,
 } from './text-import-preprocess'
-import { buildTextImportPreviewTree } from './text-import-preview-tree'
 
 export type SemanticMergeStage =
   | 'idle'
@@ -237,75 +220,6 @@ function createTopicFingerprint(
     metadata: topic.metadata,
     style: topic.style,
   })
-}
-
-function createNodeFactory(prefix: string) {
-  let counter = 0
-  return (
-    title: string,
-    parentId: string | null,
-    sourceName: string,
-    pathTitles: string[],
-  ): LocalImportNode => ({
-    id: `${prefix}_${counter += 1}`,
-    parentId,
-    title: title.trim() || 'Untitled',
-    noteParts: [],
-    children: [],
-    sourceName,
-    pathTitles,
-    matchedTopicId: null,
-    relation: 'new',
-    reason: null,
-  })
-}
-
-function appendNote(target: LocalImportNode, value: string): void {
-  const normalized = value.trim()
-  if (!normalized) {
-    return
-  }
-  target.noteParts.push(normalized)
-}
-
-function renderCodeBlock(value: { lang?: string | null; value?: string | null }): string {
-  const language = value.lang?.trim() ?? ''
-  const content = value.value?.trimEnd() ?? ''
-  return ['```' + language, content, '```'].join('\n').trim()
-}
-
-function renderTable(node: Content): string {
-  const rows = ((node as { children?: Array<{ children?: Array<{ children?: Content[] }> }> }).children ??
-    []) as Array<{ children?: Array<{ children?: Content[] }> }>
-
-  return rows
-    .map((row) =>
-      `| ${((row.children ?? []) as Array<{ children?: Content[] }>)
-        .map((cell) => toString({ type: 'root', children: cell.children ?? [] } as Root).trim())
-        .join(' | ')} |`,
-    )
-    .join('\n')
-    .trim()
-}
-
-function normalizeParagraphText(node: Content | undefined): string {
-  if (!node) {
-    return ''
-  }
-  return toString(node).replace(/\s+\n/g, '\n').trim()
-}
-
-function splitFirstLine(value: string): { title: string; note: string } {
-  const normalized = value.replace(/\r\n?/g, '\n').trim()
-  if (!normalized) {
-    return { title: 'Untitled', note: '' }
-  }
-
-  const [firstLine, ...rest] = normalized.split('\n')
-  return {
-    title: firstLine.trim() || 'Untitled',
-    note: rest.join('\n').trim(),
-  }
 }
 
 function getNodeSummary(node: LocalImportNode): string {
@@ -574,158 +488,6 @@ function matchExistingTopics(
   return { suggestions, operations, warnings }
 }
 
-function createListItemNode(
-  item: ListItem,
-  parent: LocalImportNode,
-  createNode: ReturnType<typeof createNodeFactory>,
-  metrics: MutableMetrics,
-): LocalImportNode {
-  metrics.listItemCount += 1
-  const paragraphChild = item.children.find((child) => child.type === 'paragraph')
-  const paragraphText = normalizeParagraphText(paragraphChild)
-  const prefix = typeof item.checked === 'boolean' ? `[${item.checked ? 'x' : ' '}] ` : ''
-  const { title, note } = splitFirstLine(paragraphText)
-  const listNode = createNode(
-    `${prefix}${title}`,
-    parent.id,
-    parent.sourceName,
-    [...parent.pathTitles, title],
-  )
-  parent.children.push(listNode)
-
-  if (note) {
-    appendNote(listNode, note)
-  }
-
-  const remainingChildren = item.children.filter((child) => child !== paragraphChild)
-  for (const child of remainingChildren) {
-    processMarkdownNode(child, listNode, [], createNode, metrics)
-  }
-
-  return listNode
-}
-
-function processList(
-  node: Content,
-  parent: LocalImportNode,
-  createNode: ReturnType<typeof createNodeFactory>,
-  metrics: MutableMetrics,
-): void {
-  const items = ((node as { children?: ListItem[] }).children ?? []) as ListItem[]
-  for (const item of items) {
-    createListItemNode(item, parent, createNode, metrics)
-  }
-}
-
-function processMarkdownNode(
-  node: Content,
-  activeContainer: LocalImportNode,
-  headingStack: Array<{ depth: number; node: LocalImportNode }>,
-  createNode: ReturnType<typeof createNodeFactory>,
-  metrics: MutableMetrics,
-): void {
-  switch (node.type) {
-    case 'heading': {
-      metrics.headingCount += 1
-      const depth = (node as { depth?: number }).depth ?? 1
-      const title = normalizeParagraphText(node) || `Section ${metrics.headingCount}`
-      while (headingStack.length > 0 && headingStack[headingStack.length - 1].depth >= depth) {
-        headingStack.pop()
-      }
-
-      const parent = headingStack[headingStack.length - 1]?.node ?? activeContainer
-      const headingNode = createNode(title, parent.id, parent.sourceName, [...parent.pathTitles, title])
-      parent.children.push(headingNode)
-      headingStack.push({ depth, node: headingNode })
-      return
-    }
-
-    case 'paragraph': {
-      appendNote(headingStack[headingStack.length - 1]?.node ?? activeContainer, normalizeParagraphText(node))
-      return
-    }
-
-    case 'blockquote': {
-      const text = ((node as { children?: Content[] }).children ?? [])
-        .map((child) => normalizeParagraphText(child))
-        .filter(Boolean)
-        .join('\n\n')
-      appendNote(headingStack[headingStack.length - 1]?.node ?? activeContainer, text)
-      return
-    }
-
-    case 'code': {
-      metrics.codeBlockCount += 1
-      appendNote(
-        headingStack[headingStack.length - 1]?.node ?? activeContainer,
-        renderCodeBlock(node as { lang?: string | null; value?: string | null }),
-      )
-      return
-    }
-
-    case 'list': {
-      processList(node, headingStack[headingStack.length - 1]?.node ?? activeContainer, createNode, metrics)
-      return
-    }
-
-    case 'table': {
-      metrics.tableCount += 1
-      appendNote(headingStack[headingStack.length - 1]?.node ?? activeContainer, renderTable(node))
-      return
-    }
-
-    case 'html': {
-      appendNote(
-        headingStack[headingStack.length - 1]?.node ?? activeContainer,
-        (node as { value?: string }).value ?? '',
-      )
-      return
-    }
-
-    default: {
-      const text = normalizeParagraphText(node)
-      if (text) {
-        appendNote(headingStack[headingStack.length - 1]?.node ?? activeContainer, text)
-      }
-    }
-  }
-}
-
-function buildImportTree(
-  source: Pick<LocalTextImportSourceInput, 'sourceName' | 'sourceType' | 'rawText' | 'preprocessedHints'>,
-  rootTitle: string,
-  prefix: string,
-  metrics: MutableMetrics,
-): LocalImportNode {
-  const createNode = createNodeFactory(prefix)
-  const importRoot = createNode(rootTitle, null, source.sourceName, [rootTitle])
-  const parsed = unified().use(remarkParse).use(remarkGfm).parse(source.rawText) as Root
-  const headingStack: Array<{ depth: number; node: LocalImportNode }> = []
-
-  for (const child of parsed.children) {
-    processMarkdownNode(child, importRoot, headingStack, createNode, metrics)
-  }
-
-  if (importRoot.children.length === 0 && importRoot.noteParts.length === 0) {
-    appendNote(importRoot, source.rawText.trim())
-  }
-
-  if (importRoot.children.length === 0 && importRoot.noteParts.length > 0) {
-    const fallbackTitle = deriveTextImportTitle(source.sourceName, source.rawText)
-    const onlyNode = createNode(
-      fallbackTitle,
-      importRoot.id,
-      source.sourceName,
-      [...importRoot.pathTitles, fallbackTitle],
-    )
-    appendNote(onlyNode, importRoot.noteParts.join('\n\n'))
-    importRoot.noteParts = []
-    importRoot.children.push(onlyNode)
-  }
-
-  return importRoot
-}
-
 function resetSubtreePaths(node: LocalImportNode, parentPathTitles: string[]): void {
   node.pathTitles = [...parentPathTitles, node.title]
   for (const child of node.children) {
@@ -971,166 +733,6 @@ export function isMarkdownImportSourceFile(
   )
 }
 
-function mapSemanticRoleFromText(title: string, note: string, hasChildren: boolean): TextImportSemanticRole {
-  if (hasChildren) {
-    return 'section'
-  }
-
-  const classified = inferTextImportSemanticHintKind([title, note].filter(Boolean).join('\n'), 'paragraph')
-  if (classified.kind === 'owner') {
-    return 'evidence'
-  }
-  if (classified.kind === 'evidence' && note.trim()) {
-    return 'summary'
-  }
-  return classified.kind as Exclude<TextImportSemanticRole, 'section' | 'summary'>
-}
-
-function buildNodePlansFromImportTree(root: LocalImportNode): TextImportNodePlan[] {
-  const plans: TextImportNodePlan[] = [
-    {
-      id: root.id,
-      parentId: null,
-      order: 0,
-      title: root.title,
-      note: root.noteParts.join('\n\n').trim() || null,
-      semanticRole: 'section',
-      confidence: 'high',
-      sourceAnchors: [],
-      groupKey: 'root',
-      priority: 'primary',
-      collapsedByDefault: false,
-      templateSlot: null,
-    },
-  ]
-
-  const visit = (node: LocalImportNode): void => {
-    node.children.forEach((child, index) => {
-      const note = child.noteParts.join('\n\n').trim()
-      plans.push({
-        id: child.id,
-        parentId: child.parentId,
-        order: index,
-        title: child.title,
-        note: note || null,
-        semanticRole: mapSemanticRoleFromText(child.title, note, child.children.length > 0),
-        confidence: note || child.children.length > 0 ? 'medium' : 'low',
-        sourceAnchors: [],
-        priority: child.children.length > 0 ? 'secondary' : undefined,
-        groupKey: child.children.length > 0 ? 'sections' : undefined,
-        collapsedByDefault: false,
-        templateSlot: null,
-      })
-      visit(child)
-    })
-  }
-
-  visit(root)
-  return plans
-}
-
-function buildLocalTextImportNodePlans(
-  request: TextImportRequest,
-  sourceTitle: string,
-  metrics: MutableMetrics,
-): {
-  nodePlans: TextImportNodePlan[]
-  profile: TextImportRequest['contentProfile']
-  nodeBudget: TextImportRequest['nodeBudget']
-  classification: TextImportClassification
-  templateSummary: TextImportTemplateSummary
-} {
-  const profile = detectTextImportContentProfile({
-    sourceName: request.sourceName,
-    preprocessedHints: request.preprocessedHints,
-    semanticHints: request.semanticHints,
-    explicitProfile: request.contentProfile,
-    explicitArchetype: request.archetype,
-    archetypeMode: request.archetypeMode,
-  })
-  const nodeBudget = resolveTextImportNodeBudget(request.intent, profile, request.nodeBudget)
-  const plannedDistillation = planTextImportFromSemanticHints({
-    rootTitle: `Import: ${sourceTitle}`,
-    intent: request.intent,
-    sourceName: request.sourceName,
-    preprocessedHints: request.preprocessedHints,
-    profile,
-    archetype: request.archetype,
-    archetypeMode: request.archetypeMode,
-    nodeBudget,
-    semanticHints: request.semanticHints,
-  })
-
-  if (request.intent === 'distill_structure') {
-    return {
-      nodePlans: plannedDistillation.nodePlans,
-      profile,
-      nodeBudget,
-      classification: plannedDistillation.classification,
-      templateSummary: plannedDistillation.templateSummary,
-    }
-  }
-
-  const importRoot = buildImportTree(
-    {
-      sourceName: request.sourceName,
-      sourceType: request.sourceType,
-      rawText: request.rawText,
-      preprocessedHints: request.preprocessedHints,
-    },
-    `Import: ${sourceTitle}`,
-    'import_node',
-    metrics,
-  )
-
-  return {
-    nodePlans: buildNodePlansFromImportTree(importRoot),
-    profile,
-    nodeBudget,
-    classification: plannedDistillation.classification,
-    templateSummary: plannedDistillation.templateSummary,
-  }
-}
-
-function clonePreviewTreeWithPrefix(
-  node: TextImportPreviewNode,
-  prefix: string,
-  parentId: string | null,
-): TextImportPreviewNode {
-  const clonedId = `${prefix}${node.id}`
-  return {
-    ...node,
-    id: clonedId,
-    parentId,
-    sourceAnchors: node.sourceAnchors?.map((anchor) => ({ ...anchor })),
-    children: node.children.map((child) => clonePreviewTreeWithPrefix(child, prefix, clonedId)),
-  }
-}
-
-function flattenPreviewTree(root: TextImportPreviewNode): TextImportPreviewItem[] {
-  const items: TextImportPreviewItem[] = []
-  const visit = (node: TextImportPreviewNode) => {
-    items.push({
-      id: node.id,
-      parentId: node.parentId,
-      order: node.order,
-      title: node.title,
-      note: node.note,
-      relation: node.relation,
-      matchedTopicId: node.matchedTopicId,
-      reason: node.reason,
-      semanticRole: node.semanticRole,
-      confidence: node.confidence,
-      sourceAnchors: node.sourceAnchors?.map((anchor) => ({ ...anchor })),
-      templateSlot: node.templateSlot ?? null,
-    })
-    node.children.forEach(visit)
-  }
-
-  visit(root)
-  return items
-}
-
 export function createLocalTextImportPreview(
   request: TextImportRequest,
   options?: {
@@ -1140,11 +742,17 @@ export function createLocalTextImportPreview(
   },
 ): LocalTextImportBuildResult {
   const now = options?.now ?? Date.now
+  const effectiveHints =
+    request.preprocessedHints.length > 0
+      ? request.preprocessedHints
+      : preprocessTextToImportHints(request.rawText)
   const metrics: MutableMetrics = {
-    headingCount: 0,
-    listItemCount: 0,
-    tableCount: 0,
-    codeBlockCount: 0,
+    headingCount: effectiveHints.filter((hint) => hint.kind === 'heading').length,
+    listItemCount: effectiveHints.filter((hint) =>
+      hint.kind === 'bullet_list' || hint.kind === 'ordered_list' || hint.kind === 'task_list',
+    ).length,
+    tableCount: effectiveHints.filter((hint) => hint.kind === 'table').length,
+    codeBlockCount: effectiveHints.filter((hint) => hint.kind === 'code_block').length,
   }
 
   emitProgress(options?.onProgress, {
@@ -1158,7 +766,27 @@ export function createLocalTextImportPreview(
   })
   const parseTreeStartedAt = now()
   const sourceTitle = deriveTextImportTitle(request.sourceName, request.rawText)
-  const planned = buildLocalTextImportNodePlans(request, sourceTitle, metrics)
+  const layered = buildImportBundlePreview({
+    bundleId: `bundle_${now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    bundleTitle: `Import: ${sourceTitle}`,
+    anchorTopicId: request.anchorTopicId,
+    createdAt: now(),
+    sources: [
+      {
+        sourceName: request.sourceName,
+        sourceType: request.sourceType,
+        rawText: request.rawText,
+        preprocessedHints: effectiveHints,
+        semanticHints: request.semanticHints,
+      },
+    ],
+    requestIntent: request.intent,
+    requestedArchetype: request.archetype,
+    requestedArchetypeMode: request.archetypeMode,
+    requestedContentProfile: request.contentProfile,
+    requestedNodeBudget: request.nodeBudget,
+    fallbackInsertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+  })
   const parseTreeMs = now() - parseTreeStartedAt
 
   emitProgress(options?.onProgress, {
@@ -1175,10 +803,8 @@ export function createLocalTextImportPreview(
     semanticMergeStage: 'candidate_generation',
   })
   const candidateGenStartedAt = now()
-  const compiled = compileTextImportNodePlans({
-    insertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
-    nodePlans: planned.nodePlans,
-  })
+  const previewNodes = layered.previewNodes
+  const operations = layered.operations
   const candidateGenMs = now() - candidateGenStartedAt
 
   emitProgress(options?.onProgress, {
@@ -1192,11 +818,9 @@ export function createLocalTextImportPreview(
     semanticMergeStage: 'adjudicating',
   })
   const semanticMergeStartedAt = now()
-  const previewNodes = compiled.previewNodes
-  const operations = compiled.operations
   const qualityWarnings = buildTextImportQualityWarnings({
     previewNodes,
-    nodeBudget: planned.nodeBudget,
+    nodeBudget: request.nodeBudget,
   })
   const semanticMergeMs = now() - semanticMergeStartedAt
 
@@ -1213,19 +837,28 @@ export function createLocalTextImportPreview(
   const buildPreviewStartedAt = now()
   const summary =
     request.intent === 'distill_structure'
-      ? `Built a distilled ${planned.classification.archetype} import branch with ${previewNodes.length} nodes.`
-      : `Built a structured import branch with ${previewNodes.length} nodes while classifying the content as ${planned.classification.archetype}.`
+      ? `Built a distilled ${layered.classification.archetype} import bundle with ${previewNodes.length} thinking-view nodes.`
+      : `Built a three-layer import bundle with ${previewNodes.length} thinking-view nodes while classifying the content as ${layered.classification.archetype}.`
   const response: TextImportResponse = {
     summary,
     baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
     anchorTopicId: request.anchorTopicId,
-    classification: planned.classification,
-    templateSummary: planned.templateSummary,
-    nodePlans: planned.nodePlans,
+    classification: layered.classification,
+    templateSummary: layered.templateSummary,
+    bundle: layered.bundle,
+    sources: layered.sources,
+    semanticNodes: layered.semanticNodes,
+    semanticEdges: layered.semanticEdges,
+    views: layered.views,
+    viewProjections: layered.viewProjections,
+    defaultViewId: layered.defaultViewId,
+    activeViewId: layered.activeViewId,
+    nodePlans: layered.nodePlans,
     previewNodes,
     operations,
     conflicts: [],
     mergeSuggestions: [],
+    crossFileMergeSuggestions: [],
     semanticMerge: {
       candidateCount: 0,
       adjudicatedCount: 0,
@@ -1249,8 +882,8 @@ export function createLocalTextImportPreview(
           nodeCount: previewNodes.length,
           mergeSuggestionCount: 0,
           warningCount: qualityWarnings.length,
-          classification: planned.classification,
-          templateSummary: planned.templateSummary,
+          classification: layered.classification,
+          templateSummary: layered.templateSummary,
         },
       ],
     },
@@ -1265,12 +898,7 @@ export function createLocalTextImportPreview(
       tableCount: metrics.tableCount,
       codeBlockCount: metrics.codeBlockCount,
       preprocessHintCount:
-        options?.preprocessHintCount ??
-        countTextImportHints(
-          request.preprocessedHints.length > 0
-            ? request.preprocessedHints
-            : preprocessTextToImportHints(request.rawText),
-        ),
+        options?.preprocessHintCount ?? countTextImportHints(effectiveHints),
       parseTreeMs,
       matchExistingMs: candidateGenMs + semanticMergeMs,
       candidateGenMs,
@@ -1294,20 +922,6 @@ export function createLocalTextImportBatchPreview(
   const now = options?.now ?? Date.now
   const files = sortTextImportBatchSources(request.files)
   const batchTitle = buildTextImportBatchTitle(files, request.batchTitle)
-  const batchRoot: TextImportPreviewNode = {
-    id: 'batch_root_1',
-    parentId: null,
-    order: 0,
-    title: batchTitle,
-    note: null,
-    relation: 'new',
-    matchedTopicId: null,
-    reason: null,
-    semanticRole: 'section',
-    confidence: 'high',
-    sourceAnchors: [],
-    children: [],
-  }
   const perFile: LocalTextImportBatchFileMetrics[] = []
   const perFileResponses: Array<Pick<TextImportResponse, 'classification' | 'templateSummary'>> = []
   const allWarnings: string[] = []
@@ -1360,14 +974,6 @@ export function createLocalTextImportBatchPreview(
     parseTreeMs += built.metrics.parseTreeMs
     candidateGenMs += built.metrics.candidateGenMs
     semanticMergeMs += built.metrics.semanticMergeMs
-
-    const roots = buildTextImportPreviewTree(built.response.previewNodes)
-    const root = roots[0]
-    if (root) {
-      const cloned = clonePreviewTreeWithPrefix(root, `batch_${index + 1}__`, batchRoot.id)
-      cloned.order = index
-      batchRoot.children.push(cloned)
-    }
 
     emitProgress(options?.onProgress, {
       stage: 'semantic_candidate_generation',
@@ -1425,14 +1031,31 @@ export function createLocalTextImportBatchPreview(
     semanticMergeStage: 'adjudicating',
   })
   const semanticStartedAt = now()
-  const previewNodes = flattenPreviewTree(batchRoot)
-  const nodePlans = deriveTextImportNodePlansFromPreviewNodes({
-    previewNodes,
+  const layered = buildImportBundlePreview({
+    bundleId: `import_${now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    bundleTitle: batchTitle,
+    anchorTopicId: request.anchorTopicId,
+    createdAt: now(),
+    sources: files.map((file) => ({
+      sourceName: file.sourceName,
+      sourceType: file.sourceType,
+      rawText: file.rawText,
+      preprocessedHints: file.preprocessedHints,
+      semanticHints: file.semanticHints,
+    })),
+    requestIntent:
+      files.every((file) => file.intent === 'preserve_structure')
+        ? 'preserve_structure'
+        : 'distill_structure',
+    requestedArchetype: undefined,
+    requestedArchetypeMode: 'auto',
+    requestedContentProfile: undefined,
+    requestedNodeBudget: undefined,
+    fallbackInsertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
   })
-  const operations = compileTextImportPreviewNodesToOperations({
-    insertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
-    previewNodes,
-  })
+  const previewNodes = layered.previewNodes
+  const nodePlans = layered.nodePlans
+  const operations = layered.operations
   const qualityWarnings = buildTextImportQualityWarnings({
     previewNodes,
     nodeBudget: { maxRoots: Math.max(2, files.length + 1), maxDepth: 5, maxTotalNodes: Math.max(12, previewNodes.length) },
@@ -1452,20 +1075,19 @@ export function createLocalTextImportBatchPreview(
   const buildPreviewMs = 0
 
   const response: TextImportResponse = {
-    summary: `Built a distilled batch import tree with ${files.length} files and ${previewNodes.length} preview nodes.`,
+    summary: `Built a three-layer batch import bundle with ${files.length} files and ${previewNodes.length} thinking-view nodes.`,
     baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
     anchorTopicId: request.anchorTopicId,
-    classification: {
-      archetype: 'mixed',
-      confidence: 0.4,
-      rationale: 'Batch imports keep each file on its own archetype and use a mixed container at the top level.',
-      secondaryArchetype: null,
-    },
-    templateSummary: {
-      archetype: 'mixed',
-      visibleSlots: ['themes', 'actions'],
-      foldedSlots: ['summary', 'evidence', 'open_questions'],
-    },
+    classification: layered.classification,
+    templateSummary: layered.templateSummary,
+    bundle: layered.bundle,
+    sources: layered.sources,
+    semanticNodes: layered.semanticNodes,
+    semanticEdges: layered.semanticEdges,
+    views: layered.views,
+    viewProjections: layered.viewProjections,
+    defaultViewId: layered.defaultViewId,
+    activeViewId: layered.activeViewId,
     nodePlans,
     previewNodes,
     operations,
@@ -1490,7 +1112,7 @@ export function createLocalTextImportBatchPreview(
       files: perFile.map((fileMetric, index) => ({
         sourceName: fileMetric.sourceName,
         sourceType: fileMetric.sourceType,
-        previewNodeId: batchRoot.children[index]?.id ?? `missing_${index}`,
+        previewNodeId: `archive_${layered.sources[index]?.id ?? `source_${index + 1}`}`,
         nodeCount: fileMetric.totalNodeCount,
         mergeSuggestionCount: fileMetric.mergeSuggestionCount,
         warningCount: fileMetric.warningCount,

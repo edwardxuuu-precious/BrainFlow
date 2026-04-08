@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { KnowledgeViewType } from '../../../shared/ai-contract'
 import type {
   BranchSide,
   MindMapDocument,
@@ -9,6 +10,7 @@ import type {
   TopicSticker,
   TopicStylePatch,
 } from '../documents/types'
+import { switchKnowledgeView, syncActiveKnowledgeViewProjection } from '../import/knowledge-import'
 import {
   addChild,
   addSibling,
@@ -89,6 +91,7 @@ interface EditorState {
   setTopicOffset: (topicId: string, offsetX: number, offsetY: number) => void
   resetTopicOffset: (topicId: string) => void
   setViewport: (viewport: MindMapViewport) => void
+  switchKnowledgeView: (viewType: KnowledgeViewType) => void
   applyExternalDocument: (doc: MindMapDocument, activeTopicId?: string | null) => void
   undo: () => void
   redo: () => void
@@ -217,6 +220,7 @@ function commitContentDocument(
     expandActivePath?: boolean
   },
 ): EditorStateUpdate {
+  const syncedNextDocument = syncActiveKnowledgeViewProjection(nextDocument)
   const nextSelectedTopicIds = hasOwnOption(options, 'selectedTopicIds')
     ? (options?.selectedTopicIds ?? [])
     : state.selectedTopicIds
@@ -230,12 +234,12 @@ function commitContentDocument(
     ? (options?.editingSurface ?? null)
     : state.editingSurface
   const selection = normalizeSelection(
-    nextDocument,
+    syncedNextDocument,
     nextSelectedTopicIds,
     nextActiveTopicId,
   )
   const documentWithSelection = syncWorkspaceSelection(
-    nextDocument,
+    syncedNextDocument,
     selection.activeTopicId,
     options?.expandActivePath ?? false,
   )
@@ -942,6 +946,26 @@ export const useEditorStore = create<EditorState>((set) => ({
       }
 
       return commitWorkspaceDocument(state, nextDocument, {
+        expandActivePath: false,
+      })
+    }),
+
+  switchKnowledgeView: (viewType) =>
+    set((state) => {
+      if (!state.document) {
+        return {}
+      }
+
+      const switched = switchKnowledgeView(state.document, viewType)
+      if (!switched) {
+        return {}
+      }
+
+      return commitContentDocument(state, switched.document, {
+        activeTopicId: switched.selectedTopicId,
+        selectedTopicIds: switched.selectedTopicId ? [switched.selectedTopicId] : [],
+        editingTopicId: null,
+        editingSurface: null,
         expandActivePath: false,
       })
     }),

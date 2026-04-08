@@ -9,6 +9,7 @@ import {
   compileTextImportNodePlans,
   deriveTextImportNodePlansFromPreviewNodes,
 } from '../../../shared/text-import-semantics'
+import { syncTextImportResponseActiveProjection } from './knowledge-import'
 import { buildTextImportPreviewTree } from './text-import-preview-tree'
 
 export type TextImportPreviewEditAction =
@@ -133,13 +134,29 @@ export function recompileTextImportDraft(response: TextImportResponse): TextImpo
     previewNodes: compiled.previewNodes,
   })
 
-  return {
+  const nextResponse = {
     ...response,
     nodePlans,
     previewNodes: compiled.previewNodes,
     operations: compiled.operations,
     warnings: [...new Set([...(response.warnings ?? []), ...qualityWarnings])],
   }
+
+  if (!response.bundle || !response.activeViewId) {
+    return nextResponse
+  }
+
+  return syncTextImportResponseActiveProjection(nextResponse, {
+    viewId: response.activeViewId,
+    viewType:
+      response.views.find((view) => view.id === response.activeViewId)?.type ?? 'thinking_view',
+    summary:
+      response.viewProjections[response.activeViewId]?.summary ??
+      `Updated ${response.activeViewId} projection after draft recompilation.`,
+    nodePlans,
+    previewNodes: compiled.previewNodes,
+    operations: compiled.operations,
+  })
 }
 
 export function applyTextImportPreviewEdit(
@@ -224,7 +241,7 @@ export function applyTextImportPreviewEdit(
     ]),
   )
 
-  return {
+  const nextResponse = {
     ...response,
     nodePlans: nextNodePlans,
     previewNodes: compiled.previewNodes,
@@ -234,4 +251,20 @@ export function applyTextImportPreviewEdit(
     crossFileMergeSuggestions: [],
     warnings,
   }
+
+  if (!response.bundle || !response.activeViewId) {
+    return nextResponse
+  }
+
+  return syncTextImportResponseActiveProjection(nextResponse, {
+    viewId: response.activeViewId,
+    viewType:
+      response.views.find((view) => view.id === response.activeViewId)?.type ?? 'thinking_view',
+    summary:
+      response.viewProjections[response.activeViewId]?.summary ??
+      `Updated ${response.activeViewId} projection after manual draft edits.`,
+    nodePlans: nextNodePlans,
+    previewNodes: compiled.previewNodes,
+    operations: compiled.operations,
+  })
 }

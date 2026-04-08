@@ -645,14 +645,18 @@ describe('MapEditorPage', () => {
     )
 
     const inspectorHeading = await screen.findByRole('heading', { name: longTitle })
-    const canvasTitle = globalThis.document.querySelector(
+    await waitFor(() => {
+      expect(
+        globalThis.document.querySelector(`[data-node-id="${branchId}"] [data-title-tier]`),
+      ).toBeTruthy()
+    })
+    const resolvedCanvasTitle = globalThis.document.querySelector(
       `[data-node-id="${branchId}"] [data-title-tier]`,
-    ) as HTMLElement | null
+    ) as HTMLElement
 
-    expect(canvasTitle).toBeTruthy()
-    expect(canvasTitle).toHaveTextContent(longTitle)
-    expect(canvasTitle?.getAttribute('data-title-tier')).toBe('small')
-    expect(canvasTitle?.getAttribute('style')).toContain('--topic-title-font-size: 14px')
+    expect(resolvedCanvasTitle).toHaveTextContent(longTitle)
+    expect(resolvedCanvasTitle.getAttribute('data-title-tier')).toBe('small')
+    expect(resolvedCanvasTitle.getAttribute('style')).toContain('--topic-title-font-size: 14px')
     expect(inspectorHeading).toHaveAttribute('data-title-tier', 'small')
     expect(inspectorHeading.getAttribute('style')).toContain('--topic-title-font-size: 14px')
   })

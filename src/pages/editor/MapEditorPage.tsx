@@ -19,7 +19,7 @@ import {
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopicNode } from '../../components/topic-node/TopicNode'
-import { IconButton, ToolbarGroup } from '../../components/ui'
+import { IconButton, SegmentedControl, ToolbarGroup } from '../../components/ui'
 import { SaveIndicator } from '../../components/SaveIndicator'
 import { AiSidebar } from '../../features/ai/components/AiSidebar'
 import { useAiStore } from '../../features/ai/ai-store'
@@ -27,6 +27,7 @@ import {
   documentService,
   setRecentDocumentId,
 } from '../../features/documents/document-service'
+import type { KnowledgeViewType } from '../../../shared/ai-contract'
 import type {
   DocumentService,
   MindMapDocument,
@@ -67,6 +68,11 @@ const nodeTypes = { topic: TopicNode }
 const reactFlowProOptions = { hideAttribution: true }
 const reactFlowMultiSelectionKeyCode = ['Meta', 'Control', 'Shift']
 const reactFlowMiddleMousePanButtons = [1]
+const KNOWLEDGE_VIEW_OPTIONS: Array<{ value: KnowledgeViewType; label: string }> = [
+  { value: 'archive_view', label: 'Archive' },
+  { value: 'thinking_view', label: 'Thinking' },
+  { value: 'execution_view', label: 'Execution' },
+]
 
 interface DragSnapshot {
   topicId: string
@@ -324,6 +330,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const setTopicAiLocked = useEditorStore((state) => state.setTopicAiLocked)
   const setTopicsAiLocked = useEditorStore((state) => state.setTopicsAiLocked)
   const setViewport = useEditorStore((state) => state.setViewport)
+  const switchKnowledgeView = useEditorStore((state) => state.switchKnowledgeView)
   const setSidebarOpen = useEditorStore((state) => state.setSidebarOpen)
   const undo = useEditorStore((state) => state.undo)
   const redo = useEditorStore((state) => state.redo)
@@ -664,6 +671,13 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         ? '智能导入（批次可应用）'
         : '智能导入（可应用）'
       : '智能导入'
+  const activeKnowledgeBundle = useMemo(() => {
+    if (!document?.workspace.activeImportBundleId) {
+      return null
+    }
+    return document.knowledgeImports[document.workspace.activeImportBundleId] ?? null
+  }, [document])
+  const activeKnowledgeView = document?.workspace.activeKnowledgeViewId ?? null
   const themeVariables = useMemo(
     () =>
       document
@@ -1723,6 +1737,14 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             <img src={agentsIcon} alt="AI" style={{ width: 20, height: 20, display: 'block' }} />
             <span>AI</span>
           </button>
+          {activeKnowledgeBundle && activeKnowledgeView ? (
+            <SegmentedControl
+              value={activeKnowledgeView}
+              onChange={(value) => switchKnowledgeView(value)}
+              options={KNOWLEDGE_VIEW_OPTIONS}
+              ariaLabel="知识视图切换"
+            />
+          ) : null}
           <button
             type="button"
             className={styles.exportButtonPrimary}
