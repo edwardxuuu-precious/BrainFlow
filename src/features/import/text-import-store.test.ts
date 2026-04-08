@@ -543,6 +543,19 @@ describe('text-import-store', () => {
     expect(useTextImportStore.getState().currentFileName).toBeNull()
   })
 
+  it('resets the anchor mode back to the document root when the dialog closes and reopens', () => {
+    useTextImportStore.getState().open()
+    useTextImportStore.getState().setAnchorMode('current_selection')
+
+    expect(useTextImportStore.getState().anchorMode).toBe('current_selection')
+
+    useTextImportStore.getState().close()
+    useTextImportStore.getState().open()
+
+    expect(useTextImportStore.getState().isOpen).toBe(true)
+    expect(useTextImportStore.getState().anchorMode).toBe('document_root')
+  })
+
   it('stores per-file automatic planning summaries for batch imports', async () => {
     const document = createMindMapDocument('Import doc')
     const fileA = new File(['# Launch runbook\n1. Prep\n2. Ship'], 'launch_runbook.md', {
