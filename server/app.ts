@@ -15,9 +15,21 @@ import {
   CodexBridgeError,
   type CodexBridge,
 } from './codex-bridge.js'
+import { resolveAuthContext } from './auth/context.js'
+import { readSyncServerConfig } from './sync-config.js'
+import { createSyncRepository } from './repos/create-sync-repository.js'
+import { SyncConflictError, SyncService } from './services/sync-service.js'
+import type {
+  SyncAnalyzeConflictRequest,
+  SyncBootstrapRequest,
+  SyncPushRequest,
+  SyncResolveConflictRequest,
+  WorkspaceRestoreRequest,
+} from '../shared/sync-contract.js'
 
 interface CreateAppOptions {
   bridge?: CodexBridge
+  syncService?: SyncService<unknown>
   logInfo?: (message: string) => void
   logError?: (message: string, error: unknown) => void
 }
@@ -105,6 +117,29 @@ function validateImportAdjudicationRequest(payload: unknown): TextImportSemantic
   }
 
   return request as TextImportSemanticAdjudicationRequest
+}
+
+function validateAnalyzeConflictRequest(payload: unknown): SyncAnalyzeConflictRequest<unknown> {
+  if (!payload || typeof payload !== 'object') {
+    throw new CodexBridgeError('invalid_request', '无效的冲突分析请求体。')
+  }
+
+  const request = payload as Partial<SyncAnalyzeConflictRequest<unknown>>
+  if (!request.conflict || typeof request.conflict !== 'object') {
+    throw new CodexBridgeError('invalid_request', '冲突分析请求缺少 conflict。')
+  }
+
+  const conflict = request.conflict as Partial<SyncAnalyzeConflictRequest<unknown>['conflict']>
+  if (
+    typeof conflict.id !== 'string' ||
+    typeof conflict.workspaceId !== 'string' ||
+    typeof conflict.entityId !== 'string' ||
+    (conflict.entityType !== 'document' && conflict.entityType !== 'conversation')
+  ) {
+    throw new CodexBridgeError('invalid_request', '冲突分析请求中的 conflict 格式无效。')
+  }
+
+  return request as SyncAnalyzeConflictRequest<unknown>
 }
 
 function validateSettingsPayload(payload: unknown): { businessPrompt: string } {
@@ -349,6 +384,13 @@ export function createApp(options?: CreateAppOptions) {
       logInfo,
       logError: (message) => logError(message, undefined),
     })
+  const syncService =
+    options?.syncService ??
+    new SyncService<unknown>(
+      createSyncRepository<unknown>(readSyncServerConfig()),
+      readSyncServerConfig().pullLimit,
+    )
+  const syncReady = syncService.initialize()
 
   const jsonRoute =
     <T>(routeName: string, handler: (c: Context) => Promise<T>) =>
@@ -363,6 +405,22 @@ export function createApp(options?: CreateAppOptions) {
 
         const statusCode = toApiStatusCode(error) as 400 | 500
         return c.json(toApiError(error), statusCode)
+      }
+    }
+
+  const jsonRouteWithStatus =
+    <T>(handler: (c: Context) => Promise<T>) =>
+    async (c: Context) => {
+      try {
+        await syncReady
+        const payload = await handler(c)
+        return c.json(payload)
+      } catch (error) {
+        if (error instanceof SyncConflictError) {
+          return c.json(error.payload, 409)
+        }
+        const message = error instanceof Error ? error.message : 'Request failed.'
+        return c.json({ message }, 500)
       }
     }
 
@@ -617,6 +675,53 @@ export function createApp(options?: CreateAppOptions) {
       410,
     ),
   )
+
+  app.post('/api/sync/bootstrap', jsonRouteWithStatus(async (c) => {
+    const auth = resolveAuthContext(c)
+    const request = await c.req.json() as SyncBootstrapRequest<unknown>
+    return syncService.bootstrap(auth.userId, request)
+  }))
+
+  app.post('/api/sync/push', jsonRouteWithStatus(async (c) => {
+    const auth = resolveAuthContext(c)
+    const request = await c.req.json() as SyncPushRequest<unknown>
+    return syncService.push(auth.userId, request)
+  }))
+
+  app.get('/api/sync/pull', jsonRouteWithStatus(async (c) => {
+    const workspaceId = c.req.query('workspaceId')
+    const afterCursor = Number(c.req.query('afterCursor') ?? 0)
+    const limit = Number(c.req.query('limit') ?? readSyncServerConfig().pullLimit)
+    if (!workspaceId) {
+      throw new Error('workspaceId is required.')
+    }
+    return syncService.pull(workspaceId, afterCursor, limit)
+  }))
+
+  app.post('/api/sync/resolve-conflict', jsonRouteWithStatus(async (c) => {
+    const auth = resolveAuthContext(c)
+    const request = await c.req.json() as SyncResolveConflictRequest<unknown>
+    return syncService.resolveConflict(auth.userId, request)
+  }))
+
+  app.post('/api/sync/analyze-conflict', jsonRouteWithStatus(async (c) => {
+    const request = validateAnalyzeConflictRequest(await c.req.json().catch(() => null))
+    return bridge.analyzeSyncConflict(request)
+  }))
+
+  app.get('/api/workspace/full', jsonRouteWithStatus(async (c) => {
+    const workspaceId = c.req.query('workspaceId')
+    if (!workspaceId) {
+      throw new Error('workspaceId is required.')
+    }
+    return syncService.getWorkspaceFull(workspaceId)
+  }))
+
+  app.post('/api/workspace/restore', jsonRouteWithStatus(async (c) => {
+    const auth = resolveAuthContext(c)
+    const request = await c.req.json() as WorkspaceRestoreRequest<unknown>
+    return syncService.restoreWorkspace(auth.userId, request)
+  }))
 
   return app
 }

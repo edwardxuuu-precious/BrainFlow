@@ -821,6 +821,9 @@ export function HomePage({ service = documentService }: HomePageProps) {
         <div className={styles.brandQuote}>
           <span className={styles.brandQuoteText}>{brandQuote.text}</span>
         </div>
+        <Button tone="ghost" size="sm" iconStart="settings" onClick={() => navigate('/settings')}>
+          数据存储与同步
+        </Button>
       </header>
 
       <section className={styles.hero}>

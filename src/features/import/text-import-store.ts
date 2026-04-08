@@ -68,6 +68,8 @@ interface CachedTextImportSource {
   rawText: string
 }
 
+export type TextImportAnchorMode = 'document_root' | 'current_selection'
+
 export interface TextImportErrorState {
   message: string
   rawMessage?: string
@@ -120,11 +122,14 @@ interface TextImportState {
   currentApplyLabel: string | null
   presetOverride: TextImportPreset | null
   archetypeOverride: TextImportArchetype | null
+  anchorMode: TextImportAnchorMode
   cachedSources: CachedTextImportSource[]
   open: () => void
   close: () => void
+  resetSession: () => void
   setPresetOverride: (value: TextImportPreset | null) => void
   setArchetypeOverride: (value: TextImportArchetype | null) => void
+  setAnchorMode: (value: TextImportAnchorMode) => void
   setDraftSourceName: (value: string) => void
   setDraftText: (value: string) => void
   previewFile: (
@@ -203,6 +208,7 @@ const INITIAL_STATE = {
   currentApplyLabel: null as string | null,
   presetOverride: null as TextImportPreset | null,
   archetypeOverride: null as TextImportArchetype | null,
+  anchorMode: 'document_root' as TextImportAnchorMode,
   cachedSources: [] as CachedTextImportSource[],
 }
 
@@ -211,6 +217,69 @@ let activeJobHandle: TextImportJobHandle | null = null
 function cancelActiveJob(): void {
   activeJobHandle?.cancel()
   activeJobHandle = null
+}
+
+function createResetSessionState(): Partial<TextImportState> {
+  return {
+    sourceName: INITIAL_STATE.sourceName,
+    sourceType: INITIAL_STATE.sourceType,
+    sourceFiles: [],
+    rawText: INITIAL_STATE.rawText,
+    draftSourceName: INITIAL_STATE.draftSourceName,
+    draftText: INITIAL_STATE.draftText,
+    preprocessedHints: [],
+    preview: INITIAL_STATE.preview,
+    draftTree: [],
+    previewTree: [],
+    draftConfirmed: INITIAL_STATE.draftConfirmed,
+    planningSummaries: [],
+    crossFileMergeSuggestions: [],
+    approvedConflictIds: [],
+    runStage: INITIAL_STATE.runStage,
+    semanticMergeStage: INITIAL_STATE.semanticMergeStage,
+    statusText: INITIAL_STATE.statusText,
+    progress: INITIAL_STATE.progress,
+    progressIndeterminate: INITIAL_STATE.progressIndeterminate,
+    modeHint: INITIAL_STATE.modeHint,
+    error: INITIAL_STATE.error,
+    isPreviewing: INITIAL_STATE.isPreviewing,
+    isApplying: INITIAL_STATE.isApplying,
+    previewStartedAt: INITIAL_STATE.previewStartedAt,
+    previewFinishedAt: INITIAL_STATE.previewFinishedAt,
+    activeJobId: INITIAL_STATE.activeJobId,
+    activeJobMode: INITIAL_STATE.activeJobMode,
+    activeJobType: INITIAL_STATE.activeJobType,
+    semanticCandidateCount: INITIAL_STATE.semanticCandidateCount,
+    semanticAdjudicatedCount: INITIAL_STATE.semanticAdjudicatedCount,
+    semanticFallbackCount: INITIAL_STATE.semanticFallbackCount,
+    fileCount: INITIAL_STATE.fileCount,
+    completedFileCount: INITIAL_STATE.completedFileCount,
+    currentFileName: INITIAL_STATE.currentFileName,
+    applyProgress: INITIAL_STATE.applyProgress,
+    appliedCount: INITIAL_STATE.appliedCount,
+    totalOperations: INITIAL_STATE.totalOperations,
+    currentApplyLabel: INITIAL_STATE.currentApplyLabel,
+    presetOverride: INITIAL_STATE.presetOverride,
+    archetypeOverride: INITIAL_STATE.archetypeOverride,
+    anchorMode: INITIAL_STATE.anchorMode,
+    cachedSources: [],
+  }
+}
+
+function resolveImportAnchorTopicId(
+  document: MindMapDocument,
+  selection: ImportSelectionSnapshot,
+  anchorMode: TextImportAnchorMode,
+): string {
+  if (
+    anchorMode === 'current_selection' &&
+    selection.activeTopicId &&
+    document.topics[selection.activeTopicId]
+  ) {
+    return selection.activeTopicId
+  }
+
+  return document.rootTopicId
 }
 
 function createModeHint(mode: TextImportJobMode, jobType: TextImportJobType): string {
@@ -331,6 +400,7 @@ async function startSinglePreview(
   rawText: string,
   presetOverride: TextImportPreset | null,
   archetypeOverride: TextImportArchetype | null,
+  anchorMode: TextImportAnchorMode,
 ): Promise<void> {
   const normalizedText = rawText.replace(/\r\n?/g, '\n').trim()
   if (!normalizedText) {
@@ -371,7 +441,7 @@ async function startSinglePreview(
     documentTitle: document.title,
     baseDocumentUpdatedAt: document.updatedAt,
     context: createSelectionContext(document, selection),
-    anchorTopicId: selection.activeTopicId ?? document.rootTopicId,
+    anchorTopicId: resolveImportAnchorTopicId(document, selection, anchorMode),
     sourceName,
     sourceType,
     intent: planning.intent,
@@ -552,6 +622,7 @@ async function startSinglePreview(
     currentApplyLabel: null,
     presetOverride,
     archetypeOverride,
+    anchorMode,
   })
 
   while (queuedEvents.length > 0) {
@@ -573,6 +644,7 @@ async function startBatchPreview(
   files: Array<File | CachedTextImportSource>,
   presetOverride: TextImportPreset | null,
   archetypeOverride: TextImportArchetype | null,
+  anchorMode: TextImportAnchorMode,
 ): Promise<void> {
   if (files.length === 0) {
     return
@@ -642,7 +714,7 @@ async function startBatchPreview(
     documentTitle: document.title,
     baseDocumentUpdatedAt: document.updatedAt,
     context: createSelectionContext(document, selection),
-    anchorTopicId: selection.activeTopicId ?? document.rootTopicId,
+    anchorTopicId: resolveImportAnchorTopicId(document, selection, anchorMode),
     files: sortedFiles,
   }
 
@@ -806,6 +878,7 @@ async function startBatchPreview(
     currentApplyLabel: null,
     presetOverride,
     archetypeOverride,
+    anchorMode,
   })
 
   while (queuedEvents.length > 0) {
@@ -841,12 +914,18 @@ export const useTextImportStore = create<TextImportState>((set, get) => ({
       isOpen: false,
       presetOverride: null,
       archetypeOverride: null,
+      anchorMode: INITIAL_STATE.anchorMode,
       planningSummaries: [],
       cachedSources: [],
       draftConfirmed: false,
     }),
+  resetSession: () => {
+    cancelActiveJob()
+    set(createResetSessionState())
+  },
   setPresetOverride: (value) => set({ presetOverride: value }),
   setArchetypeOverride: (value) => set({ archetypeOverride: value }),
+  setAnchorMode: (value) => set({ anchorMode: value }),
   setDraftSourceName: (value) => set({ draftSourceName: value }),
   setDraftText: (value) => set({ draftText: value }),
   previewFile: async (document, selection, file) => {
@@ -859,6 +938,7 @@ export const useTextImportStore = create<TextImportState>((set, get) => ({
       await file.text(),
       get().presetOverride,
       get().archetypeOverride,
+      get().anchorMode,
     )
   },
   previewFiles: async (document, selection, files) => {
@@ -874,11 +954,20 @@ export const useTextImportStore = create<TextImportState>((set, get) => ({
           await file.text(),
           get().presetOverride,
           get().archetypeOverride,
+          get().anchorMode,
         )
       }
       return
     }
-    await startBatchPreview(set, document, selection, files, get().presetOverride, get().archetypeOverride)
+    await startBatchPreview(
+      set,
+      document,
+      selection,
+      files,
+      get().presetOverride,
+      get().archetypeOverride,
+      get().anchorMode,
+    )
   },
   previewText: async (document, selection, options) => {
     const state = get()
@@ -894,13 +983,22 @@ export const useTextImportStore = create<TextImportState>((set, get) => ({
       rawText,
       state.presetOverride,
       state.archetypeOverride,
+      state.anchorMode,
     )
   },
   rerunPreviewWithPreset: async (document, selection, preset) => {
     set({ presetOverride: preset })
     const state = get()
     if (state.cachedSources.length > 1) {
-      await startBatchPreview(set, document, selection, state.cachedSources, preset, state.archetypeOverride)
+      await startBatchPreview(
+        set,
+        document,
+        selection,
+        state.cachedSources,
+        preset,
+        state.archetypeOverride,
+        state.anchorMode,
+      )
       return
     }
 
@@ -915,6 +1013,7 @@ export const useTextImportStore = create<TextImportState>((set, get) => ({
         source.rawText,
         preset,
         state.archetypeOverride,
+        state.anchorMode,
       )
       return
     }
@@ -931,13 +1030,22 @@ export const useTextImportStore = create<TextImportState>((set, get) => ({
       rawText,
       preset,
       state.archetypeOverride,
+      state.anchorMode,
     )
   },
   rerunPreviewWithArchetype: async (document, selection, archetype) => {
     set({ archetypeOverride: archetype })
     const state = get()
     if (state.cachedSources.length > 1) {
-      await startBatchPreview(set, document, selection, state.cachedSources, state.presetOverride, archetype)
+      await startBatchPreview(
+        set,
+        document,
+        selection,
+        state.cachedSources,
+        state.presetOverride,
+        archetype,
+        state.anchorMode,
+      )
       return
     }
 
@@ -952,6 +1060,7 @@ export const useTextImportStore = create<TextImportState>((set, get) => ({
         source.rawText,
         state.presetOverride,
         archetype,
+        state.anchorMode,
       )
       return
     }
@@ -968,6 +1077,7 @@ export const useTextImportStore = create<TextImportState>((set, get) => ({
       rawText,
       state.presetOverride,
       archetype,
+      state.anchorMode,
     )
   },
   toggleConflictApproval: (conflictId) =>

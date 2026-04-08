@@ -7,6 +7,7 @@ import type {
   TextImportSemanticAdjudicationRequest,
   TextImportRequest,
 } from '../shared/ai-contract.js'
+import type { SyncAnalyzeConflictRequest } from '../shared/sync-contract.js'
 import { CodexBridgeError, createCodexBridge } from './codex-bridge.js'
 
 const readyStatus: CodexStatus = {
@@ -119,6 +120,72 @@ const baseAdjudicationRequest: TextImportSemanticAdjudicationRequest = {
       },
     },
   ],
+}
+
+const baseAnalyzeConflictRequest: SyncAnalyzeConflictRequest<unknown> = {
+  conflict: {
+    id: 'conflict_1',
+    workspaceId: 'workspace_1',
+    entityType: 'document',
+    entityId: 'doc_1',
+    deviceId: 'device_1',
+    localRecord: {
+      id: 'doc_1',
+      userId: 'user_1',
+      workspaceId: 'workspace_1',
+      deviceId: 'device_1',
+      version: 2,
+      baseVersion: 1,
+      contentHash: 'hash_local',
+      updatedAt: 200,
+      deletedAt: null,
+      syncStatus: 'conflict',
+      payload: {
+        title: 'Local title',
+        body: 'Local note',
+      },
+    },
+    cloudRecord: {
+      id: 'doc_1',
+      userId: 'user_1',
+      workspaceId: 'workspace_1',
+      deviceId: 'device_2',
+      version: 3,
+      baseVersion: 2,
+      contentHash: 'hash_cloud',
+      updatedAt: 300,
+      deletedAt: null,
+      syncStatus: 'conflict',
+      payload: {
+        title: 'Cloud title',
+        body: 'Cloud note',
+      },
+    },
+    localPayload: {
+      title: 'Local title',
+      body: 'Local note',
+    },
+    cloudPayload: {
+      title: 'Cloud title',
+      body: 'Cloud note',
+    },
+    diffHints: {
+      updatedAtDeltaMs: 100,
+      sameContentHash: false,
+    },
+    analysisStatus: 'pending',
+    analysisSource: null,
+    recommendedResolution: null,
+    confidence: null,
+    summary: null,
+    reasons: [],
+    actionableResolutions: ['use_cloud', 'save_local_copy', 'merged_payload'],
+    mergedPayload: null,
+    analyzedAt: null,
+    analysisNote: null,
+    detectedAt: 400,
+    resolvedAt: null,
+  },
 }
 
 function createPromptStore(overrides?: Record<string, unknown>) {
@@ -455,11 +522,7 @@ describe('createCodexBridge', () => {
     const result = await bridge.previewTextImport(baseImportRequest)
 
     expect(result.bundle).not.toBeNull()
-    expect(result.views.map((view) => view.type)).toEqual([
-      'archive_view',
-      'thinking_view',
-      'execution_view',
-    ])
+    expect(result.views.map((view) => view.type)).toEqual(['thinking_view'])
     expect(result.previewNodes[0]).toMatchObject({
       title: '第一波应该先打谁',
     })
@@ -611,6 +674,76 @@ describe('createCodexBridge', () => {
       expect.any(Object),
       expect.any(Object),
     )
+  })
+
+  it('analyzes sync conflicts with a dedicated schema', async () => {
+    const execute = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        recommendedResolution: 'merged_payload',
+        confidence: 'high',
+        summary: 'Merge the two versions.',
+        reasons: ['Both sides contain useful edits.'],
+        actionableResolutions: ['use_cloud', 'save_local_copy', 'merged_payload'],
+        mergedPayload: {
+          title: 'Merged title',
+          body: 'Merged note',
+        },
+        analysisNote: null,
+      }),
+    )
+
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockResolvedValue(readyStatus),
+        execute,
+        executeMessage: vi.fn(),
+      },
+      promptStore: createPromptStore(),
+    })
+
+    await expect(bridge.analyzeSyncConflict(baseAnalyzeConflictRequest)).resolves.toMatchObject({
+      analysisSource: 'ai',
+      recommendedResolution: 'merged_payload',
+      confidence: 'high',
+      summary: 'Merge the two versions.',
+      reasons: ['Both sides contain useful edits.'],
+      actionableResolutions: ['use_cloud', 'save_local_copy', 'merged_payload'],
+      mergedPayload: {
+        title: 'Merged title',
+        body: 'Merged note',
+      },
+      analyzedAt: expect.any(Number),
+      analysisNote: null,
+    })
+    expect(execute.mock.calls[0]?.[0]).toContain('Analyze a sync conflict between local cache and cloud data.')
+  })
+
+  it('rejects merged sync conflict recommendations without merged payload', async () => {
+    const execute = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        recommendedResolution: 'merged_payload',
+        confidence: 'medium',
+        summary: 'Try merging.',
+        reasons: ['The records look related.'],
+        actionableResolutions: ['merged_payload'],
+        mergedPayload: null,
+        analysisNote: null,
+      }),
+    )
+
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockResolvedValue(readyStatus),
+        execute,
+        executeMessage: vi.fn(),
+      },
+      promptStore: createPromptStore(),
+    })
+
+    await expect(bridge.analyzeSyncConflict(baseAnalyzeConflictRequest)).rejects.toMatchObject({
+      code: 'schema_invalid',
+      message: '冲突分析返回了 merged_payload，但缺少完整 mergedPayload。',
+    } satisfies Partial<CodexBridgeError>)
   })
 
   it('retries once with a repair prompt when the first import schema is incompatible', async () => {

@@ -392,6 +392,69 @@
   width: 100%;
 }
 
+.noteSection {
+  display: grid;
+  gap: 12px;
+}
+
+.noteModeRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.noteModeHint {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--color-text-soft);
+  font-size: var(--font-size-body-sm);
+  line-height: 1.6;
+}
+
+.notePreview {
+  padding: 16px;
+  border: 1px solid rgba(172, 179, 184, 0.16);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--color-text);
+  font-size: var(--font-size-body-sm);
+  line-height: 1.7;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+}
+
+.notePreviewEmpty {
+  color: var(--color-text-soft);
+}
+
+.notePreview :global(p),
+.notePreview :global(ul) {
+  margin: 0;
+}
+
+.notePreview :global(p + p),
+.notePreview :global(p + ul),
+.notePreview :global(ul + p),
+.notePreview :global(ul + ul) {
+  margin-top: 12px;
+}
+
+.notePreview :global(ul) {
+  padding-left: 18px;
+}
+
+.notePreview :global(li + li) {
+  margin-top: 8px;
+}
+
+.notePreview :global(a) {
+  color: var(--color-accent);
+  text-decoration: underline;
+  word-break: break-word;
+}
+
 .actions {
   display: grid;
   gap: 10px;

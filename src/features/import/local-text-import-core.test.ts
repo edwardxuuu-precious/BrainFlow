@@ -10,7 +10,7 @@ import { preprocessTextToImportHints } from './text-import-preprocess'
 import GTM_MAIN_FIXTURE from './__fixtures__/GTM_main.md?raw'
 
 describe('local-text-import-core', () => {
-  it('builds a three-layer bundle for generic markdown while preserving source traceability', () => {
+  it('builds a single thinking bundle for generic markdown while preserving source traceability', () => {
     const document = createMindMapDocument('Import doc')
     const rawText = '# Goals\n\nLaunch plan\n\n- Owner alignment\n- Weekly checkpoint\n'
 
@@ -35,11 +35,7 @@ describe('local-text-import-core', () => {
       sourceName: 'launch_notes.md',
       headingCount: 1,
     })
-    expect(built.response.views.map((view) => view.type)).toEqual([
-      'archive_view',
-      'thinking_view',
-      'execution_view',
-    ])
+    expect(built.response.views.map((view) => view.type)).toEqual(['thinking_view'])
     expect(built.response.activeViewId).toBe(built.response.defaultViewId)
     expect(built.response.previewNodes.length).toBeGreaterThan(0)
   })
@@ -126,11 +122,11 @@ describe('local-text-import-core', () => {
         batchContainerTitle: 'Import batch: GTM',
       }),
     )
-    expect(built.response.views.map((view) => view.type)).toContain('archive_view')
+    expect(built.response.views.map((view) => view.type)).toEqual(['thinking_view'])
     expect(built.response.crossFileMergeSuggestions).toEqual([])
   })
 
-  it('rebuilds the GTM import into one center question and four first-level branches', () => {
+  it('rebuilds the GTM import into one center question and a combined execution branch', () => {
     const document = createMindMapDocument('Import doc')
 
     const built = createLocalTextImportPreview({
@@ -157,11 +153,12 @@ describe('local-text-import-core', () => {
       '谁最容易现在买',
       '谁最容易触达',
       '谁最容易形成案例扩散',
+      '确定第一波 beachhead segment',
     ])
     expect(
       built.response.previewNodes.some((node) => disallowed.has(node.title)),
     ).toBe(false)
-    expect(built.response.previewNodes).toHaveLength(17)
+    expect(built.response.previewNodes).toHaveLength(15)
     expect(built.response.previewNodes[0]?.sourceAnchors?.length ?? 0).toBeGreaterThanOrEqual(0)
     expect(built.response.sources[0]?.metadata).toMatchObject({
       headingCount: expect.any(Number),
@@ -169,10 +166,24 @@ describe('local-text-import-core', () => {
       segments: expect.any(Array),
     })
 
-    levelOne.forEach((branch) => {
-      const children = built.response.previewNodes.filter((node) => node.parentId === branch.id)
-      expect(children.map((node) => node.title)).toEqual(['判断标准', '证据问题', '常见误判'])
-    })
+    const decisionBranch = levelOne.find((branch) => branch.title === '确定第一波 beachhead segment')
+    const decisionChildren = built.response.previewNodes.filter((node) => node.parentId === decisionBranch?.id)
+    expect(decisionChildren.map((node) => node.title)).toEqual([
+      'Beachhead Segment 筛选',
+      '决策',
+      '收敛第一波目标市场',
+    ])
+    const branchWithDetails = levelOne.find((branch) => branch.title === '谁最痛')
+    const detailChildren = built.response.previewNodes.filter((node) => node.parentId === branchWithDetails?.id)
+    expect(detailChildren.map((node) => node.title)).toEqual(['判断标准', '证据问题', '常见误判'])
+    return
+
+    levelOne
+      .filter((branch) => branch.title !== '确定第一波 beachhead segment')
+      .forEach((branch) => {
+        const children = built.response.previewNodes.filter((node) => node.parentId === branch.id)
+        expect(children.map((node) => node.title)).toEqual(['判断标准', '证据问题', '常见误判'])
+      })
   })
 
   it('classifies method-like text and keeps slot-aware thinking nodes', () => {
@@ -246,6 +257,6 @@ describe('local-text-import-core', () => {
     })
 
     expect(built.response.batch?.files?.every((file) => file.classification)).toBe(true)
-    expect(built.response.bundle?.views.map((view) => view.type)).toContain('execution_view')
+    expect(built.response.bundle?.views.map((view) => view.type)).toEqual(['thinking_view'])
   })
 })

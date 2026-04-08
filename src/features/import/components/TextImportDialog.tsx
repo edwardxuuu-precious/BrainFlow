@@ -20,7 +20,7 @@ import {
 import { Button, IconButton, Input, SurfacePanel, TextArea } from '../../../components/ui'
 import type { SemanticMergeStage } from '../local-text-import-core'
 import type { TextImportJobMode, TextImportJobType } from '../text-import-job'
-import type { TextImportErrorState } from '../text-import-store'
+import type { TextImportAnchorMode, TextImportErrorState } from '../text-import-store'
 import { preprocessTextToImportHints } from '../text-import-preprocess'
 import styles from './TextImportDialog.module.css'
 
@@ -71,10 +71,14 @@ interface TextImportDialogProps {
   currentApplyLabel: string | null
   presetOverride: TextImportPreset | null
   archetypeOverride?: TextImportArchetype | null
+  anchorMode: TextImportAnchorMode
+  documentRootLabel: string
+  currentSelectionLabel: string | null
   onClose: () => void
   onChooseFile: () => void
   onPresetChange: (value: TextImportPreset | null) => void
   onArchetypeChange?: (value: TextImportArchetype | null) => void
+  onAnchorModeChange: (value: TextImportAnchorMode) => void
   onDraftSourceNameChange: (value: string) => void
   onDraftTextChange: (value: string) => void
   onGenerateFromText: () => void
@@ -573,10 +577,14 @@ export function TextImportDialog({
   currentApplyLabel,
   presetOverride,
   archetypeOverride = null,
+  anchorMode,
+  documentRootLabel,
+  currentSelectionLabel,
   onClose,
   onChooseFile,
   onPresetChange,
   onArchetypeChange = () => {},
+  onAnchorModeChange,
   onDraftSourceNameChange,
   onDraftTextChange,
   onGenerateFromText,
@@ -817,6 +825,35 @@ export function TextImportDialog({
                     Choose Files
                   </Button>
                 </div>
+
+                <section className={styles.anchorPanel} aria-label="Import target">
+                  <div className={styles.inputGrid}>
+                    <label className={styles.sourceField}>
+                      <span className={styles.metaLabel}>Import target</span>
+                      <select
+                        className={styles.select}
+                        value={anchorMode}
+                        onChange={(event) => onAnchorModeChange(event.target.value as TextImportAnchorMode)}
+                        disabled={isPreviewing || isApplying}
+                      >
+                        <option value="document_root">Document root: {documentRootLabel}</option>
+                        <option value="current_selection">
+                          Current selection: {currentSelectionLabel ?? 'No active topic'}
+                        </option>
+                      </select>
+                      <span className={styles.selectDescription}>
+                        {anchorMode === 'document_root'
+                          ? 'Default. Each new import starts at the document root so repeated imports stay as sibling branches.'
+                          : 'Import under the currently selected topic. This can intentionally nest the next imported branch.'}
+                      </span>
+                    </label>
+                  </div>
+                  {anchorMode === 'current_selection' ? (
+                    <p className={styles.anchorWarning}>
+                      The next import will be nested under the currently selected topic instead of the document root.
+                    </p>
+                  ) : null}
+                </section>
 
                 {hasPlanningSummary ? (
                   <section className={styles.autoSetupPanel} aria-label="Automatic import setup">

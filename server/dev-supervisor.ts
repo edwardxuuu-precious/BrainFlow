@@ -46,10 +46,6 @@ interface DevSupervisorDependencies {
   fetchStatus?: typeof fetch
 }
 
-function getPnpmCommand(platform: NodeJS.Platform): string {
-  return platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-}
-
 export function buildChildCommandSpec(
   platform: NodeJS.Platform,
   script: ChildScript,
@@ -59,7 +55,7 @@ export function buildChildCommandSpec(
   if (platform === 'win32') {
     return {
       command: 'cmd.exe',
-      args: ['/d', '/s', '/c', `pnpm ${script}`],
+      args: ['/d', '/s', '/c', `npm run ${script}`],
       options: {
         cwd,
         env,
@@ -67,13 +63,13 @@ export function buildChildCommandSpec(
         detached: false,
         stdio: ['ignore', 'pipe', 'pipe'] as const,
       },
-      label: `cmd.exe /d /s /c "pnpm ${script}"`,
+      label: `cmd.exe /d /s /c "npm run ${script}"`,
     }
   }
 
   return {
-    command: getPnpmCommand(platform),
-    args: [script],
+    command: 'npm',
+    args: ['run', script],
     options: {
       cwd,
       env,
@@ -81,7 +77,7 @@ export function buildChildCommandSpec(
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'] as const,
     },
-    label: `pnpm ${script}`,
+    label: `npm run ${script}`,
   }
 }
 

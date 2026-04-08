@@ -3,7 +3,12 @@ import 'fake-indexeddb/auto'
 import { cleanup } from '@testing-library/react'
 import { afterEach, beforeEach } from 'vitest'
 
-const DATABASE_NAMES = ['brainflow-documents-v1', 'brainflow-ai-v1']
+const DATABASE_NAMES = [
+  'brainflow-documents-v1',
+  'brainflow-ai-v1',
+  'brainflow-sync-meta-v1',
+  'brainflow-sync-v2',
+]
 
 function deleteDatabase(name: string): Promise<void> {
   return new Promise((resolve) => {

@@ -9,6 +9,11 @@ import type {
   TextImportResponse,
 } from '../../../shared/ai-contract'
 import {
+  compileSemanticLayerViews,
+  deriveSemanticGraphFromPreviewNodes,
+  PRIMARY_KNOWLEDGE_VIEW_TYPE,
+} from '../../../shared/text-import-layering'
+import {
   compileTextImportNodePlans,
   deriveTextImportNodePlansFromPreviewNodes,
 } from '../../../shared/text-import-semantics'
@@ -46,60 +51,80 @@ function createTopicId(): string {
   return `topic_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
 
-function findBundleViewIdByType(
-  bundle: KnowledgeImportBundle,
-  viewType: KnowledgeViewType,
-): string | null {
-  return bundle.views.find((view) => view.type === viewType)?.id ?? null
+function getPrimaryViewId(bundleId: string): string {
+  return `${bundleId}_thinking`
 }
 
-function inferViewTypeFromId(viewId: string | null | undefined): KnowledgeViewType | null {
-  if (!viewId) {
+function createLegacyPrimaryProjection(bundle: KnowledgeImportBundle): KnowledgeViewProjection | null {
+  const thinkingViewId = bundle.views.find((view) => view.type === PRIMARY_KNOWLEDGE_VIEW_TYPE)?.id ?? null
+  const legacyProjection =
+    (thinkingViewId ? bundle.viewProjections[thinkingViewId] : null) ??
+    Object.values(bundle.viewProjections)[0] ??
+    null
+
+  if (!legacyProjection) {
     return null
   }
-  if (viewId.endsWith('_archive')) {
-    return 'archive_view'
+
+  return {
+    ...legacyProjection,
+    viewId: getPrimaryViewId(bundle.id),
+    viewType: PRIMARY_KNOWLEDGE_VIEW_TYPE,
   }
-  if (viewId.endsWith('_execution')) {
-    return 'execution_view'
+}
+
+function compilePrimaryBundleViews(
+  bundle: KnowledgeImportBundle,
+  fallbackInsertionParentTopicId: string,
+): {
+  views: KnowledgeImportBundle['views']
+  viewProjections: KnowledgeImportBundle['viewProjections']
+  defaultViewId: string
+  activeViewId: string
+} {
+  if (bundle.semanticNodes.length > 0) {
+    return compileSemanticLayerViews({
+      bundleId: bundle.id,
+      bundleTitle: bundle.title,
+      sources: bundle.sources,
+      semanticNodes: bundle.semanticNodes,
+      semanticEdges: bundle.semanticEdges,
+      fallbackInsertionParentTopicId,
+    })
   }
-  if (viewId.endsWith('_thinking')) {
-    return 'thinking_view'
+
+  const legacyProjection = createLegacyPrimaryProjection(bundle)
+  const viewId = legacyProjection?.viewId ?? getPrimaryViewId(bundle.id)
+
+  return {
+    views: [
+      {
+        id: viewId,
+        type: PRIMARY_KNOWLEDGE_VIEW_TYPE,
+        visible_node_ids: legacyProjection?.previewNodes.map((node) => node.id) ?? [],
+        layout_type: 'mindmap',
+      },
+    ],
+    viewProjections: legacyProjection ? { [viewId]: legacyProjection } : {},
+    defaultViewId: viewId,
+    activeViewId: viewId,
   }
-  return null
 }
 
 function resolveProjection(
   bundle: KnowledgeImportBundle,
-  viewId: string | null | undefined,
+  fallbackInsertionParentTopicId: string,
 ): ProjectionSelection | null {
-  const resolvedViewId =
-    (viewId && bundle.viewProjections[viewId] ? viewId : null) ??
-    (bundle.activeViewId && bundle.viewProjections[bundle.activeViewId] ? bundle.activeViewId : null) ??
-    (bundle.defaultViewId && bundle.viewProjections[bundle.defaultViewId] ? bundle.defaultViewId : null) ??
-    Object.keys(bundle.viewProjections)[0] ??
-    null
-
-  if (!resolvedViewId) {
-    return null
-  }
-
-  const viewType =
-    bundle.views.find((view) => view.id === resolvedViewId)?.type ??
-    inferViewTypeFromId(resolvedViewId)
-
-  if (!viewType) {
-    return null
-  }
-
-  const projection = bundle.viewProjections[resolvedViewId]
+  const compiled = compilePrimaryBundleViews(bundle, fallbackInsertionParentTopicId)
+  const resolvedViewId = compiled.activeViewId
+  const projection = compiled.viewProjections[resolvedViewId]
   if (!projection) {
     return null
   }
 
   return {
     viewId: resolvedViewId,
-    viewType,
+    viewType: PRIMARY_KNOWLEDGE_VIEW_TYPE,
     projection,
   }
 }
@@ -160,21 +185,6 @@ function removeMountedSubtreeInPlace(document: MindMapDocument, mountedRootTopic
   }
 }
 
-function createSyntheticProjectionRootTitle(
-  projection: KnowledgeViewProjection,
-  bundle: KnowledgeImportBundle,
-): string {
-  switch (projection.viewType) {
-    case 'archive_view':
-      return '来源归档'
-    case 'execution_view':
-      return '执行闭环'
-    case 'thinking_view':
-    default:
-      return bundle.title
-  }
-}
-
 function mountProjectionIntoDocument(
   document: MindMapDocument,
   bundle: KnowledgeImportBundle,
@@ -222,7 +232,7 @@ function mountProjectionIntoDocument(
     id: createTopicId(),
     parentId: anchorTopic,
     childIds: [],
-    title: createSyntheticProjectionRootTitle(projection, bundle),
+    title: bundle.title,
     note: '',
     noteRich: null,
     aiLocked: false,
@@ -255,6 +265,7 @@ function inferSemanticTypeFromTopic(topic: TopicNode): KnowledgeSemanticNodeType
   if (topic.metadata.type === 'task') {
     return 'task'
   }
+
   return null
 }
 
@@ -327,7 +338,7 @@ function serializeProjectionFromMountedSubtree(
 
   return {
     viewId: selection.viewId,
-    viewType: selection.viewType,
+    viewType: PRIMARY_KNOWLEDGE_VIEW_TYPE,
     summary: selection.projection.summary,
     nodePlans,
     previewNodes: compiled.previewNodes,
@@ -335,28 +346,73 @@ function serializeProjectionFromMountedSubtree(
   }
 }
 
+function hydrateBundleFromSemanticGraph(
+  bundle: KnowledgeImportBundle,
+  semanticNodes: KnowledgeImportBundle['semanticNodes'],
+  semanticEdges: KnowledgeImportBundle['semanticEdges'],
+  fallbackInsertionParentTopicId: string,
+): KnowledgeImportBundle {
+  const compiled = compileSemanticLayerViews({
+    bundleId: bundle.id,
+    bundleTitle: bundle.title,
+    sources: bundle.sources,
+    semanticNodes,
+    semanticEdges,
+    fallbackInsertionParentTopicId,
+  })
+
+  return {
+    ...bundle,
+    semanticNodes,
+    semanticEdges,
+    views: compiled.views,
+    viewProjections: compiled.viewProjections,
+    defaultViewId: compiled.defaultViewId,
+    activeViewId: compiled.activeViewId,
+  }
+}
+
 export function syncTextImportResponseActiveProjection(
   response: TextImportResponse,
   projection: KnowledgeViewProjection,
 ): TextImportResponse {
-  const activeViewId = response.activeViewId ?? projection.viewId
   const nextBundle = response.bundle ? structuredClone(response.bundle) : null
-  if (nextBundle) {
-    nextBundle.activeViewId = activeViewId
-    nextBundle.viewProjections[activeViewId] = projection
+  if (!nextBundle) {
+    return {
+      ...response,
+      nodePlans: projection.nodePlans,
+      previewNodes: projection.previewNodes,
+      operations: projection.operations,
+    }
   }
+
+  const fallbackInsertionParentTopicId =
+    response.anchorTopicId ?? nextBundle.anchorTopicId ?? 'topic_root'
+  const semanticGraph = deriveSemanticGraphFromPreviewNodes({
+    previewNodes: projection.previewNodes,
+    existingNodes: response.semanticNodes.length > 0 ? response.semanticNodes : nextBundle.semanticNodes,
+    existingEdges: response.semanticEdges.length > 0 ? response.semanticEdges : nextBundle.semanticEdges,
+  })
+  const hydratedBundle = hydrateBundleFromSemanticGraph(
+    nextBundle,
+    semanticGraph.semanticNodes,
+    semanticGraph.semanticEdges,
+    fallbackInsertionParentTopicId,
+  )
+  const primaryProjection = hydratedBundle.viewProjections[hydratedBundle.activeViewId]
 
   return {
     ...response,
-    bundle: nextBundle,
-    viewProjections: {
-      ...response.viewProjections,
-      [activeViewId]: projection,
-    },
-    activeViewId,
-    nodePlans: projection.nodePlans,
-    previewNodes: projection.previewNodes,
-    operations: projection.operations,
+    bundle: hydratedBundle,
+    semanticNodes: hydratedBundle.semanticNodes,
+    semanticEdges: hydratedBundle.semanticEdges,
+    views: hydratedBundle.views,
+    viewProjections: hydratedBundle.viewProjections,
+    defaultViewId: hydratedBundle.defaultViewId,
+    activeViewId: hydratedBundle.activeViewId,
+    nodePlans: primaryProjection?.nodePlans ?? projection.nodePlans,
+    previewNodes: primaryProjection?.previewNodes ?? projection.previewNodes,
+    operations: primaryProjection?.operations ?? projection.operations,
   }
 }
 
@@ -371,23 +427,25 @@ export function syncActiveKnowledgeViewProjection(document: MindMapDocument): Mi
     return document
   }
 
-  const selection = resolveProjection(
-    bundle,
-    findBundleViewIdByType(bundle, document.workspace.activeKnowledgeViewId ?? 'thinking_view'),
-  )
+  const selection = resolveProjection(bundle, bundle.anchorTopicId ?? document.rootTopicId)
   if (!selection) {
     return document
   }
 
   const serialized = serializeProjectionFromMountedSubtree(document, bundle, selection)
+  const semanticGraph = deriveSemanticGraphFromPreviewNodes({
+    previewNodes: serialized.previewNodes,
+    existingNodes: bundle.semanticNodes,
+    existingEdges: bundle.semanticEdges,
+  })
   const nextDocument = cloneDocument(document)
-  nextDocument.knowledgeImports[activeBundleId] = {
-    ...bundle,
-    viewProjections: {
-      ...bundle.viewProjections,
-      [selection.viewId]: serialized,
-    },
-  }
+  nextDocument.knowledgeImports[activeBundleId] = hydrateBundleFromSemanticGraph(
+    bundle,
+    semanticGraph.semanticNodes,
+    semanticGraph.semanticEdges,
+    bundle.anchorTopicId ?? nextDocument.rootTopicId,
+  )
+  nextDocument.workspace.activeKnowledgeViewId = PRIMARY_KNOWLEDGE_VIEW_TYPE
   return nextDocument
 }
 
@@ -396,34 +454,20 @@ function buildBundleFromResponse(response: TextImportResponse): KnowledgeImportB
     return null
   }
 
-  const bundle = structuredClone(response.bundle)
-  bundle.sources = response.sources.length > 0 ? response.sources : bundle.sources
-  bundle.semanticNodes = response.semanticNodes.length > 0 ? response.semanticNodes : bundle.semanticNodes
-  bundle.semanticEdges = response.semanticEdges.length > 0 ? response.semanticEdges : bundle.semanticEdges
-  bundle.views = response.views.length > 0 ? response.views : bundle.views
-  bundle.viewProjections = {
-    ...bundle.viewProjections,
-    ...response.viewProjections,
+  const baseBundle = structuredClone(response.bundle)
+  const bundle: KnowledgeImportBundle = {
+    ...baseBundle,
+    sources: response.sources.length > 0 ? response.sources : baseBundle.sources,
+    semanticNodes: response.semanticNodes.length > 0 ? response.semanticNodes : baseBundle.semanticNodes,
+    semanticEdges: response.semanticEdges.length > 0 ? response.semanticEdges : baseBundle.semanticEdges,
   }
-  if (response.defaultViewId) {
-    bundle.defaultViewId = response.defaultViewId
-  }
-  if (response.activeViewId) {
-    bundle.activeViewId = response.activeViewId
-  }
-  const activeSelection = resolveProjection(bundle, response.activeViewId)
-  if (activeSelection) {
-    bundle.viewProjections[activeSelection.viewId] = {
-      viewId: activeSelection.viewId,
-      viewType: activeSelection.viewType,
-      summary: activeSelection.projection.summary,
-      nodePlans: response.nodePlans.length > 0 ? response.nodePlans : activeSelection.projection.nodePlans,
-      previewNodes:
-        response.previewNodes.length > 0 ? response.previewNodes : activeSelection.projection.previewNodes,
-      operations: response.operations.length > 0 ? response.operations : activeSelection.projection.operations,
-    }
-  }
-  return bundle
+
+  return hydrateBundleFromSemanticGraph(
+    bundle,
+    bundle.semanticNodes,
+    bundle.semanticEdges,
+    response.anchorTopicId ?? bundle.anchorTopicId ?? 'topic_root',
+  )
 }
 
 export function applyKnowledgeBundleToDocument(
@@ -435,7 +479,7 @@ export function applyKnowledgeBundleToDocument(
     return null
   }
 
-  const selection = resolveProjection(bundle, bundle.activeViewId)
+  const selection = resolveProjection(bundle, bundle.anchorTopicId ?? document.rootTopicId)
   if (!selection) {
     return null
   }
@@ -458,7 +502,7 @@ export function applyKnowledgeBundleToDocument(
     mountedRootTopicId: mounted.mountedRootTopicId,
   }
   appliedDocument.workspace.activeImportBundleId = bundle.id
-  appliedDocument.workspace.activeKnowledgeViewId = selection.viewType
+  appliedDocument.workspace.activeKnowledgeViewId = PRIMARY_KNOWLEDGE_VIEW_TYPE
   appliedDocument.workspace.selectedTopicId = mounted.mountedRootTopicId ?? anchorTopicId
 
   return {
@@ -471,24 +515,22 @@ export function switchKnowledgeView(
   document: MindMapDocument,
   targetViewType: KnowledgeViewType,
 ): SwitchKnowledgeViewResult | null {
+  if (targetViewType !== PRIMARY_KNOWLEDGE_VIEW_TYPE) {
+    return null
+  }
+
   const activeBundleId = document.workspace.activeImportBundleId
   if (!activeBundleId) {
     return null
   }
 
-  const activeBundle = document.knowledgeImports[activeBundleId]
-  if (!activeBundle) {
-    return null
-  }
-
   const syncedDocument = syncActiveKnowledgeViewProjection(document)
   const syncedBundle = syncedDocument.knowledgeImports[activeBundleId]
-  const targetViewId = findBundleViewIdByType(syncedBundle, targetViewType)
-  if (!targetViewId) {
+  if (!syncedBundle) {
     return null
   }
 
-  const selection = resolveProjection(syncedBundle, targetViewId)
+  const selection = resolveProjection(syncedBundle, syncedBundle.anchorTopicId ?? syncedDocument.rootTopicId)
   if (!selection) {
     return null
   }
@@ -509,7 +551,7 @@ export function switchKnowledgeView(
     activeViewId: selection.viewId,
     mountedRootTopicId: mounted.mountedRootTopicId,
   }
-  switchedDocument.workspace.activeKnowledgeViewId = targetViewType
+  switchedDocument.workspace.activeKnowledgeViewId = PRIMARY_KNOWLEDGE_VIEW_TYPE
   switchedDocument.workspace.selectedTopicId = mounted.mountedRootTopicId ?? anchorTopicId
 
   return {

@@ -160,6 +160,22 @@
   gap: 12px;
 }
 
+.anchorPanel {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--dialog-surface) 90%, var(--dialog-panel) 10%);
+  border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
+}
+
+.anchorWarning {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: color-mix(in srgb, #b45309 80%, var(--document-text) 20%);
+}
+
 .sourceField,
 .metaCard {
   display: grid;

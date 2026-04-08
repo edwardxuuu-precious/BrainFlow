@@ -163,6 +163,8 @@ export interface MindMapDocument {
   theme: MindMapTheme
 }
 
+export type MindMapDocumentContent = Omit<MindMapDocument, 'viewport' | 'workspace'>
+
 export interface DocumentSummary {
   id: string
   title: string

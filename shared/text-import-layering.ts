@@ -26,6 +26,8 @@ import {
   resolveTextImportNodeBudget,
 } from './text-import-semantics.js'
 
+export const PRIMARY_KNOWLEDGE_VIEW_TYPE: KnowledgeViewType = 'thinking_view'
+
 const BANNED_PRIMARY_TITLES = new Set([
   '说明',
   '对话记录',
@@ -180,7 +182,21 @@ function createSourceLayer(source: ImportLayerSourceInput, sourceId: string): Kn
 }
 
 function mapPlanNodeToSemanticType(plan: TextImportNodePlan): KnowledgeSemanticNodeType {
-  const slot = plan.templateSlot
+  return inferSemanticTypeFromPreviewLike(plan)
+}
+
+export function inferSemanticTypeFromPreviewLike(
+  item: {
+    semanticRole?: TextImportNodePlan['semanticRole']
+    templateSlot?: TextImportTemplateSlot | null
+    semanticType?: KnowledgeSemanticNodeType | null
+  },
+): KnowledgeSemanticNodeType {
+  if (item.semanticType) {
+    return item.semanticType
+  }
+
+  const slot = item.templateSlot
   if (slot === 'criteria') return 'criterion'
   if (slot === 'evidence' || slot === 'examples' || slot === 'data') return 'evidence'
   if (slot === 'decisions') return 'decision'
@@ -189,10 +205,10 @@ function mapPlanNodeToSemanticType(plan: TextImportNodePlan): KnowledgeSemanticN
   if (slot === 'strategy' || slot === 'themes' || slot === 'claims' || slot === 'components') return 'project'
   if (slot === 'summary' || slot === 'key_results' || slot === 'progress') return 'review'
   if (slot === 'open_questions') return 'question'
-  if (plan.semanticRole === 'decision') return 'decision'
-  if (plan.semanticRole === 'question') return 'question'
-  if (plan.semanticRole === 'evidence' || plan.semanticRole === 'metric') return 'evidence'
-  if (plan.semanticRole === 'action') return 'task'
+  if (item.semanticRole === 'decision') return 'decision'
+  if (item.semanticRole === 'question') return 'question'
+  if (item.semanticRole === 'evidence' || item.semanticRole === 'metric') return 'evidence'
+  if (item.semanticRole === 'action') return 'task'
   return 'topic'
 }
 
@@ -234,6 +250,262 @@ function mergeTextParts(parts: Array<string | null | undefined>): string {
     .filter(Boolean)
     .join('\n\n')
     .trim()
+}
+
+const TASK_NOTE_STATUS_VALUES = new Set(['todo', 'in_progress', 'blocked', 'done'])
+const TASK_NOTE_PRIORITY_VALUES = new Set(['low', 'medium', 'high'])
+
+function splitNoteParagraphs(value: string | null | undefined): string[] {
+  const normalized = normalizeMultiline(value)
+  if (!normalized) {
+    return []
+  }
+
+  return normalized
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function paragraphKey(value: string): string {
+  return collapseWhitespace(value).toLowerCase()
+}
+
+function pushUniqueParagraph(
+  target: string[],
+  seen: Set<string>,
+  paragraph: string | null | undefined,
+): void {
+  splitNoteParagraphs(paragraph).forEach((entry) => {
+    const key = paragraphKey(entry)
+    if (!key || seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    target.push(entry)
+  })
+}
+
+function parseTaskNoteParagraph(
+  paragraph: string,
+): {
+  isTaskBlock: boolean
+  patch: Partial<NonNullable<KnowledgeSemanticNode['task']>>
+} {
+  const lines = normalizeMultiline(paragraph)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (lines.length === 0) {
+    return { isTaskBlock: false, patch: {} }
+  }
+
+  const patch: Partial<NonNullable<KnowledgeSemanticNode['task']>> = {}
+  for (const line of lines) {
+    const match = line.match(/^([a-z_]+):\s*(.*)$/)
+    if (!match) {
+      return { isTaskBlock: false, patch: {} }
+    }
+
+    const [, rawKey, rawValue] = match
+    const value = rawValue.trim()
+    switch (rawKey) {
+      case 'status':
+        if (TASK_NOTE_STATUS_VALUES.has(value)) {
+          patch.status = value as NonNullable<KnowledgeSemanticNode['task']>['status']
+        }
+        break
+      case 'owner':
+        patch.owner = value || null
+        break
+      case 'due_date':
+        patch.due_date = value || null
+        break
+      case 'priority':
+        patch.priority = TASK_NOTE_PRIORITY_VALUES.has(value)
+          ? (value as NonNullable<KnowledgeSemanticNode['task']>['priority'])
+          : null
+        break
+      case 'definition_of_done':
+        patch.definition_of_done = value || null
+        break
+      case 'depends_on':
+        patch.depends_on = value
+          ? value.split(',').map((item) => item.trim()).filter(Boolean)
+          : []
+        break
+      default:
+        return { isTaskBlock: false, patch: {} }
+    }
+  }
+
+  return { isTaskBlock: true, patch }
+}
+
+export function parseKnowledgeNodeNote(options: {
+  note: string | null | undefined
+  title?: string | null
+  summary?: string | null
+}): {
+  detail: string
+  taskPatch: Partial<NonNullable<KnowledgeSemanticNode['task']>>
+} {
+  const detailParagraphs: string[] = []
+  const seen = new Set<string>()
+  const taskPatch: Partial<NonNullable<KnowledgeSemanticNode['task']>> = {}
+  const ignoredKeys = new Set(
+    [options.title, options.summary]
+      .flatMap((value) => splitNoteParagraphs(value))
+      .map((value) => paragraphKey(value))
+      .filter(Boolean),
+  )
+
+  splitNoteParagraphs(options.note).forEach((paragraph) => {
+    const { isTaskBlock, patch } = parseTaskNoteParagraph(paragraph)
+    if (isTaskBlock) {
+      Object.assign(taskPatch, patch)
+      return
+    }
+
+    const key = paragraphKey(paragraph)
+    if (!key || ignoredKeys.has(key) || seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    detailParagraphs.push(paragraph)
+  })
+
+  return {
+    detail: detailParagraphs.join('\n\n').trim(),
+    taskPatch,
+  }
+}
+
+function buildTaskNoteBlock(task: NonNullable<KnowledgeSemanticNode['task']> | null): string | null {
+  if (!task) {
+    return null
+  }
+
+  const lines = [
+    `status: ${task.status}`,
+    task.owner ? `owner: ${task.owner}` : null,
+    task.due_date ? `due_date: ${task.due_date}` : null,
+    task.priority ? `priority: ${task.priority}` : null,
+    task.depends_on.length > 0 ? `depends_on: ${task.depends_on.join(', ')}` : null,
+    task.definition_of_done ? `definition_of_done: ${task.definition_of_done}` : null,
+  ].filter((line): line is string => Boolean(line))
+
+  return lines.length > 0 ? lines.join('\n') : null
+}
+
+export function buildKnowledgeNodeNote(options: {
+  title: string
+  summary?: string | null
+  detail?: string | null
+  task?: NonNullable<KnowledgeSemanticNode['task']> | null
+}): string {
+  const paragraphs: string[] = []
+  const seen = new Set<string>()
+
+  const normalizedTitle = collapseWhitespace(options.title)
+  const normalizedSummary = collapseWhitespace(options.summary)
+  if (normalizedSummary && normalizedSummary !== normalizedTitle) {
+    pushUniqueParagraph(paragraphs, seen, normalizedSummary)
+  }
+
+  const parsedDetail = parseKnowledgeNodeNote({
+    note: options.detail,
+    title: options.title,
+    summary: options.summary,
+  }).detail
+  pushUniqueParagraph(paragraphs, seen, parsedDetail)
+  pushUniqueParagraph(paragraphs, seen, buildTaskNoteBlock(options.task ?? null))
+
+  return paragraphs.join('\n\n').trim()
+}
+
+function createDefaultTaskFields(
+  priority: 'low' | 'medium' | 'high' | null = null,
+): NonNullable<KnowledgeSemanticNode['task']> {
+  return {
+    status: 'todo',
+    owner: null,
+    due_date: null,
+    priority,
+    depends_on: [],
+    source_refs: [],
+    definition_of_done: null,
+  }
+}
+
+export function deriveSemanticGraphFromPreviewNodes(options: {
+  previewNodes: TextImportPreviewItem[]
+  existingNodes?: KnowledgeSemanticNode[]
+  existingEdges?: KnowledgeSemanticEdge[]
+}): {
+  semanticNodes: KnowledgeSemanticNode[]
+  semanticEdges: KnowledgeSemanticEdge[]
+} {
+  const existingNodeById = new Map((options.existingNodes ?? []).map((node) => [node.id, node]))
+  const existingEdgeByKey = new Map<string, KnowledgeSemanticEdge>(
+    (options.existingEdges ?? []).map((edge) => [`${edge.from}->${edge.to}`, edge] as const),
+  )
+
+  const semanticNodes = options.previewNodes.map<KnowledgeSemanticNode>((node) => {
+    const existing = existingNodeById.get(node.id)
+    const semanticType = inferSemanticTypeFromPreviewLike(node)
+    const title = collapseWhitespace(node.title) || existing?.title || 'Untitled'
+    const parsedNote = parseKnowledgeNodeNote({
+      note: node.note,
+      title,
+      summary: existing?.summary ?? title,
+    })
+    const summary =
+      existing?.summary && collapseWhitespace(existing.summary) !== collapseWhitespace(existing.title)
+        ? existing.summary
+        : title
+    const nextTask =
+      semanticType === 'task'
+        ? {
+            ...(existing?.task ?? createDefaultTaskFields()),
+            ...parsedNote.taskPatch,
+            source_refs: existing?.task?.source_refs ?? [],
+          }
+        : null
+
+    return {
+      id: node.id,
+      type: semanticType,
+      title,
+      summary,
+      detail: parsedNote.detail,
+      source_refs: existing?.source_refs ?? [],
+      confidence: node.confidence ?? existing?.confidence ?? 'medium',
+      task: nextTask,
+    }
+  })
+
+  const semanticEdges = options.previewNodes
+    .filter((node) => node.parentId)
+    .map<KnowledgeSemanticEdge>((node) => {
+      const edgeKey = `${node.id}->${node.parentId as string}`
+      const existing = existingEdgeByKey.get(edgeKey)
+
+      return {
+        from: node.id,
+        to: node.parentId as string,
+        type: existing?.type ?? 'belongs_to',
+        label: existing?.label ?? null,
+        source_refs: existing?.source_refs ?? [],
+        confidence: node.confidence ?? existing?.confidence ?? 'medium',
+      }
+    })
+
+  return {
+    semanticNodes,
+    semanticEdges,
+  }
 }
 
 function createPlannerFallbackGraph(options: {
@@ -766,16 +1038,12 @@ function createThinkingProjection(options: {
   if (!center) {
     return buildProjectionFromNodes({
       viewId: options.viewId,
-      viewType: 'thinking_view',
+      viewType: PRIMARY_KNOWLEDGE_VIEW_TYPE,
       summary: 'No semantic nodes were available for the thinking view.',
       nodes: [],
       fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
     })
   }
-
-  const primaryBranches = sortChildren(center.id, nodesById, edgesByParent, ['topic', 'project', 'goal'])
-    .filter((node) => !BANNED_PRIMARY_TITLES.has(node.title))
-    .slice(0, 6)
 
   const projectionNodes: ProjectionNode[] = [
     {
@@ -783,7 +1051,11 @@ function createThinkingProjection(options: {
       parentId: null,
       order: 0,
       title: center.title,
-      note: mergeTextParts([center.summary, center.detail]),
+      note: buildKnowledgeNodeNote({
+        title: center.title,
+        summary: center.summary,
+        detail: center.detail,
+      }),
       semanticType: center.type,
       semanticRole: 'question',
       confidence: center.confidence,
@@ -791,60 +1063,112 @@ function createThinkingProjection(options: {
       templateSlot: null,
     },
   ]
+  const visited = new Set<string>([center.id])
+  const directPrimaryBranches = sortChildren(
+    center.id,
+    nodesById,
+    edgesByParent,
+    ['topic', 'project', 'goal', 'decision', 'review', 'task'],
+  )
+    .filter((node) => !BANNED_PRIMARY_TITLES.has(node.title))
+    .slice(0, 6)
+  const executionRoot =
+    options.semanticNodes.find((node) => node.type === 'goal' && node.id !== center.id) ??
+    options.semanticNodes.find((node) => node.type === 'project' && node.id !== center.id) ??
+    null
+  const primaryBranches = [...directPrimaryBranches]
+
+  if (executionRoot && !primaryBranches.some((node) => node.id === executionRoot.id)) {
+    primaryBranches.push(executionRoot)
+  }
+
+  const appendProjectionNode = (
+    node: KnowledgeSemanticNode,
+    parentId: string,
+    order: number,
+  ): void => {
+    projectionNodes.push({
+      id: node.id,
+      parentId,
+      order,
+      title: node.title,
+      note: buildKnowledgeNodeNote({
+        title: node.title,
+        summary: node.summary,
+        detail: node.detail,
+        task: node.type === 'task' ? node.task : null,
+      }),
+      semanticType: node.type,
+      semanticRole:
+        node.type === 'decision'
+          ? 'decision'
+          : node.type === 'question'
+            ? 'question'
+            : node.type === 'evidence'
+              ? 'evidence'
+              : node.type === 'task'
+                ? 'action'
+                : node.type === 'criterion'
+                  ? 'summary'
+                  : 'section',
+      confidence: node.confidence,
+      sourceAnchors: sourceRefsToAnchors(node.source_refs),
+      templateSlot:
+        node.type === 'criterion'
+          ? 'criteria'
+          : node.type === 'task'
+            ? 'actions'
+            : node.type === 'goal'
+              ? 'goal'
+              : node.type === 'decision'
+                ? 'decisions'
+                : null,
+    })
+  }
+
+  const walkBranch = (
+    node: KnowledgeSemanticNode,
+    parentId: string,
+    order: number,
+    depth: number,
+  ): void => {
+    if (visited.has(node.id)) {
+      return
+    }
+    visited.add(node.id)
+    appendProjectionNode(node, parentId, order)
+
+    if (depth >= 2) {
+      return
+    }
+
+    const childTypes: KnowledgeSemanticNodeType[] =
+      depth === 0
+        ? ['criterion', 'insight', 'question', 'evidence', 'decision', 'task', 'review', 'project', 'goal', 'topic']
+        : ['task', 'decision', 'review', 'evidence', 'question', 'criterion', 'insight', 'topic']
+    const children = sortChildren(node.id, nodesById, edgesByParent, childTypes)
+      .filter((child) => !BANNED_PRIMARY_TITLES.has(child.title))
+      .slice(0, depth === 0 ? 6 : 4)
+
+    children.forEach((child, childIndex) => {
+      walkBranch(child, node.id, childIndex, depth + 1)
+    })
+  }
 
   primaryBranches.forEach((branch, branchIndex) => {
-    projectionNodes.push({
-      id: branch.id,
-      parentId: center.id,
-      order: branchIndex,
-      title: branch.title,
-      note: mergeTextParts([branch.summary, branch.detail]),
-      semanticType: branch.type,
-      semanticRole: 'section',
-      confidence: branch.confidence,
-      sourceAnchors: sourceRefsToAnchors(branch.source_refs),
-      templateSlot: null,
-    })
-    const secondary = sortChildren(
-      branch.id,
-      nodesById,
-      edgesByParent,
-      ['criterion', 'insight', 'question', 'evidence', 'decision'],
-    ).slice(0, 4)
-
-    secondary.forEach((child, childIndex) => {
-      projectionNodes.push({
-        id: child.id,
-        parentId: branch.id,
-        order: childIndex,
-        title: child.title,
-        note: mergeTextParts([child.detail || child.summary]),
-        semanticType: child.type,
-        semanticRole:
-          child.type === 'decision'
-            ? 'decision'
-            : child.type === 'question'
-              ? 'question'
-              : child.type === 'evidence'
-                ? 'evidence'
-                : 'summary',
-        confidence: child.confidence,
-        sourceAnchors: sourceRefsToAnchors(child.source_refs),
-        templateSlot: child.type === 'criterion' ? 'criteria' : null,
-      })
-    })
+    walkBranch(branch, center.id, branchIndex, 0)
   })
 
   return buildProjectionFromNodes({
     viewId: options.viewId,
-    viewType: 'thinking_view',
+    viewType: PRIMARY_KNOWLEDGE_VIEW_TYPE,
     summary: `Projected a thinking view around "${center.title}" with ${primaryBranches.length} primary branches.`,
     nodes: projectionNodes,
     fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
   })
 }
 
-function createExecutionProjection(options: {
+export function createExecutionProjection(options: {
   viewId: string
   semanticNodes: KnowledgeSemanticNode[]
   semanticEdges: KnowledgeSemanticEdge[]
@@ -880,27 +1204,17 @@ function createExecutionProjection(options: {
       return
     }
     visited.add(node.id)
-    const noteParts = [node.summary, node.detail]
-    if (node.task) {
-      noteParts.push(
-        [
-          `status: ${node.task.status}`,
-          node.task.owner ? `owner: ${node.task.owner}` : null,
-          node.task.due_date ? `due_date: ${node.task.due_date}` : null,
-          node.task.priority ? `priority: ${node.task.priority}` : null,
-          node.task.depends_on.length > 0 ? `depends_on: ${node.task.depends_on.join(', ')}` : null,
-          node.task.definition_of_done ? `definition_of_done: ${node.task.definition_of_done}` : null,
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      )
-    }
     projectionNodes.push({
       id: node.id,
       parentId,
       order,
       title: node.title,
-      note: mergeTextParts(noteParts),
+      note: buildKnowledgeNodeNote({
+        title: node.title,
+        summary: node.summary,
+        detail: node.detail,
+        task: node.task,
+      }),
       semanticType: node.type,
       semanticRole:
         node.type === 'decision'
@@ -938,7 +1252,7 @@ function createExecutionProjection(options: {
   })
 }
 
-function createArchiveProjection(options: {
+export function createArchiveProjection(options: {
   viewId: string
   bundleTitle: string
   sources: KnowledgeSource[]
@@ -1050,24 +1364,9 @@ export function buildImportBundlePreview(
       })
   const canonical = canonicalizeSemanticGraph(extracted)
 
-  const archiveViewId = `${options.bundleId}_archive`
   const thinkingViewId = `${options.bundleId}_thinking`
-  const executionViewId = `${options.bundleId}_execution`
-  const archiveProjection = createArchiveProjection({
-    viewId: archiveViewId,
-    bundleTitle: options.bundleTitle,
-    sources,
-    sourceInputs: options.sources,
-    fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
-  })
   const thinkingProjection = createThinkingProjection({
     viewId: thinkingViewId,
-    semanticNodes: canonical.semanticNodes,
-    semanticEdges: canonical.semanticEdges,
-    fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
-  })
-  const executionProjection = createExecutionProjection({
-    viewId: executionViewId,
     semanticNodes: canonical.semanticNodes,
     semanticEdges: canonical.semanticEdges,
     fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
@@ -1075,28 +1374,14 @@ export function buildImportBundlePreview(
 
   const views: KnowledgeView[] = [
     {
-      id: archiveViewId,
-      type: 'archive_view',
-      visible_node_ids: archiveProjection.previewNodes.map((node) => node.id),
-      layout_type: 'archive',
-    },
-    {
       id: thinkingViewId,
-      type: 'thinking_view',
+      type: PRIMARY_KNOWLEDGE_VIEW_TYPE,
       visible_node_ids: thinkingProjection.previewNodes.map((node) => node.id),
       layout_type: 'mindmap',
     },
-    {
-      id: executionViewId,
-      type: 'execution_view',
-      visible_node_ids: executionProjection.previewNodes.map((node) => node.id),
-      layout_type: 'execution',
-    },
   ]
   const viewProjections: Record<string, KnowledgeViewProjection> = {
-    [archiveViewId]: archiveProjection,
     [thinkingViewId]: thinkingProjection,
-    [executionViewId]: executionProjection,
   }
   const defaultViewId = thinkingViewId
   const activeViewId = thinkingViewId
@@ -1139,24 +1424,9 @@ export function compileSemanticLayerViews(
   defaultViewId: string
   activeViewId: string
 } {
-  const archiveViewId = `${options.bundleId}_archive`
   const thinkingViewId = `${options.bundleId}_thinking`
-  const executionViewId = `${options.bundleId}_execution`
-
-  const archiveProjection = createArchiveProjection({
-    viewId: archiveViewId,
-    bundleTitle: options.bundleTitle,
-    sources: options.sources,
-    fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
-  })
   const thinkingProjection = createThinkingProjection({
     viewId: thinkingViewId,
-    semanticNodes: options.semanticNodes,
-    semanticEdges: options.semanticEdges,
-    fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
-  })
-  const executionProjection = createExecutionProjection({
-    viewId: executionViewId,
     semanticNodes: options.semanticNodes,
     semanticEdges: options.semanticEdges,
     fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
@@ -1165,28 +1435,14 @@ export function compileSemanticLayerViews(
   return {
     views: [
       {
-        id: archiveViewId,
-        type: 'archive_view',
-        visible_node_ids: archiveProjection.previewNodes.map((node) => node.id),
-        layout_type: 'archive',
-      },
-      {
         id: thinkingViewId,
-        type: 'thinking_view',
+        type: PRIMARY_KNOWLEDGE_VIEW_TYPE,
         visible_node_ids: thinkingProjection.previewNodes.map((node) => node.id),
         layout_type: 'mindmap',
       },
-      {
-        id: executionViewId,
-        type: 'execution_view',
-        visible_node_ids: executionProjection.previewNodes.map((node) => node.id),
-        layout_type: 'execution',
-      },
     ],
     viewProjections: {
-      [archiveViewId]: archiveProjection,
       [thinkingViewId]: thinkingProjection,
-      [executionViewId]: executionProjection,
     },
     defaultViewId: thinkingViewId,
     activeViewId: thinkingViewId,

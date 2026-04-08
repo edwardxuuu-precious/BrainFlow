@@ -52,6 +52,21 @@ function renderPanel(options: RenderPanelOptions = {}) {
 }
 
 describe('PropertiesPanel', () => {
+  it('shows note content in display mode by default and enters editor only after clicking edit', async () => {
+    const user = userEvent.setup()
+    renderPanel()
+
+    expect(screen.getByText('Detailed note for the inspector.')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('textbox', { name: '详细内容富文本编辑器' }),
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '编辑' }))
+
+    expect(screen.getByRole('button', { name: '完成' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '详细内容富文本编辑器' })).toBeInTheDocument()
+  })
+
   it('keeps available label quick-add actions working', async () => {
     const user = userEvent.setup()
     const { onMetadataChange } = renderPanel({

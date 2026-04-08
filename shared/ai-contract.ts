@@ -255,6 +255,7 @@ export interface AiApplySummary {
 }
 
 export interface AiConversation {
+  id?: string
   documentId: string
   documentTitle: string
   sessionId: string
@@ -265,6 +266,7 @@ export interface AiConversation {
 }
 
 export interface AiSessionSummary {
+  id?: string
   documentId: string
   documentTitle: string
   sessionId: string

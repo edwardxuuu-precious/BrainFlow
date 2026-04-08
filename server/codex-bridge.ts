@@ -33,6 +33,12 @@ import type {
   TextImportTemplateSlot,
   TextImportTemplateSummary,
 } from '../shared/ai-contract.js'
+import type {
+  SyncAnalyzeConflictRequest,
+  SyncAnalyzeConflictResponse,
+  SyncConflictAnalysisConfidence,
+  SyncConflictResolution,
+} from '../shared/sync-contract.js'
 import { sanitizeAiWritableMetadataPatch } from '../shared/ai-metadata-patch.js'
 import {
   buildTextImportQualityWarnings,
@@ -82,6 +88,16 @@ interface RawPlanPayload {
   contextRequest?: string[] | null
   warnings?: string[] | null
   proposal?: RawProposalPayload | null
+}
+
+interface RawSyncConflictAnalysisPayload {
+  recommendedResolution?: string | null
+  confidence?: string | null
+  summary?: string | null
+  reasons?: string[] | null
+  actionableResolutions?: string[] | null
+  mergedPayload?: Record<string, unknown> | null
+  analysisNote?: string | null
 }
 
 interface RawImportOperation extends RawProposalOperation {
@@ -638,6 +654,47 @@ const SEMANTIC_ADJUDICATION_RESPONSE_SCHEMA = {
   },
 } as const
 
+const SYNC_CONFLICT_ANALYSIS_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'recommendedResolution',
+    'confidence',
+    'summary',
+    'reasons',
+    'actionableResolutions',
+    'mergedPayload',
+    'analysisNote',
+  ],
+  properties: {
+    recommendedResolution: {
+      type: ['string', 'null'],
+      enum: ['use_cloud', 'save_local_copy', 'merged_payload', null],
+    },
+    confidence: {
+      type: ['string', 'null'],
+      enum: ['high', 'medium', 'low', null],
+    },
+    summary: { type: ['string', 'null'] },
+    reasons: {
+      type: ['array', 'null'],
+      items: { type: 'string' },
+    },
+    actionableResolutions: {
+      type: ['array', 'null'],
+      items: {
+        type: 'string',
+        enum: ['use_cloud', 'save_local_copy', 'merged_payload'],
+      },
+    },
+    mergedPayload: {
+      type: ['object', 'null'],
+      additionalProperties: true,
+    },
+    analysisNote: { type: ['string', 'null'] },
+  },
+} as const
+
 const VALID_TEMPLATE_SLOTS: TextImportTemplateSlot[] = [
   'goal',
   'use_cases',
@@ -713,6 +770,38 @@ function normalizeStringArray(value: unknown): string[] | undefined {
   return value
     .map((item) => normalizeText(typeof item === 'string' ? item : undefined))
     .filter((item): item is string => !!item)
+}
+
+function normalizeConflictResolution(
+  value: string | null | undefined,
+): SyncConflictResolution | undefined {
+  if (
+    value === 'use_cloud' ||
+    value === 'save_local_copy' ||
+    value === 'merged_payload'
+  ) {
+    return value
+  }
+
+  return undefined
+}
+
+function normalizeConflictConfidence(
+  value: string | null | undefined,
+): SyncConflictAnalysisConfidence | undefined {
+  if (value === 'high' || value === 'medium' || value === 'low') {
+    return value
+  }
+
+  return undefined
+}
+
+function normalizeObjectPayload(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  return value as Record<string, unknown>
 }
 
 function normalizeMetadataPatch(value: unknown): AiTopicMetadataPatch | undefined {
@@ -1512,6 +1601,65 @@ function normalizePlanPayload(
   }
 }
 
+function normalizeSyncConflictAnalysisPayload<TPayload>(
+  request: SyncAnalyzeConflictRequest<TPayload>,
+  rawPayload: RawSyncConflictAnalysisPayload,
+): SyncAnalyzeConflictResponse<TPayload> {
+  const recommendedResolution = normalizeConflictResolution(rawPayload.recommendedResolution)
+  const confidence = normalizeConflictConfidence(rawPayload.confidence) ?? null
+  const summary =
+    normalizeText(rawPayload.summary) ??
+    'Codex 已完成冲突分析，但没有返回摘要。'
+  const reasons = (rawPayload.reasons ?? [])
+    .map((item) => normalizeText(item))
+    .filter((item): item is string => !!item)
+  const actionableResolutions = (rawPayload.actionableResolutions ?? [])
+    .map((item) => normalizeConflictResolution(item))
+    .filter((item): item is SyncConflictResolution => !!item)
+    .filter((value, index, array) => array.indexOf(value) === index)
+  const mergedPayload = normalizeObjectPayload(rawPayload.mergedPayload) as TPayload | null
+
+  if (
+    recommendedResolution === 'merged_payload' &&
+    !mergedPayload
+  ) {
+    throw new CodexBridgeError(
+      'schema_invalid',
+      '冲突分析返回了 merged_payload，但缺少完整 mergedPayload。',
+    )
+  }
+
+  if (
+    recommendedResolution &&
+    actionableResolutions.length > 0 &&
+    !actionableResolutions.includes(recommendedResolution)
+  ) {
+    throw new CodexBridgeError(
+      'schema_invalid',
+      '冲突分析返回的 recommendedResolution 不在 actionableResolutions 中。',
+    )
+  }
+
+  const fallbackActionable = request.conflict.actionableResolutions.filter(
+    (value): value is SyncConflictResolution =>
+      value === 'use_cloud' || value === 'save_local_copy' || value === 'merged_payload',
+  )
+
+  return {
+    analysisSource: 'ai',
+    recommendedResolution:
+      recommendedResolution ??
+      (fallbackActionable.includes('save_local_copy') ? 'save_local_copy' : fallbackActionable[0] ?? null),
+    confidence,
+    summary,
+    reasons,
+    actionableResolutions: actionableResolutions.length > 0 ? actionableResolutions : fallbackActionable,
+    mergedPayload,
+    analyzedAt: Date.now(),
+    analysisNote: normalizeText(rawPayload.analysisNote) ?? null,
+  }
+}
+
 function normalizeImportPayload(
   request: TextImportRequest,
   rawPayload: RawImportPayload,
@@ -1732,6 +1880,21 @@ function parsePlanPayload(rawText: string | null | undefined): RawPlanPayload {
   const parsed = JSON.parse(rawText) as RawPlanPayload
   if (typeof parsed !== 'object' || parsed === null) {
     throw new CodexBridgeError('request_failed', 'Codex 返回了无效的结构化结果。')
+  }
+
+  return parsed
+}
+
+function parseSyncConflictAnalysisPayload(
+  rawText: string | null | undefined,
+): RawSyncConflictAnalysisPayload {
+  if (!rawText) {
+    throw new CodexBridgeError('request_failed', 'Codex 返回了空的冲突分析结果。')
+  }
+
+  const parsed = JSON.parse(rawText) as RawSyncConflictAnalysisPayload
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new CodexBridgeError('request_failed', 'Codex 返回了无效的冲突分析结构。')
   }
 
   return parsed
@@ -1968,6 +2131,27 @@ function buildPlanningPrompt(
       null,
       2,
     ),
+  ].join('\n')
+}
+
+function buildSyncConflictAnalysisPrompt<TPayload>(
+  request: SyncAnalyzeConflictRequest<TPayload>,
+  prompt: LoadedSystemPrompt,
+): string {
+  return [
+    prompt.fullPrompt,
+    '',
+    'Stage goal:',
+    '- Return valid JSON only.',
+    '- Analyze a sync conflict between local cache and cloud data.',
+    '- Never suggest silent overwrite or automatic application.',
+    '- Recommend exactly one of use_cloud, save_local_copy, or merged_payload.',
+    '- Only recommend merged_payload when you can provide a complete mergedPayload object.',
+    '- If a safe merge is not possible, do not fabricate partial patches.',
+    '- Keep reasons concise and user-facing.',
+    '',
+    'Conflict request:',
+    JSON.stringify(request, null, 2),
   ].join('\n')
 }
 
@@ -2480,6 +2664,9 @@ export interface CodexBridge {
     options?: CodexChatStreamOptions,
   ): Promise<CodexChatStreamResult>
   planChanges(request: AiChatRequest, assistantMessage: string): Promise<AiChatResponse>
+  analyzeSyncConflict<TPayload>(
+    request: SyncAnalyzeConflictRequest<TPayload>,
+  ): Promise<SyncAnalyzeConflictResponse<TPayload>>
   previewTextImport(request: TextImportRequest, options?: TextImportPreviewOptions): Promise<TextImportResponse>
   previewMarkdownImport(
     request: TextImportRequest,
@@ -2630,6 +2817,29 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
           RESPONSE_SCHEMA,
         )
         return normalizePlanPayload(request, assistantMessage, parsePlanPayload(rawText))
+      } catch (error) {
+        throw normalizeBridgeError(error)
+      }
+    },
+
+    async analyzeSyncConflict(request) {
+      const status = await buildStatus()
+      if (!status.ready) {
+        throw new CodexBridgeError(
+          'verification_required',
+          '当前 Codex 验证信息不可用，请尽快重新验证。',
+          status.issues,
+        )
+      }
+
+      const loadedPrompt = await promptStore.loadPrompt()
+
+      try {
+        const rawText = await runner.execute(
+          buildSyncConflictAnalysisPrompt(request, loadedPrompt),
+          SYNC_CONFLICT_ANALYSIS_RESPONSE_SCHEMA,
+        )
+        return normalizeSyncConflictAnalysisPayload(request, parseSyncConflictAnalysisPayload(rawText))
       } catch (error) {
         throw normalizeBridgeError(error)
       }

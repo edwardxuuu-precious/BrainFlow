@@ -10,6 +10,7 @@ import type {
   TextImportRequest,
   TextImportResponse,
 } from '../shared/ai-contract.js'
+import type { SyncAnalyzeConflictRequest } from '../shared/sync-contract.js'
 import { createApp } from './app.js'
 import { CodexBridgeError } from './codex-bridge.js'
 
@@ -147,6 +148,64 @@ const baseAdjudicationRequest: TextImportSemanticAdjudicationRequest = {
   ],
 }
 
+const baseAnalyzeConflictRequest: SyncAnalyzeConflictRequest<unknown> = {
+  conflict: {
+    id: 'conflict_1',
+    workspaceId: 'workspace_1',
+    entityType: 'document',
+    entityId: 'doc_1',
+    deviceId: 'device_1',
+    localRecord: {
+      id: 'doc_1',
+      userId: 'user_1',
+      workspaceId: 'workspace_1',
+      deviceId: 'device_1',
+      version: 2,
+      baseVersion: 1,
+      contentHash: 'hash_local',
+      updatedAt: 200,
+      deletedAt: null,
+      syncStatus: 'conflict',
+      payload: {
+        title: 'Local title',
+      },
+    },
+    cloudRecord: {
+      id: 'doc_1',
+      userId: 'user_1',
+      workspaceId: 'workspace_1',
+      deviceId: 'device_2',
+      version: 3,
+      baseVersion: 2,
+      contentHash: 'hash_cloud',
+      updatedAt: 300,
+      deletedAt: null,
+      syncStatus: 'conflict',
+      payload: {
+        title: 'Cloud title',
+      },
+    },
+    localPayload: { title: 'Local title' },
+    cloudPayload: { title: 'Cloud title' },
+    diffHints: {
+      updatedAtDeltaMs: 100,
+      sameContentHash: false,
+    },
+    analysisStatus: 'pending',
+    analysisSource: null,
+    recommendedResolution: null,
+    confidence: null,
+    summary: null,
+    reasons: [],
+    actionableResolutions: ['use_cloud', 'save_local_copy', 'merged_payload'],
+    mergedPayload: null,
+    analyzedAt: null,
+    analysisNote: null,
+    detectedAt: 400,
+    resolvedAt: null,
+  },
+}
+
 function createBridge(overrides?: Record<string, unknown>) {
   return {
     getStatus: vi.fn().mockResolvedValue(status),
@@ -156,6 +215,7 @@ function createBridge(overrides?: Record<string, unknown>) {
     resetSettings: vi.fn().mockResolvedValue(settings),
     streamChat: vi.fn(),
     planChanges: vi.fn(),
+    analyzeSyncConflict: vi.fn(),
     previewTextImport: vi.fn(),
     previewMarkdownImport: vi.fn(),
     adjudicateTextImportCandidates: vi.fn(),
@@ -428,5 +488,48 @@ describe('codex app', () => {
     })
     expect(bridge.adjudicateTextImportCandidates).toHaveBeenCalledWith(baseAdjudicationRequest)
     expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('[semantic][jobId=job_semantic_1]'))
+  })
+
+  it('proxies sync conflict analysis requests through the JSON route', async () => {
+    const bridge = createBridge({
+      analyzeSyncConflict: vi.fn().mockResolvedValue({
+        analysisSource: 'ai',
+        recommendedResolution: 'merged_payload',
+        confidence: 'high',
+        summary: 'AI recommends merging the two versions.',
+        reasons: ['The two versions contain complementary edits.'],
+        actionableResolutions: ['use_cloud', 'save_local_copy', 'merged_payload'],
+        mergedPayload: {
+          title: 'Merged title',
+        },
+        analyzedAt: 999,
+        analysisNote: null,
+      }),
+    })
+    const app = createApp({ bridge })
+
+    const response = await app.request('/api/sync/analyze-conflict', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(baseAnalyzeConflictRequest),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      analysisSource: 'ai',
+      recommendedResolution: 'merged_payload',
+      confidence: 'high',
+      summary: 'AI recommends merging the two versions.',
+      reasons: ['The two versions contain complementary edits.'],
+      actionableResolutions: ['use_cloud', 'save_local_copy', 'merged_payload'],
+      mergedPayload: {
+        title: 'Merged title',
+      },
+      analyzedAt: 999,
+      analysisNote: null,
+    })
+    expect(bridge.analyzeSyncConflict).toHaveBeenCalledWith(baseAnalyzeConflictRequest)
   })
 })

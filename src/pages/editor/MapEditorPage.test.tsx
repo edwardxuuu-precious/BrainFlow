@@ -58,6 +58,69 @@ const reactFlowTesting = vi.hoisted(() => ({
   onNodesChangeMock: vi.fn(),
 }))
 
+const textImportTesting = vi.hoisted(() => ({
+  lastDialogProps: null as Record<string, unknown> | null,
+  state: {
+    open: vi.fn(),
+    close: vi.fn(),
+    resetSession: vi.fn(),
+    previewFiles: vi.fn(),
+    previewText: vi.fn(),
+    setDraftSourceName: vi.fn(),
+    setDraftText: vi.fn(),
+    planningSummaries: [],
+    presetOverride: null,
+    setPresetOverride: vi.fn(),
+    archetypeOverride: null,
+    rerunPreviewWithPreset: vi.fn(),
+    setArchetypeOverride: vi.fn(),
+    rerunPreviewWithArchetype: vi.fn(),
+    toggleConflictApproval: vi.fn(),
+    confirmDraft: vi.fn(),
+    renamePreviewNode: vi.fn(),
+    promotePreviewNode: vi.fn(),
+    demotePreviewNode: vi.fn(),
+    deletePreviewNode: vi.fn(),
+    applyPreview: vi.fn(),
+    isOpen: false,
+    sourceName: '',
+    sourceType: 'text',
+    sourceFiles: [],
+    rawText: '',
+    draftSourceName: '',
+    draftText: '',
+    preprocessedHints: [],
+    preview: null,
+    draftTree: [],
+    previewTree: [],
+    draftConfirmed: false,
+    crossFileMergeSuggestions: [],
+    approvedConflictIds: [],
+    statusText: '',
+    progress: 0,
+    progressIndeterminate: false,
+    activeJobMode: null,
+    activeJobType: null,
+    fileCount: 0,
+    completedFileCount: 0,
+    currentFileName: null,
+    semanticMergeStage: null,
+    semanticCandidateCount: 0,
+    semanticAdjudicatedCount: 0,
+    semanticFallbackCount: 0,
+    modeHint: null,
+    error: null,
+    isPreviewing: false,
+    isApplying: false,
+    previewStartedAt: null,
+    previewFinishedAt: null,
+    applyProgress: 0,
+    appliedCount: 0,
+    totalOperations: 0,
+    currentApplyLabel: null,
+  },
+}))
+
 vi.mock('@xyflow/react', async () => {
   const React = await import('react')
 
@@ -257,71 +320,24 @@ vi.mock('../../features/ai/ai-client', () => ({
 }))
 
 vi.mock('../../features/import/components/TextImportDialog', () => ({
-  TextImportDialog: () => null,
+  TextImportDialog: (props: { open: boolean; onApply: () => void }) => {
+    textImportTesting.lastDialogProps = props as unknown as Record<string, unknown>
+    if (!props.open) {
+      return null
+    }
+
+    return (
+      <button type="button" onClick={props.onApply}>
+        mock apply import
+      </button>
+    )
+  },
 }))
 
 vi.mock('../../features/import/text-import-store', () => {
-  const state = {
-    open: vi.fn(),
-    close: vi.fn(),
-    previewFiles: vi.fn(),
-    previewText: vi.fn(),
-    setDraftSourceName: vi.fn(),
-    setDraftText: vi.fn(),
-    planningSummaries: [],
-    presetOverride: null,
-    setPresetOverride: vi.fn(),
-    archetypeOverride: null,
-    rerunPreviewWithPreset: vi.fn(),
-    setArchetypeOverride: vi.fn(),
-    rerunPreviewWithArchetype: vi.fn(),
-    toggleConflictApproval: vi.fn(),
-    confirmDraft: vi.fn(),
-    renamePreviewNode: vi.fn(),
-    promotePreviewNode: vi.fn(),
-    demotePreviewNode: vi.fn(),
-    deletePreviewNode: vi.fn(),
-    applyPreview: vi.fn(),
-    isOpen: false,
-    sourceName: '',
-    sourceType: 'text',
-    sourceFiles: [],
-    rawText: '',
-    draftSourceName: '',
-    draftText: '',
-    preprocessedHints: [],
-    preview: null,
-    draftTree: [],
-    previewTree: [],
-    draftConfirmed: false,
-    crossFileMergeSuggestions: [],
-    approvedConflictIds: [],
-    statusText: '',
-    progress: 0,
-    progressIndeterminate: false,
-    activeJobMode: null,
-    activeJobType: null,
-    fileCount: 0,
-    completedFileCount: 0,
-    currentFileName: null,
-    semanticMergeStage: null,
-    semanticCandidateCount: 0,
-    semanticAdjudicatedCount: 0,
-    semanticFallbackCount: 0,
-    modeHint: null,
-    error: null,
-    isPreviewing: false,
-    isApplying: false,
-    previewStartedAt: null,
-    previewFinishedAt: null,
-    applyProgress: 0,
-    appliedCount: 0,
-    totalOperations: 0,
-    currentApplyLabel: null,
-  }
-
   return {
-    useTextImportStore: <T,>(selector: (store: typeof state) => T) => selector(state),
+    useTextImportStore: <T,>(selector: (store: typeof textImportTesting.state) => T) =>
+      selector(textImportTesting.state),
   }
 })
 
@@ -369,6 +385,66 @@ describe('MapEditorPage', () => {
   beforeEach(() => {
     resetEditorStore()
     resetAiStore()
+    textImportTesting.lastDialogProps = null
+    Object.assign(textImportTesting.state, {
+      planningSummaries: [],
+      presetOverride: null,
+      archetypeOverride: null,
+      isOpen: false,
+      sourceName: '',
+      sourceType: 'text',
+      sourceFiles: [],
+      rawText: '',
+      draftSourceName: '',
+      draftText: '',
+      preprocessedHints: [],
+      preview: null,
+      draftTree: [],
+      previewTree: [],
+      draftConfirmed: false,
+      crossFileMergeSuggestions: [],
+      approvedConflictIds: [],
+      statusText: '',
+      progress: 0,
+      progressIndeterminate: false,
+      activeJobMode: null,
+      activeJobType: null,
+      fileCount: 0,
+      completedFileCount: 0,
+      currentFileName: null,
+      semanticMergeStage: null,
+      semanticCandidateCount: 0,
+      semanticAdjudicatedCount: 0,
+      semanticFallbackCount: 0,
+      modeHint: null,
+      error: null,
+      isPreviewing: false,
+      isApplying: false,
+      previewStartedAt: null,
+      previewFinishedAt: null,
+      applyProgress: 0,
+      appliedCount: 0,
+      totalOperations: 0,
+      currentApplyLabel: null,
+    })
+    textImportTesting.state.open.mockReset()
+    textImportTesting.state.close.mockReset()
+    textImportTesting.state.resetSession.mockReset()
+    textImportTesting.state.previewFiles.mockReset()
+    textImportTesting.state.previewText.mockReset()
+    textImportTesting.state.setDraftSourceName.mockReset()
+    textImportTesting.state.setDraftText.mockReset()
+    textImportTesting.state.setPresetOverride.mockReset()
+    textImportTesting.state.rerunPreviewWithPreset.mockReset()
+    textImportTesting.state.setArchetypeOverride.mockReset()
+    textImportTesting.state.rerunPreviewWithArchetype.mockReset()
+    textImportTesting.state.toggleConflictApproval.mockReset()
+    textImportTesting.state.confirmDraft.mockReset()
+    textImportTesting.state.renamePreviewNode.mockReset()
+    textImportTesting.state.promotePreviewNode.mockReset()
+    textImportTesting.state.demotePreviewNode.mockReset()
+    textImportTesting.state.deletePreviewNode.mockReset()
+    textImportTesting.state.applyPreview.mockReset()
     reactFlowTesting.handleNodesChange = null
     reactFlowTesting.handleSelectionStart = null
     reactFlowTesting.handleSelectionChange = null
@@ -742,6 +818,35 @@ describe('MapEditorPage', () => {
 
     expect(stabilizedCallCount).toBeGreaterThanOrEqual(initialCallCount)
     expect(vi.mocked(fetchCodexStatus)).toHaveBeenCalledTimes(stabilizedCallCount)
+  })
+
+  it('resets and closes the import session after apply succeeds', async () => {
+    const document = createMindMapDocument('Import apply')
+    const importedDocument = createMindMapDocument('Imported result')
+    const service = createService(document)
+
+    textImportTesting.state.isOpen = true
+    textImportTesting.state.applyPreview.mockResolvedValue({
+      document: importedDocument,
+      selectedTopicId: importedDocument.rootTopicId,
+      summary: 'Applied import preview.',
+      warnings: [],
+    })
+
+    render(
+      <MemoryRouter initialEntries={[`/map/${document.id}`]}>
+        <Routes>
+          <Route path="/map/:documentId" element={<MapEditorPage service={service} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('button', { name: 'mock apply import' })
+    await userEvent.click(screen.getByRole('button', { name: 'mock apply import' }))
+
+    await waitFor(() => expect(textImportTesting.state.applyPreview).toHaveBeenCalled())
+    expect(textImportTesting.state.resetSession).toHaveBeenCalledTimes(1)
+    expect(textImportTesting.state.close).toHaveBeenCalledTimes(1)
   })
 
   it('keeps critical ReactFlow handler and config props stable across unrelated rerenders', async () => {

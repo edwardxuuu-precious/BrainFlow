@@ -241,6 +241,7 @@ describe('text-import-store', () => {
 
   it('uses the automatic planning resolver when no overrides are set', async () => {
     const document = createMindMapDocument('Import doc')
+    const nestedTopicId = document.topics[document.rootTopicId].childIds[0]
 
     vi.mocked(startTextImportJob).mockImplementation((_request, _onEvent) => ({
       jobId: 'job_auto',
@@ -252,8 +253,8 @@ describe('text-import-store', () => {
     await useTextImportStore.getState().previewText(
       document,
       {
-        activeTopicId: document.rootTopicId,
-        selectedTopicIds: [document.rootTopicId],
+        activeTopicId: nestedTopicId,
+        selectedTopicIds: [nestedTopicId],
       },
       {
         sourceName: 'launch_runbook.md',
@@ -264,6 +265,7 @@ describe('text-import-store', () => {
 
     expect(startTextImportJob).toHaveBeenCalledWith(
       expect.objectContaining({
+        anchorTopicId: document.rootTopicId,
         intent: 'preserve_structure',
         archetype: undefined,
         archetypeMode: 'auto',
@@ -276,6 +278,39 @@ describe('text-import-store', () => {
       resolvedArchetype: 'method',
       isManual: false,
     })
+  })
+
+  it('allows users to explicitly anchor a single-file import to the current selection', async () => {
+    const document = createMindMapDocument('Import doc')
+    const nestedTopicId = document.topics[document.rootTopicId].childIds[0]
+    useTextImportStore.getState().setAnchorMode('current_selection')
+
+    vi.mocked(startTextImportJob).mockImplementation((_request, _onEvent) => ({
+      jobId: 'job_current_selection',
+      mode: 'local_markdown',
+      jobType: 'single',
+      cancel: vi.fn(),
+    }))
+
+    await useTextImportStore.getState().previewText(
+      document,
+      {
+        activeTopicId: nestedTopicId,
+        selectedTopicIds: [nestedTopicId],
+      },
+      {
+        sourceName: 'launch_notes.md',
+        sourceType: 'paste',
+        rawText: '# Launch\n- Call the lighthouse customer',
+      },
+    )
+
+    expect(startTextImportJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        anchorTopicId: nestedTopicId,
+      }),
+      expect.any(Function),
+    )
   })
 
   it('keeps manual overrides in reruns and request construction', async () => {
@@ -320,8 +355,11 @@ describe('text-import-store', () => {
 
   it('tracks batch progress and preserves state when the dialog closes', async () => {
     const document = createMindMapDocument('Import doc')
+    const nestedTopicId = document.topics[document.rootTopicId].childIds[0]
     const fileA = new File(['# Main'], 'GTM_main.md', { type: 'text/markdown' })
     const fileB = new File(['# Step 1'], 'GTM_step1.md', { type: 'text/markdown' })
+
+    useTextImportStore.getState().setAnchorMode('current_selection')
 
     vi.mocked(startTextImportBatchJob).mockImplementation((_request, onEvent) => {
       onEvent({
@@ -348,10 +386,17 @@ describe('text-import-store', () => {
     await useTextImportStore.getState().previewFiles(
       document,
       {
-        activeTopicId: document.rootTopicId,
-        selectedTopicIds: [document.rootTopicId],
+        activeTopicId: nestedTopicId,
+        selectedTopicIds: [nestedTopicId],
       },
       [fileA, fileB],
+    )
+
+    expect(startTextImportBatchJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        anchorTopicId: nestedTopicId,
+      }),
+      expect.any(Function),
     )
 
     useTextImportStore.getState().close()
@@ -360,9 +405,142 @@ describe('text-import-store', () => {
     expect(useTextImportStore.getState().isPreviewing).toBe(true)
     expect(useTextImportStore.getState().activeJobId).toBe('job_batch')
     expect(useTextImportStore.getState().activeJobType).toBe('batch')
+    expect(useTextImportStore.getState().sourceFiles).toEqual([
+      expect.objectContaining({ sourceName: 'GTM_main.md' }),
+      expect.objectContaining({ sourceName: 'GTM_step1.md' }),
+    ])
     expect(useTextImportStore.getState().fileCount).toBe(2)
     expect(useTextImportStore.getState().completedFileCount).toBe(1)
     expect(useTextImportStore.getState().currentFileName).toBe('GTM_step1.md')
+  })
+
+  it('clears the import session after a successful import cycle reset', async () => {
+    const document = createMindMapDocument('Import doc')
+    const preview: TextImportResponse = {
+      summary: 'Import preview ready',
+      baseDocumentUpdatedAt: document.updatedAt,
+      anchorTopicId: document.rootTopicId,
+      classification: {
+        archetype: 'plan',
+        confidence: 0.91,
+        rationale: 'Fixture classification.',
+        secondaryArchetype: 'report',
+      },
+      templateSummary: {
+        archetype: 'plan',
+        visibleSlots: ['actions'],
+        foldedSlots: ['risks'],
+      },
+      bundle: null,
+      sources: [],
+      semanticNodes: [],
+      semanticEdges: [],
+      views: [],
+      viewProjections: {},
+      defaultViewId: null,
+      activeViewId: null,
+      nodePlans: [
+        {
+          id: 'preview_root',
+          parentId: null,
+          order: 0,
+          title: 'Import: launch',
+          note: null,
+          semanticRole: 'section',
+          confidence: 'high',
+          sourceAnchors: [],
+          groupKey: 'root',
+          priority: 'primary',
+          collapsedByDefault: false,
+          templateSlot: null,
+        },
+      ],
+      previewNodes: [
+        {
+          id: 'preview_root',
+          parentId: null,
+          order: 0,
+          title: 'Import: launch',
+          note: null,
+          relation: 'new',
+          matchedTopicId: null,
+          reason: null,
+        },
+      ],
+      operations: [
+        {
+          id: 'import_root',
+          type: 'create_child',
+          parent: `topic:${document.rootTopicId}`,
+          title: 'Import: launch',
+          risk: 'low',
+          resultRef: 'preview_root',
+        },
+      ],
+      conflicts: [],
+      mergeSuggestions: [],
+      crossFileMergeSuggestions: [],
+      warnings: [],
+    }
+
+    vi.mocked(startTextImportJob).mockImplementation((_request, onEvent) => {
+      onEvent({
+        type: 'result',
+        data: preview,
+        mode: 'codex_import',
+        jobType: 'single',
+      })
+
+      return {
+        jobId: 'job_reset',
+        mode: 'codex_import',
+        jobType: 'single',
+        cancel: vi.fn(),
+      }
+    })
+
+    useTextImportStore.getState().setPresetOverride('action_first')
+    useTextImportStore.getState().setArchetypeOverride('plan')
+    useTextImportStore.getState().setAnchorMode('current_selection')
+
+    await useTextImportStore.getState().previewText(
+      document,
+      {
+        activeTopicId: document.rootTopicId,
+        selectedTopicIds: [document.rootTopicId],
+      },
+      {
+        sourceName: 'launch.md',
+        sourceType: 'file',
+        rawText: '# Launch',
+      },
+    )
+
+    useTextImportStore.getState().confirmDraft()
+    useTextImportStore.getState().resetSession()
+
+    expect(useTextImportStore.getState().isOpen).toBe(true)
+    expect(useTextImportStore.getState().sourceName).toBeNull()
+    expect(useTextImportStore.getState().sourceFiles).toEqual([])
+    expect(useTextImportStore.getState().rawText).toBe('')
+    expect(useTextImportStore.getState().draftSourceName).toBe('Pasted text')
+    expect(useTextImportStore.getState().draftText).toBe('')
+    expect(useTextImportStore.getState().preview).toBeNull()
+    expect(useTextImportStore.getState().draftTree).toEqual([])
+    expect(useTextImportStore.getState().previewTree).toEqual([])
+    expect(useTextImportStore.getState().draftConfirmed).toBe(false)
+    expect(useTextImportStore.getState().planningSummaries).toEqual([])
+    expect(useTextImportStore.getState().approvedConflictIds).toEqual([])
+    expect(useTextImportStore.getState().statusText).toBe('')
+    expect(useTextImportStore.getState().modeHint).toBeNull()
+    expect(useTextImportStore.getState().progress).toBe(0)
+    expect(useTextImportStore.getState().isPreviewing).toBe(false)
+    expect(useTextImportStore.getState().isApplying).toBe(false)
+    expect(useTextImportStore.getState().presetOverride).toBeNull()
+    expect(useTextImportStore.getState().archetypeOverride).toBeNull()
+    expect(useTextImportStore.getState().anchorMode).toBe('document_root')
+    expect(useTextImportStore.getState().fileCount).toBe(0)
+    expect(useTextImportStore.getState().currentFileName).toBeNull()
   })
 
   it('stores per-file automatic planning summaries for batch imports', async () => {

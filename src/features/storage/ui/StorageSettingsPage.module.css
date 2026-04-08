@@ -1,0 +1,260 @@
+.page {
+  min-height: 100vh;
+  padding: 40px clamp(20px, 4vw, 48px) 56px;
+  background: var(--surface);
+  color: var(--on-surface);
+}
+
+.shell {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  gap: 20px;
+}
+
+.header {
+  display: grid;
+  gap: 18px;
+  padding-bottom: 18px;
+  border-bottom: 0.5px solid var(--divider);
+}
+
+.headerTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.backButton {
+  padding-left: 0;
+}
+
+.headerBody {
+  display: grid;
+  gap: 8px;
+}
+
+.wordmark {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--font-size-display-sm);
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--on-surface);
+}
+
+.eyebrow,
+.panelLabel {
+  color: var(--on-surface-muted);
+  font-size: var(--font-size-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.title,
+.panelTitle,
+.sectionTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  color: var(--on-surface);
+}
+
+.title {
+  max-width: 16ch;
+  font-size: clamp(34px, 4vw, 56px);
+  font-weight: 600;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+}
+
+.subtitle,
+.panelText,
+.helperText,
+.bannerText,
+.statMeta,
+.detailRow,
+.listMeta {
+  margin: 0;
+  color: var(--on-surface-variant);
+  line-height: 1.7;
+}
+
+.subtitle {
+  max-width: 66ch;
+  font-size: var(--font-size-body-lg);
+}
+
+.banner {
+  padding: 14px 18px;
+  border-radius: 18px;
+  background: rgba(0, 88, 188, 0.06);
+  border-color: rgba(0, 88, 188, 0.16);
+}
+
+.heroPanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.95fr);
+  gap: 24px;
+  padding: 28px;
+}
+
+.heroCopy,
+.panel,
+.resultPanel,
+.report,
+.reportBlock {
+  display: grid;
+  gap: 16px;
+}
+
+.actions {
+  flex-wrap: wrap;
+}
+
+.errorText {
+  margin: 0;
+  color: var(--error-600);
+  line-height: 1.6;
+}
+
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.statCard {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 18px;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--color-line-soft);
+}
+
+.statLabel,
+.reportTitle {
+  margin: 0;
+  color: var(--on-surface-muted);
+  font-size: var(--font-size-label);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.statValue {
+  color: var(--on-surface);
+  font-size: var(--font-size-body-lg);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.secondaryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.panel,
+.resultPanel {
+  padding: 24px;
+}
+
+.panelHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sectionTitle {
+  margin-top: 6px;
+  font-size: var(--font-size-display-sm);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.detailList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.detailRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--divider);
+  font-size: var(--font-size-body-md);
+}
+
+.detailRow dt {
+  color: var(--on-surface-muted);
+}
+
+.detailRow dd {
+  margin: 0;
+  color: var(--on-surface);
+  font-weight: 500;
+  text-align: right;
+}
+
+.list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.listItem {
+  display: grid;
+  gap: 4px;
+  padding: 12px 0;
+  border-top: 0.5px solid var(--divider);
+}
+
+.listTitle {
+  color: var(--on-surface);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.reportBlock {
+  padding-top: 4px;
+}
+
+@media (max-width: 960px) {
+  .heroPanel,
+  .secondaryGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .page {
+    padding-inline: 16px;
+    padding-bottom: 40px;
+  }
+
+  .headerTop,
+  .panelHead,
+  .detailRow {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .statGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .detailRow dd {
+    text-align: left;
+  }
+}

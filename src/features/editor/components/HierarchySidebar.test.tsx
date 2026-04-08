@@ -124,6 +124,40 @@ describe('HierarchySidebar', () => {
     expect(onSelect).not.toHaveBeenCalled()
   })
 
+  it('uses data-collapsed as the single source for toggle visual state', () => {
+    const document = createMindMapDocument()
+
+    const { rerender } = render(
+      <HierarchySidebar
+        document={document}
+        activeTopicId={document.rootTopicId}
+        selectedTopicIds={[document.rootTopicId]}
+        collapsedTopicIds={[]}
+        onSelect={vi.fn()}
+        onToggleBranch={vi.fn()}
+        onPrimaryAction={vi.fn()}
+      />,
+    )
+
+    const expandedToggle = screen.getByRole('button', { name: `折叠 ${document.topics[document.rootTopicId].title}` })
+    expect(expandedToggle).toHaveAttribute('data-collapsed', 'false')
+
+    rerender(
+      <HierarchySidebar
+        document={document}
+        activeTopicId={document.rootTopicId}
+        selectedTopicIds={[document.rootTopicId]}
+        collapsedTopicIds={[document.rootTopicId]}
+        onSelect={vi.fn()}
+        onToggleBranch={vi.fn()}
+        onPrimaryAction={vi.fn()}
+      />,
+    )
+
+    const collapsedToggle = screen.getByRole('button', { name: `展开 ${document.topics[document.rootTopicId].title}` })
+    expect(collapsedToggle).toHaveAttribute('data-collapsed', 'true')
+  })
+
   it('hides child rows when the tree branch is collapsed', () => {
     const document = createMindMapDocument()
     const branchId = document.topics[document.rootTopicId].childIds[0]

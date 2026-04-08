@@ -139,7 +139,7 @@
   transition: transform 150ms ease;
 }
 
-.treeToggle[data-collapsed='true'] svg {
+.treeToggle[data-collapsed='false'] svg {
   transform: rotate(90deg);
 }
 

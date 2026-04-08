@@ -38,22 +38,22 @@ describe('DevSupervisor', () => {
     vi.useRealTimers()
   })
 
-  it('builds Windows child commands through cmd.exe instead of pnpm.cmd', () => {
+  it('builds Windows child commands through cmd.exe with npm run', () => {
     const spec = buildChildCommandSpec('win32', 'dev:web-only', 'C:\\repo', { TEST: '1' })
 
     expect(spec.command).toBe('cmd.exe')
-    expect(spec.args).toEqual(['/d', '/s', '/c', 'pnpm dev:web-only'])
+    expect(spec.args).toEqual(['/d', '/s', '/c', 'npm run dev:web-only'])
     expect(spec.options.detached).toBe(false)
-    expect(spec.label).toBe('cmd.exe /d /s /c "pnpm dev:web-only"')
+    expect(spec.label).toBe('cmd.exe /d /s /c "npm run dev:web-only"')
   })
 
-  it('builds non-Windows child commands directly with pnpm', () => {
+  it('builds non-Windows child commands directly with npm run', () => {
     const spec = buildChildCommandSpec('linux', 'dev:server', '/repo', { TEST: '1' })
 
-    expect(spec.command).toBe('pnpm')
-    expect(spec.args).toEqual(['dev:server'])
+    expect(spec.command).toBe('npm')
+    expect(spec.args).toEqual(['run', 'dev:server'])
     expect(spec.options.detached).toBe(true)
-    expect(spec.label).toBe('pnpm dev:server')
+    expect(spec.label).toBe('npm run dev:server')
   })
 
   it('restarts api without shutting down web when the bridge process exits', async () => {
@@ -84,7 +84,7 @@ describe('DevSupervisor', () => {
 
     expect(spawnProcess).toHaveBeenCalledTimes(3)
     expect(spawnProcess.mock.calls[2]?.[0]).toBe('cmd.exe')
-    expect(spawnProcess.mock.calls[2]?.[1]).toEqual(['/d', '/s', '/c', 'pnpm dev:server'])
+    expect(spawnProcess.mock.calls[2]?.[1]).toEqual(['/d', '/s', '/c', 'npm run dev:server'])
     expect(exitProcess).not.toHaveBeenCalled()
   })
 
@@ -123,7 +123,7 @@ describe('DevSupervisor', () => {
 
     expect(spawnProcess).toHaveBeenCalledTimes(4)
     expect(spawnProcess.mock.calls[3]?.[0]).toBe('cmd.exe')
-    expect(spawnProcess.mock.calls[3]?.[1]).toEqual(['/d', '/s', '/c', 'pnpm dev:server'])
+    expect(spawnProcess.mock.calls[3]?.[1]).toEqual(['/d', '/s', '/c', 'npm run dev:server'])
   })
 
   it('restarts api when the health check fails twice in a row', async () => {

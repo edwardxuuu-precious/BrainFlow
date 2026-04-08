@@ -1,7 +1,12 @@
 import type { KeyboardEvent } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Button, Icon, IconButton } from '../../../components/ui'
+import {
+  getRenderableTopicRichText,
+  isTopicRichTextEmpty,
+  topicRichTextToHtml,
+} from '../../documents/topic-rich-text'
 import type {
   TopicMetadataPatch,
   TopicNode,
@@ -52,7 +57,6 @@ export function PropertiesPanel({
   isFirstLevel,
   draftTitle,
   isInspectorEditing,
-  topicOptions: _topicOptions,
   availableLabels,
   onRenameChange,
   onRenameCommit,
@@ -69,9 +73,19 @@ export function PropertiesPanel({
 }: PropertiesPanelProps) {
   const titleInputRef = useRef<HTMLInputElement>(null)
   const skipBlurActionRef = useRef(false)
-  const [labelDraft, setLabelDraft] = useState('')
+  const [labelDraftState, setLabelDraftState] = useState<{ topicId: string | null; value: string }>({
+    topicId: null,
+    value: '',
+  })
+  const [noteEditorState, setNoteEditorState] = useState<{
+    topicId: string | null
+    isEditing: boolean
+  }>({
+    topicId: null,
+    isEditing: false,
+  })
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
-    note: true,
+    note: false,
     metadata: false,
     aiLock: true,
   })
@@ -111,13 +125,21 @@ export function PropertiesPanel({
     titleInputRef.current?.select()
   }, [isInspectorEditing])
 
-  useEffect(() => {
-    setLabelDraft('')
-  }, [topic?.id])
-
+  const activeTopicId = topic?.id ?? null
+  const labelDraft = labelDraftState.topicId === activeTopicId ? labelDraftState.value : ''
   const isMultiSelection = selectionCount > 1
+  const isNoteEditing = noteEditorState.topicId === activeTopicId && noteEditorState.isEditing
   const headingTypography = topic ? getTopicTitleTypography(topic.title, 'regular') : null
   const headingStyleVars = topic ? getTopicTitleStyleVars(topic.title, 'regular') : null
+  const renderedNoteDocument = useMemo(
+    () => (topic ? getRenderableTopicRichText(topic.noteRich, topic.note) : null),
+    [topic],
+  )
+  const hasRenderableNote = renderedNoteDocument ? !isTopicRichTextEmpty(renderedNoteDocument) : false
+  const notePreviewHtml = useMemo(
+    () => (renderedNoteDocument ? topicRichTextToHtml(renderedNoteDocument) : ''),
+    [renderedNoteDocument],
+  )
 
   const addLabel = () => {
     if (!topic) {
@@ -130,7 +152,7 @@ export function PropertiesPanel({
     }
 
     onMetadataChange({ labels: [...topic.metadata.labels, nextLabel] })
-    setLabelDraft('')
+    setLabelDraftState({ topicId: topic.id, value: '' })
   }
 
   const handleLabelKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -356,12 +378,47 @@ export function PropertiesPanel({
               </svg>
             </button>
             {!collapsedSections.note && (
-              <TopicRichTextEditor
-                id="topic-note"
-                value={topic.noteRich}
-                fallbackPlainText={topic.note}
-                onChange={onNoteChange}
-              />
+              <div className={styles.noteSection}>
+                <div className={styles.noteModeRow}>
+                  <p className={styles.noteModeHint}>
+                    {isNoteEditing
+                      ? '编辑模式下会实时保存变更，完成后可返回展示视图。'
+                      : hasRenderableNote
+                        ? '当前先展示已保存的详细内容，点击编辑后进入富文本编辑器。'
+                        : '当前还没有详细内容，点击编辑后可使用富文本补充说明。'}
+                  </p>
+                  <Button
+                    tone={isNoteEditing ? 'secondary' : 'ghost'}
+                    size="sm"
+                    iconStart={isNoteEditing ? 'check' : 'edit'}
+                    onClick={() =>
+                      setNoteEditorState({
+                        topicId: activeTopicId,
+                        isEditing: !isNoteEditing,
+                      })
+                    }
+                  >
+                    {isNoteEditing ? '完成' : '编辑'}
+                  </Button>
+                </div>
+                {isNoteEditing ? (
+                  <TopicRichTextEditor
+                    id="topic-note"
+                    value={topic.noteRich}
+                    fallbackPlainText={topic.note}
+                    onChange={onNoteChange}
+                  />
+                ) : hasRenderableNote ? (
+                  <div
+                    className={styles.notePreview}
+                    dangerouslySetInnerHTML={{ __html: notePreviewHtml }}
+                  />
+                ) : (
+                  <div className={classNames(styles.notePreview, styles.notePreviewEmpty)}>
+                    暂无详细内容
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
@@ -422,7 +479,12 @@ export function PropertiesPanel({
                     className={styles.nativeInput}
                     placeholder="输入标签，回车添加"
                     aria-label="新增标签"
-                    onChange={(event) => setLabelDraft(event.target.value)}
+                    onChange={(event) =>
+                      setLabelDraftState({
+                        topicId: activeTopicId,
+                        value: event.target.value,
+                      })
+                    }
                     onKeyDown={handleLabelKeyDown}
                   />
                   <Button tone="primary" size="sm" onClick={addLabel}>

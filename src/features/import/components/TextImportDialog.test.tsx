@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -229,10 +229,14 @@ function createProps(
     currentApplyLabel: null,
     presetOverride: null,
     archetypeOverride: null,
+    anchorMode: 'document_root',
+    documentRootLabel: 'Central topic',
+    currentSelectionLabel: 'Selected branch',
     onClose: () => {},
     onChooseFile: () => {},
     onPresetChange: () => {},
     onArchetypeChange: () => {},
+    onAnchorModeChange: () => {},
     onDraftSourceNameChange: () => {},
     onDraftTextChange: () => {},
     onGenerateFromText: () => {},
@@ -355,12 +359,64 @@ describe('TextImportDialog', () => {
     )
 
     await user.click(screen.getByRole('button', { name: 'Advanced settings' }))
-    const [presetSelect, archetypeSelect] = screen.getAllByRole('combobox')
+    const comboboxes = screen.getAllByRole('combobox')
+    const presetSelect = comboboxes[1]
+    const archetypeSelect = comboboxes[2]
     await user.selectOptions(presetSelect, 'preserve')
     await user.selectOptions(archetypeSelect, 'argument')
 
     expect(onPresetChange).toHaveBeenCalledWith('preserve')
     expect(onArchetypeChange).toHaveBeenCalledWith('argument')
+  })
+
+  it('defaults the import target to the document root and warns when nesting under the current selection', async () => {
+    const user = userEvent.setup()
+    const onAnchorModeChange = vi.fn()
+
+    render(
+      <TextImportDialog
+        {...createProps({
+          onAnchorModeChange,
+        })}
+      />,
+    )
+
+    const anchorSelect = within(screen.getByRole('region', { name: 'Import target' })).getByRole('combobox')
+    expect(anchorSelect).toHaveValue('document_root')
+    expect(
+      screen.getByText(
+        'Default. Each new import starts at the document root so repeated imports stay as sibling branches.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/will be nested under the currently selected topic/i)).not.toBeInTheDocument()
+
+    await user.selectOptions(anchorSelect, 'current_selection')
+
+    expect(onAnchorModeChange).toHaveBeenCalledWith('current_selection')
+  })
+
+  it('shows the nesting warning when the current selection anchor is active', () => {
+    render(
+      <TextImportDialog
+        {...createProps({
+          anchorMode: 'current_selection',
+          currentSelectionLabel: 'Imported branch',
+        })}
+      />,
+    )
+
+    const anchorSelect = within(screen.getByRole('region', { name: 'Import target' })).getByRole('combobox')
+    expect(anchorSelect).toHaveValue('current_selection')
+    expect(
+      screen.getByText(
+        'Import under the currently selected topic. This can intentionally nest the next imported branch.',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'The next import will be nested under the currently selected topic instead of the document root.',
+      ),
+    ).toBeInTheDocument()
   })
 
   it('shows a low-confidence hint without blocking the source step', () => {

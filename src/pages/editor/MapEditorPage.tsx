@@ -19,7 +19,7 @@ import {
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopicNode } from '../../components/topic-node/TopicNode'
-import { IconButton, SegmentedControl, ToolbarGroup } from '../../components/ui'
+import { IconButton, ToolbarGroup } from '../../components/ui'
 import { SaveIndicator } from '../../components/SaveIndicator'
 import { AiSidebar } from '../../features/ai/components/AiSidebar'
 import { useAiStore } from '../../features/ai/ai-store'
@@ -27,7 +27,6 @@ import {
   documentService,
   setRecentDocumentId,
 } from '../../features/documents/document-service'
-import type { KnowledgeViewType } from '../../../shared/ai-contract'
 import type {
   DocumentService,
   MindMapDocument,
@@ -47,6 +46,10 @@ import { exportCanvasAsPng, exportDocumentAsJson } from '../../features/editor/e
 import { layoutMindMap, type MindMapFlowNode } from '../../features/editor/layout'
 import { getTopicAncestorIds, getTopicLayout } from '../../features/editor/tree-operations'
 import { useEditorShortcuts } from '../../features/editor/use-editor-shortcuts'
+import {
+  workspaceStorageService,
+  type WorkspaceStorageStatus,
+} from '../../features/storage/services/workspace-storage-service'
 import styles from './MapEditorPage.module.css'
 import revertIcon from '/revert.png'
 import contentIcon from '/content.png'
@@ -68,11 +71,6 @@ const nodeTypes = { topic: TopicNode }
 const reactFlowProOptions = { hideAttribution: true }
 const reactFlowMultiSelectionKeyCode = ['Meta', 'Control', 'Shift']
 const reactFlowMiddleMousePanButtons = [1]
-const KNOWLEDGE_VIEW_OPTIONS: Array<{ value: KnowledgeViewType; label: string }> = [
-  { value: 'archive_view', label: 'Archive' },
-  { value: 'thinking_view', label: 'Thinking' },
-  { value: 'execution_view', label: 'Execution' },
-]
 
 interface DragSnapshot {
   topicId: string
@@ -99,6 +97,21 @@ type ViewportMode = 'desktop' | 'tablet' | 'mobile'
 type RightPanelMode = 'outline' | 'details' | 'markers' | 'format' | 'ai'
 type MarkerSubtab = 'markers' | 'stickers'
 type FormatSubtab = 'topic' | 'canvas'
+
+function createEmptyStorageStatus(): WorkspaceStorageStatus {
+  return {
+    mode: 'local-only',
+    workspaceName: null,
+    localSavedAt: null,
+    cloudSyncedAt: null,
+    isOnline: true,
+    isSyncing: false,
+    conflicts: [],
+    pendingImportReport: null,
+    migrationAvailable: true,
+    lastSyncError: null,
+  }
+}
 
 function areFlowNodesEquivalent(
   currentNode: MindMapFlowNode,
@@ -263,6 +276,9 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const mainMenuDropdownRef = useRef<HTMLDivElement>(null)
   const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(null)
   const [supportsHoverSubmenu, setSupportsHoverSubmenu] = useState(() => canUseHoverSubmenu())
+  const [storageStatus, setStorageStatus] = useState<WorkspaceStorageStatus>(() =>
+    typeof window === 'undefined' ? createEmptyStorageStatus() : workspaceStorageService.getStatus(),
+  )
 
   useEffect(() => {
     setPortalContainer(window.document.body)
@@ -307,7 +323,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const future = useEditorStore((state) => state.future)
   const isDirty = useEditorStore((state) => state.isDirty)
   const hasPendingWorkspaceSave = useEditorStore((state) => state.hasPendingWorkspaceSave)
-  const lastSavedAt = useEditorStore((state) => state.lastSavedAt)
   const setDocument = useEditorStore((state) => state.setDocument)
   const setSelection = useEditorStore((state) => state.setSelection)
   const toggleTopicSelection = useEditorStore((state) => state.toggleTopicSelection)
@@ -330,7 +345,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const setTopicAiLocked = useEditorStore((state) => state.setTopicAiLocked)
   const setTopicsAiLocked = useEditorStore((state) => state.setTopicsAiLocked)
   const setViewport = useEditorStore((state) => state.setViewport)
-  const switchKnowledgeView = useEditorStore((state) => state.switchKnowledgeView)
   const setSidebarOpen = useEditorStore((state) => state.setSidebarOpen)
   const undo = useEditorStore((state) => state.undo)
   const redo = useEditorStore((state) => state.redo)
@@ -374,6 +388,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const aiUndoLastAppliedChange = useAiStore((state) => state.undoLastAppliedChange)
   const textImportOpen = useTextImportStore((state) => state.open)
   const textImportClose = useTextImportStore((state) => state.close)
+  const textImportResetSession = useTextImportStore((state) => state.resetSession)
   const textImportPreviewFiles = useTextImportStore((state) => state.previewFiles)
   const textImportPreviewText = useTextImportStore((state) => state.previewText)
   const textImportSetDraftSourceName = useTextImportStore((state) => state.setDraftSourceName)
@@ -382,6 +397,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const textImportPresetOverride = useTextImportStore((state) => state.presetOverride)
   const textImportSetPresetOverride = useTextImportStore((state) => state.setPresetOverride)
   const textImportArchetypeOverride = useTextImportStore((state) => state.archetypeOverride)
+  const textImportAnchorMode = useTextImportStore((state) => state.anchorMode)
+  const textImportSetAnchorMode = useTextImportStore((state) => state.setAnchorMode)
   const textImportRerunPreviewWithPreset = useTextImportStore((state) => state.rerunPreviewWithPreset)
   const textImportSetArchetypeOverride = useTextImportStore((state) => state.setArchetypeOverride)
   const textImportRerunPreviewWithArchetype = useTextImportStore((state) => state.rerunPreviewWithArchetype)
@@ -475,6 +492,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     }
   }, [document])
   const selectedTopic = activeTopicId && document ? document.topics[activeTopicId] ?? null : null
+  const textImportRootLabel = document ? document.topics[document.rootTopicId]?.title ?? 'Document root' : 'Document root'
+  const textImportCurrentSelectionLabel = selectedTopic?.title ?? null
   const selectedTopics = useMemo(
     () =>
       document
@@ -671,13 +690,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         ? '智能导入（批次可应用）'
         : '智能导入（可应用）'
       : '智能导入'
-  const activeKnowledgeBundle = useMemo(() => {
-    if (!document?.workspace.activeImportBundleId) {
-      return null
-    }
-    return document.knowledgeImports[document.workspace.activeImportBundleId] ?? null
-  }, [document])
-  const activeKnowledgeView = document?.workspace.activeKnowledgeViewId ?? null
   const themeVariables = useMemo(
     () =>
       document
@@ -693,6 +705,10 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         : undefined,
     [document],
   )
+
+  useEffect(() => {
+    return workspaceStorageService.subscribe(setStorageStatus)
+  }, [])
 
   useEffect(() => {
     if (!documentId) {
@@ -1297,6 +1313,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     useEditorStore
       .getState()
       .applyExternalDocument(result.document, result.selectedTopicId ?? activeTopicId)
+    textImportResetSession()
+    textImportClose()
     await reactFlowRef.current?.fitView({ padding: 0.24, duration: 180 })
   }
 
@@ -1607,6 +1625,16 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
                       </div>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    className={styles.menuItem}
+                    onClick={() => {
+                      closeMainMenu()
+                      navigate('/settings')
+                    }}
+                  >
+                    数据存储与同步
+                  </button>
                 </div>,
                 portalContainer
               )
@@ -1662,7 +1690,13 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
                 {document.title}
               </div>
             )}
-            <SaveIndicator lastSavedAt={lastSavedAt} isDirty={isDirty} />
+            <SaveIndicator
+              localSavedAt={storageStatus.localSavedAt}
+              cloudSyncedAt={storageStatus.cloudSyncedAt}
+              isDirty={isDirty}
+              isSyncing={storageStatus.isSyncing}
+              hasConflict={storageStatus.conflicts.length > 0}
+            />
           </div>
         </div>
 
@@ -1737,14 +1771,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             <img src={agentsIcon} alt="AI" style={{ width: 20, height: 20, display: 'block' }} />
             <span>AI</span>
           </button>
-          {activeKnowledgeBundle && activeKnowledgeView ? (
-            <SegmentedControl
-              value={activeKnowledgeView}
-              onChange={(value) => switchKnowledgeView(value)}
-              options={KNOWLEDGE_VIEW_OPTIONS}
-              ariaLabel="知识视图切换"
-            />
-          ) : null}
           <button
             type="button"
             className={styles.exportButtonPrimary}
@@ -1897,10 +1923,14 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
           planningSummaries={textImportPlanningSummaries}
           presetOverride={textImportPresetOverride}
           archetypeOverride={textImportArchetypeOverride}
+          anchorMode={textImportAnchorMode}
+          documentRootLabel={textImportRootLabel}
+          currentSelectionLabel={textImportCurrentSelectionLabel}
           onClose={textImportClose}
           onChooseFile={() => textImportInputRef.current?.click()}
           onPresetChange={(value) => void handleChangeTextImportPreset(value)}
           onArchetypeChange={(value) => void handleChangeTextImportArchetype(value)}
+          onAnchorModeChange={textImportSetAnchorMode}
           onDraftSourceNameChange={textImportSetDraftSourceName}
           onDraftTextChange={textImportSetDraftText}
           onGenerateFromText={() => void handleGenerateTextImportPreview()}
