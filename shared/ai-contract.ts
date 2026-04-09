@@ -84,21 +84,26 @@ export type AiCanvasTarget = `topic:${string}` | `ref:${string}`
 export type TextImportNodePriority = 'primary' | 'secondary' | 'supporting'
 
 export type KnowledgeSemanticNodeType =
+  | 'section'
+  | 'claim'
+  | 'evidence'
+  | 'task'
+  | 'decision'
+  | 'risk'
+  | 'metric'
+  | 'question'
   | 'topic'
   | 'criterion'
   | 'insight'
-  | 'question'
-  | 'evidence'
-  | 'decision'
   | 'goal'
   | 'project'
-  | 'task'
   | 'review'
 
 export type KnowledgeSemanticEdgeType =
   | 'belongs_to'
   | 'supports'
   | 'contradicts'
+  | 'contrasts_with'
   | 'leads_to'
   | 'depends_on'
   | 'derived_from'
@@ -138,6 +143,7 @@ export interface KnowledgeSemanticTaskFields {
   due_date: string | null
   priority: KnowledgeTaskPriority | null
   depends_on: string[]
+  output: string | null
   source_refs: KnowledgeSourceRef[]
   definition_of_done: string | null
 }
@@ -302,6 +308,9 @@ export type TextImportContentProfile =
   | 'mixed'
   | 'brain_dump'
 export type TextImportArchetype =
+  | 'analysis'
+  | 'process'
+  | 'notes'
   | 'method'
   | 'argument'
   | 'plan'

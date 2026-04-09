@@ -2,6 +2,7 @@ import type {
   AiCanvasOperation,
   AiCanvasTarget,
   AiImportOperation,
+  KnowledgeSemanticNodeType,
   TextImportArchetype,
   TextImportClassification,
   TextImportConfidence,
@@ -135,6 +136,9 @@ const GENERIC_TITLE_PATTERNS = [
 ]
 
 const TEXT_IMPORT_ARCHETYPE_LABELS: Record<TextImportArchetype, string> = {
+  analysis: 'Analysis',
+  process: 'Process',
+  notes: 'Notes',
   method: 'Method',
   argument: 'Argument',
   plan: 'Plan',
@@ -197,7 +201,7 @@ const TEMPLATE_SLOT_LABELS: Record<TextImportTemplateSlot, string> = {
   themes: '主题分组',
 }
 
-const TEMPLATE_SLOT_ORDER: Record<TextImportArchetype, SlotPlanEntry[]> = {
+const TEMPLATE_SLOT_ORDER: Partial<Record<TextImportArchetype, SlotPlanEntry[]>> = {
   method: [
     { slot: 'goal', label: TEMPLATE_SLOT_LABELS.goal, semanticRole: 'summary', priority: 'primary' },
     { slot: 'use_cases', label: TEMPLATE_SLOT_LABELS.use_cases, semanticRole: 'section', priority: 'secondary' },
@@ -314,12 +318,21 @@ const TEMPLATE_SLOT_ORDER: Record<TextImportArchetype, SlotPlanEntry[]> = {
 }
 
 const DEFAULT_NODE_BUDGETS: Record<TextImportContentProfile, TextImportNodeBudget> = {
-  report: { maxRoots: 6, maxDepth: 4, maxTotalNodes: 32 },
-  meeting_notes: { maxRoots: 6, maxDepth: 4, maxTotalNodes: 28 },
-  procedure: { maxRoots: 6, maxDepth: 4, maxTotalNodes: 30 },
-  mixed: { maxRoots: 7, maxDepth: 4, maxTotalNodes: 36 },
+  report: { maxRoots: 6, maxDepth: 4, maxTotalNodes: 38 },
+  meeting_notes: { maxRoots: 6, maxDepth: 4, maxTotalNodes: 34 },
+  procedure: { maxRoots: 6, maxDepth: 4, maxTotalNodes: 42 },
+  mixed: { maxRoots: 7, maxDepth: 4, maxTotalNodes: 42 },
   brain_dump: { maxRoots: 5, maxDepth: 4, maxTotalNodes: 24 },
 }
+
+const PACKAGING_TITLES = new Set([
+  '说明',
+  '对话记录',
+  '用户',
+  '助手',
+  '备注',
+  'GTM 对话整理',
+])
 
 const semanticHintsCache = new Map<string, TextImportSemanticHint[]>()
 const semanticUnitsCache = new Map<string, TextImportSemanticUnit[]>()
@@ -383,23 +396,30 @@ function createSourcePath(path: string[]): string[] {
 }
 
 function isQuestionText(value: string): boolean {
-  return /[?]$/.test(value) || /(open question|question|pending confirmation|unresolved question)/iu.test(value)
+  return (
+    /[?？]$/.test(value) ||
+    /(open question|question|pending confirmation|unresolved question|谁|什么|是否|怎么|为什么|哪[里个]|能否|有没有|是不是)/iu.test(
+      value,
+    )
+  )
 }
 
 function isDecisionText(value: string): boolean {
-  return /(decision|decided|agreed|resolved|confirmed)/iu.test(value)
+  return /(decision|decided|agreed|resolved|confirmed|决定|决策|结论|确认|采用|拍板)/iu.test(value)
 }
 
 function isRiskText(value: string): boolean {
-  return /(risk|blocker|issue|warning|problem|闂|椋庨櫓|闃诲|闅愭偅|鎸戞垬|娉ㄦ剰浜嬮」)/iu.test(value)
+  return /(risk|blocker|issue|warning|problem|风险|阻塞|隐患|挑战|注意事项|失败|代价|损失|麻烦|难受)/iu.test(value)
 }
 
 function isActionText(value: string): boolean {
-  return /(todo|action|follow up|next step|owner|璐熻矗|鎺ㄨ繘|钀藉疄|寰呭姙|琛屽姩|璺熻繘)/iu.test(value)
+  return /(todo|action|follow up|next step|owner|负责|推进|落实|待办|行动|跟进|下一步|建议|执行|落地|做法)/iu.test(value)
 }
 
 function isMetricText(value: string): boolean {
-  return /(%|kpi|okr|roi|gmv|ctr|cvr|metric|鎸囨爣|澧為暱|涓嬮檷|棰勭畻|\b\d+(?:\.\d+)?\b)/iu.test(value)
+  return /(%|kpi|okr|roi|gmv|ctr|cvr|metric|指标|增长|下降|预算|权重|打分|分数|评分|金额|收入|成本|转化率)/iu.test(
+    value,
+  )
 }
 
 function isTimelineText(value: string): boolean {
@@ -445,14 +465,14 @@ export function inferTextImportSemanticHintKind(
   if (isDecisionText(normalized)) {
     return { kind: 'decision', confidence: 'high' }
   }
-  if (isRiskText(normalized)) {
-    return { kind: 'risk', confidence: 'high' }
+  if (hintKind === 'table' || isMetricText(normalized)) {
+    return { kind: 'metric', confidence: hintKind === 'table' ? 'high' : 'medium' }
   }
   if (isQuestionText(normalized)) {
     return { kind: 'question', confidence: 'high' }
   }
-  if (hintKind === 'table' || isMetricText(normalized)) {
-    return { kind: 'metric', confidence: hintKind === 'table' ? 'high' : 'medium' }
+  if (isRiskText(normalized)) {
+    return { kind: 'risk', confidence: 'high' }
   }
   if (isTimelineText(normalized)) {
     return { kind: 'timeline', confidence: 'medium' }
@@ -562,53 +582,66 @@ function inferSemanticUnitType(options: {
   if (!normalized) {
     return 'evidence'
   }
-  if (/(鐩爣|鐩殑|objective|goal|aim)/iu.test(normalized)) {
+  if (/(目标|目的|objective|goal|aim)/iu.test(normalized)) {
     return 'goal'
   }
-  if (/(閫傜敤|鍦烘櫙|use case|when to use|閫傚悎)/iu.test(normalized)) {
+  if (/(适用|场景|use case|when to use|适合)/iu.test(normalized)) {
     return 'use_case'
   }
-  if (/(鍓嶆彁|鍑嗗|渚濊禆|before you start|prerequisite|requirement)/iu.test(normalized)) {
+  if (/(前提|准备|依赖|before you start|prerequisite|requirement)/iu.test(normalized)) {
     return 'prerequisite'
   }
-  if (/(鍘熷垯|principle|guideline|rule of thumb)/iu.test(normalized)) {
+  if (/(原则|关键原则|principle|guideline|rule of thumb)/iu.test(normalized)) {
     return 'principle'
   }
-  if (/(鏍囧噯|楠屾敹|妫€楠寍criteria|checklist|quality bar|success criteria)/iu.test(normalized)) {
+  if (
+    /(标准|验收|检查|检验|判断|筛选|痛感强度|立即购买性|触达效率|案例扩散性|criteria|checklist|quality bar|success criteria)/iu.test(
+      normalized,
+    )
+  ) {
     return 'criterion'
   }
-  if (/(瀹氫箟|鏄寚|means|refers to|defined as)/iu.test(normalized)) {
+  if (/^(最终)?输出|产出/iu.test(normalized)) {
+    return 'result'
+  }
+  if (/(定义|是指|means|refers to|defined as)/iu.test(normalized)) {
     return 'definition'
   }
-  if (/(瀵规瘮|姣旇緝|vs\b|versus|鍖哄埆|tradeoff|difference)/iu.test(normalized)) {
+  if (/(对比|比较|vs\b|versus|区别|tradeoff|difference)/iu.test(normalized)) {
     return 'comparison'
   }
-  if (/(绀轰緥|渚嬪|case study|for example|example|妗堜緥)/iu.test(normalized)) {
+  if (/(示例|例如|case study|for example|example|案例)/iu.test(normalized)) {
     return 'example'
   }
-  if (/(鍘熷洜|because|due to|root cause|瀵艰嚧|why)/iu.test(normalized)) {
+  if (/(原因|because|due to|root cause|导致|why|为什么)/iu.test(normalized)) {
     return 'cause'
   }
-  if (/(褰卞搷|鍚庢灉|impact|blast radius|鎹熷け)/iu.test(normalized)) {
+  if (/(影响|后果|impact|blast radius|损失)/iu.test(normalized)) {
     return 'impact'
   }
-  if (/(闄愬埗|灞€闄恷鍙嶄緥|tradeoff|limitation)/iu.test(normalized)) {
+  if (/(限制|局限|反例|tradeoff|limitation)/iu.test(normalized)) {
     return 'limitation'
   }
-  if (/(owner|璐熻矗浜簗璐ｄ换浜簗@)/iu.test(normalized)) {
+  if (/(owner|负责人|责任人|@)/iu.test(normalized)) {
     return 'owner'
   }
-  if (options.hintKind === 'ordered_list' || /(step|workflow|first|second|then|finally|next)/iu.test(normalized)) {
+  if (
+    options.hintKind === 'ordered_list' ||
+    /^\d+[).）]\s*/u.test(normalized) ||
+    /(step|workflow|first|second|then|finally|next|步骤|流程|第一步|然后|最后|下一步|怎么做|做法|落地)/iu.test(
+      normalized,
+    )
+  ) {
     return 'step'
   }
   if (options.semanticHintKind === 'decision' || isDecisionText(normalized)) {
     return 'decision'
   }
-  if (options.semanticHintKind === 'risk' || isRiskText(normalized)) {
-    return 'risk'
-  }
   if (options.semanticHintKind === 'question' || isQuestionText(normalized)) {
     return 'question'
+  }
+  if (options.semanticHintKind === 'risk' || isRiskText(normalized)) {
+    return 'risk'
   }
   if (options.semanticHintKind === 'timeline' || isTimelineText(normalized)) {
     return 'timeline'
@@ -619,22 +652,22 @@ function inferSemanticUnitType(options: {
   if (options.semanticHintKind === 'action' || options.hintKind === 'task_list' || isActionText(normalized)) {
     return 'action'
   }
-  if (/(should|must|we believe|claim|thesis|conclusion)/iu.test(normalized)) {
+  if (/(should|must|we believe|claim|thesis|conclusion|观点|主张|论点|应该|必须)/iu.test(normalized)) {
     return 'claim'
   }
-  if (/(鎬荤粨|鎽樿|鎬昏|overall|summary|in short|姒傛嫭)/iu.test(normalized)) {
+  if (/(总结|摘要|总览|overall|summary|in short|概括)/iu.test(normalized)) {
     return 'summary'
   }
-  if (/(绛栫暐|strategy|approach|鏂规|璺緞|鎵撴硶)/iu.test(normalized)) {
+  if (/(策略|strategy|approach|方案|路径|打法|机制|框架)/iu.test(normalized)) {
     return 'strategy'
   }
-  if (/(缁撴灉|杈炬垚|瀹屾垚|浜у嚭|outcome|result)/iu.test(normalized)) {
+  if (/(结果|达成|完成|产出|输出|outcome|result)/iu.test(normalized)) {
     return 'result'
   }
-  if (/(杩涘睍|鎺ㄨ繘|杩涜涓瓅progress)/iu.test(normalized)) {
+  if (/(进展|推进|进行中|progress)/iu.test(normalized)) {
     return 'progress'
   }
-  if (/(闂|鏁呴殰|寮傚父|incident|issue|bug)/iu.test(normalized)) {
+  if (/(故障|异常|incident|issue|bug)/iu.test(normalized)) {
     return 'issue'
   }
   if (options.hintKind === 'heading') {
@@ -821,36 +854,57 @@ export function scoreTextImportArchetypes(options: {
     target.reasons.push(reason)
   }
 
-  if (/(sop|runbook|playbook|workflow|process|procedure|method|娴佺▼|鏂规硶)/iu.test(sourceName)) {
+  if (/(sop|runbook|playbook|workflow|process|procedure|method|流程|方法)/iu.test(sourceName)) {
     add('method', 3, 'Source name looks procedural.')
   }
-  if (/(argument|opinion|瑙傜偣|璁鸿瘉|绔嬪満)/iu.test(sourceName)) {
+  if (/(argument|opinion|观点|论证|立场)/iu.test(sourceName)) {
     add('argument', 3, 'Source name looks argumentative.')
   }
-  if (/(plan|roadmap|proposal|鏂规|瑙勫垝|璁″垝)/iu.test(sourceName)) {
+  if (/(plan|roadmap|proposal|方案|规划|计划)/iu.test(sourceName)) {
     add('plan', 3, 'Source name looks plan-oriented.')
   }
-  if (/(report|weekly|monthly|鍛ㄦ姤|鏈堟姤|姹囨姤)/iu.test(sourceName)) {
+  if (/(report|weekly|monthly|周报|月报|汇报)/iu.test(sourceName)) {
     add('report', 3, 'Source name looks like a report.')
   }
-  if (/(meeting|minutes|绾|璁胯皥|sync|1on1|retro)/iu.test(sourceName)) {
+  if (/(meeting|minutes|纪要|访谈|会议|sync|1on1|retro)/iu.test(sourceName)) {
     add('meeting', 3, 'Source name looks like meeting notes.')
   }
-  if (/(postmortem|incident|retro|澶嶇洏|浜嬫晠|鏁呴殰|鏍瑰洜)/iu.test(sourceName)) {
+  if (/(postmortem|incident|retro|复盘|事故|故障|根因)/iu.test(sourceName)) {
     add('postmortem', 3, 'Source name looks like a postmortem.')
   }
-  if (/(guide|knowledge|concept|definition|鏁欑▼|鐭ヨ瘑|鍘熺悊|姒傚康)/iu.test(sourceName)) {
+  if (/(guide|knowledge|concept|definition|教程|知识|原理|概念)/iu.test(sourceName)) {
     add('knowledge', 3, 'Source name looks explanatory.')
   }
 
   add('method', orderedCount * 1.2, 'Ordered steps increase method confidence.')
   add('method', countUnits(units, 'step', 'prerequisite', 'criterion', 'principle', 'use_case') * 0.9, 'Method units detected.')
-  add('argument', countUnits(units, 'claim', 'evidence', 'metric', 'comparison', 'limitation') * 0.8, 'Argument signals detected.')
+  add(
+    'argument',
+    countUnits(units, 'claim', 'comparison', 'limitation') * 1.05 +
+      countUnits(units, 'metric') * 0.35 +
+      Math.min(4, countUnits(units, 'evidence')) * 0.15,
+    'Argument signals detected.',
+  )
   add('plan', countUnits(units, 'goal', 'strategy', 'action', 'owner', 'timeline', 'risk', 'metric') * 0.85, 'Planning signals detected.')
   add('report', countUnits(units, 'summary', 'result', 'progress', 'metric', 'risk', 'action') * 0.8, 'Report signals detected.')
   add('meeting', countUnits(units, 'decision', 'action', 'question', 'owner', 'timeline', 'risk') * 0.95, 'Meeting signals detected.')
-  add('postmortem', countUnits(units, 'issue', 'cause', 'impact', 'action', 'risk', 'evidence') * 0.9, 'Postmortem signals detected.')
+  add(
+    'postmortem',
+    countUnits(units, 'issue', 'cause', 'impact', 'action', 'risk') * 0.9 + Math.min(4, countUnits(units, 'evidence')) * 0.1,
+    'Postmortem signals detected.',
+  )
   add('knowledge', countUnits(units, 'definition', 'comparison', 'example', 'principle', 'summary') * 0.85, 'Knowledge signals detected.')
+
+  const sourceText = collapseWhitespace(options.preprocessedHints.map((hint) => hint.text).join('\n'))
+  const numberedHeadingCount = options.preprocessedHints.filter(
+    (hint) => hint.kind === 'heading' && /^\d+[).）]\s*/u.test(hint.text),
+  ).length
+  if (/(具体怎么做|步骤|筛选表|判断|打分|建议下一步|落地|做法|框架|流程|方法|检验标准|customer discovery)/iu.test(sourceText)) {
+    add('method', 4, 'Chinese procedural guidance signals detected.')
+  }
+  if (numberedHeadingCount >= 3) {
+    add('method', numberedHeadingCount * 0.9, 'Numbered section headings look like a method outline.')
+  }
 
   if (tableCount > 0) {
     add('report', tableCount * 0.8, 'Tables often indicate reporting metrics.')
@@ -878,6 +932,20 @@ export function scoreTextImportArchetypes(options: {
     add('method', 2.2, 'Steps plus criteria align with method text.')
   }
 
+  const evidenceRatio = units.length > 0 ? countUnits(units, 'evidence') / units.length : 0
+  const methodScore = scores.find((score) => score.archetype === 'method')
+  const argumentScore = scores.find((score) => score.archetype === 'argument')
+  if (
+    methodScore &&
+    argumentScore &&
+    argumentScore.score > methodScore.score &&
+    argumentScore.score - methodScore.score <= 3 &&
+    evidenceRatio > 0.45 &&
+    numberedHeadingCount >= 2
+  ) {
+    add('method', argumentScore.score - methodScore.score + 0.6, 'Evidence-heavy numbered Chinese guidance is safer as a method.')
+  }
+
   const strongBuckets = scores.filter((score) => score.archetype !== 'mixed' && score.score >= 4).length
   if (strongBuckets >= 3) {
     add('mixed', strongBuckets * 0.9, 'Several archetypes compete strongly.')
@@ -903,10 +971,13 @@ export function mapTextImportArchetypeToContentProfile(
   archetype: TextImportArchetype,
 ): TextImportContentProfile {
   switch (archetype) {
+    case 'process':
     case 'method':
       return 'procedure'
+    case 'analysis':
     case 'report':
       return 'report'
+    case 'notes':
     case 'meeting':
       return 'meeting_notes'
     case 'argument':
@@ -928,21 +999,26 @@ export function resolveTextImportClassification(options: {
   archetypeMode?: TextImportRequest['archetypeMode']
 }): TextImportClassification {
   if (options.archetypeMode === 'manual' && options.explicitArchetype) {
+    const archetype = mapLegacyArchetypeToDocumentType(options.explicitArchetype)
     return {
-      archetype: options.explicitArchetype,
+      archetype,
       confidence: 1,
-      rationale: `Manually fixed to the ${TEXT_IMPORT_ARCHETYPE_LABELS[options.explicitArchetype]} template.`,
+      rationale: `Manually fixed to ${TEXT_IMPORT_ARCHETYPE_LABELS[archetype]} document structure.`,
       secondaryArchetype: null,
     }
   }
 
-  const scores = scoreTextImportArchetypes(options)
+  const scores = detectDocumentStructureArchetype({
+    sourceName: options.sourceName,
+    preprocessedHints: options.preprocessedHints,
+    semanticUnits: options.semanticUnits,
+  })
   const [top1, top2] = scores
   if (!top1) {
     return {
-      archetype: 'mixed',
+      archetype: 'analysis',
       confidence: 0.3,
-      rationale: 'No reliable archetype signal was detected.',
+      rationale: 'No reliable document type signal was detected, so analysis stays the safest default.',
       secondaryArchetype: null,
     }
   }
@@ -960,7 +1036,7 @@ export function resolveTextImportClassification(options: {
     rationale:
       rationaleParts.length > 0
         ? `${rationaleParts.join(' ')}${confidenceAdjustment}`
-        : `Detected ${TEXT_IMPORT_ARCHETYPE_LABELS[top1.archetype]}-like signals.`,
+        : `Detected ${TEXT_IMPORT_ARCHETYPE_LABELS[top1.archetype]} document-structure signals.`,
     secondaryArchetype: top2?.score ? top2.archetype : null,
   }
 }
@@ -1083,15 +1159,18 @@ export function resolveTextImportPresetSelection(options: {
   }
 
   switch (options.classification?.archetype) {
+    case 'notes':
     case 'meeting':
     case 'plan':
     case 'postmortem':
       add('action_first', 1.2, 'The detected archetype usually carries actions, decisions, and risks.')
       break
+    case 'process':
     case 'method':
     case 'knowledge':
       add('preserve', 1.1, 'The detected archetype benefits from keeping structure visible.')
       break
+    case 'analysis':
     case 'argument':
     case 'report':
     case 'mixed':
@@ -1461,12 +1540,420 @@ function createAnchorsFromUnit(unit: TextImportSemanticUnit): TextImportSourceAn
 
 function titleFromUnit(unit: TextImportSemanticUnit): string {
   const firstLine = normalizeText(unit.text).split('\n')[0] ?? ''
-  return truncate(firstLine || 'Untitled', 60)
+  const cleaned = firstLine
+    .replace(/^#+\s*/, '')
+    .replace(/^>\s*/, '')
+    .replace(/^\d+[.)）]\s*/, '')
+    .replace(/^\*\*(.+)\*\*$/, '$1')
+    .replace(/`/g, '')
+    .trim()
+  return truncate(cleaned || 'Untitled', 60)
 }
 
 function combineFoldedSlotLines(lines: string[]): string | null {
   const note = lines.filter(Boolean).join('\n').trim()
   return note || null
+}
+
+function isPackagingSemanticUnit(unit: TextImportSemanticUnit): boolean {
+  const text = collapseWhitespace(unit.text.replace(/^#+\s*/, ''))
+  const lastHeading = collapseWhitespace(unit.headingPath[unit.headingPath.length - 1] ?? '')
+  if (!text || text === '---') {
+    return true
+  }
+  if (PACKAGING_TITLES.has(text)) {
+    return true
+  }
+  if (PACKAGING_TITLES.has(lastHeading) && text !== lastHeading) {
+    return true
+  }
+  return (
+    /^GTM 对话整理$/u.test(text) ||
+    /本文件整理了当前对话框/u.test(text) ||
+    /将本对话框内的所有内容整理成/u.test(text) ||
+    /^文件格式：Markdown/u.test(text) ||
+    /Markdown 是一种适合用纯文本编写/u.test(text) ||
+    /turn\d+.*search\d+/u.test(text)
+  )
+}
+
+type DocumentStructureNodeType = Extract<
+  KnowledgeSemanticNodeType,
+  'section' | 'claim' | 'evidence' | 'task' | 'decision' | 'risk' | 'metric' | 'question'
+>
+
+interface DocumentSectionPlan {
+  id: string
+  titleKey: string
+  lineStart: number
+  level: number
+}
+
+function mapLegacyArchetypeToDocumentType(archetype: TextImportArchetype): TextImportArchetype {
+  switch (archetype) {
+    case 'method':
+      return 'process'
+    case 'argument':
+    case 'report':
+    case 'knowledge':
+    case 'postmortem':
+    case 'mixed':
+      return 'analysis'
+    case 'meeting':
+      return 'notes'
+    case 'analysis':
+    case 'process':
+    case 'plan':
+    case 'notes':
+    default:
+      return archetype
+  }
+}
+
+function isDocumentStructureArchetype(archetype: TextImportArchetype): boolean {
+  return archetype === 'analysis' || archetype === 'process' || archetype === 'plan' || archetype === 'notes'
+}
+
+function compressDocumentLabel(value: string, fallback: string): string {
+  const cleaned = collapseWhitespace(value)
+    .replace(/^#+\s*/, '')
+    .replace(/^>\s*/, '')
+    .replace(/^\d+[.)）]\s*/, '')
+    .replace(/^[-*+]\s*/, '')
+    .replace(/^\[[ xX]\]\s*/, '')
+    .replace(/^\*\*(.+)\*\*$/, '$1')
+    .replace(/`/g, '')
+    .replace(/^(结论|核心观点|分论点|证据|数据|任务|行动项|建议下一步|检验标准|适用场景)[:：]\s*/u, '')
+    .trim()
+  const firstClause = cleaned.split(/[。；;.!?？\n]/u).map((part) => part.trim()).find(Boolean) ?? cleaned
+  const label = firstClause || cleaned || fallback
+  return truncate(label, /[\u4e00-\u9fff]/u.test(label) ? 18 : 42)
+}
+
+function documentRoleForType(type: DocumentStructureNodeType): TextImportSemanticRole {
+  switch (type) {
+    case 'decision':
+      return 'decision'
+    case 'task':
+      return 'action'
+    case 'risk':
+      return 'risk'
+    case 'question':
+      return 'question'
+    case 'metric':
+      return 'metric'
+    case 'evidence':
+      return 'evidence'
+    case 'claim':
+      return 'summary'
+    case 'section':
+    default:
+      return 'section'
+  }
+}
+
+function mapUnitToDocumentNodeType(unit: TextImportSemanticUnit): DocumentStructureNodeType {
+  if (isStrictExecutableTask(unit.text)) {
+    return 'task'
+  }
+  switch (unit.unitType) {
+    case 'claim':
+    case 'summary':
+    case 'goal':
+    case 'strategy':
+    case 'definition':
+    case 'principle':
+    case 'result':
+    case 'cause':
+    case 'impact':
+    case 'comparison':
+      return 'claim'
+    case 'decision':
+      return 'decision'
+    case 'risk':
+    case 'issue':
+    case 'limitation':
+      return 'risk'
+    case 'question':
+      return 'question'
+    case 'metric':
+    case 'criterion':
+      return 'metric'
+    case 'example':
+    case 'timeline':
+    case 'owner':
+      return 'evidence'
+    case 'action':
+    case 'step':
+      return isStrictExecutableTask(unit.text) ? 'task' : 'section'
+    case 'prerequisite':
+    case 'use_case':
+      return 'section'
+    case 'evidence':
+    case 'progress':
+    default:
+      return 'evidence'
+  }
+}
+
+function isStrictExecutableTask(text: string): boolean {
+  const normalized = collapseWhitespace(text)
+  if (!normalized) {
+    return false
+  }
+  const hasActionVerb =
+    /(列出|访谈|打分|整理|验证|输出|比较|执行|收集|创建|更新|确认|推进|完成|制定|生成|记录|跟进|review|validate|list|interview|score|compare|execute|create|collect|produce|deliver)/iu.test(
+      normalized,
+    )
+  const hasOutput =
+    /(表格|名单|结论|访谈记录|评分结果|结果|报告|清单|文档|输出|产出|定义|记录|table|list|report|record|score|result|definition|deliverable|output)/iu.test(
+      normalized,
+    )
+  const looksLikeNonTask =
+    /(原则|标准|定义|背景|观点|本质上|是指|意味着|通常|不要|应该优先|核心不是|不是.*而是)/iu.test(
+      normalized,
+    ) && !/(输出|产出|生成|列出|整理|验证)/iu.test(normalized)
+  return hasActionVerb && hasOutput && !looksLikeNonTask
+}
+
+function inferTaskOutput(text: string): string | null {
+  const normalized = collapseWhitespace(text)
+  const explicit = normalized.match(/(?:输出|产出|生成|形成|得到|整理成)\s*(?:一份|一个|一条|若干)?([^。；;\n]{2,32})/u)
+  if (explicit?.[1]) {
+    return compressDocumentLabel(explicit[1], '产出物')
+  }
+  const outputMatch = normalized.match(
+    /(Beachhead Segment 筛选表|beachhead 定义|筛选表|名单|结论|访谈记录|评分结果|报告|清单|文档|table|list|report|record|score|result|definition)/iu,
+  )
+  return outputMatch?.[1] ? outputMatch[1] : null
+}
+
+function detectDocumentStructureArchetype(options: {
+  sourceName: string
+  preprocessedHints: TextImportPreprocessHint[]
+  semanticUnits: TextImportSemanticUnit[]
+}): ArchetypeScore[] {
+  const sourceName = options.sourceName.toLowerCase()
+  const sourceText = collapseWhitespace(options.preprocessedHints.map((hint) => hint.text).join('\n'))
+  const units = options.semanticUnits
+  const orderedCount = countHintsByKind(options.preprocessedHints, 'ordered_list')
+  const taskListCount = countHintsByKind(options.preprocessedHints, 'task_list')
+  const headingCount = countHintsByKind(options.preprocessedHints, 'heading')
+
+  const scores: ArchetypeScore[] = [
+    { archetype: 'analysis', score: 0.7, reasons: ['Analysis is the neutral document-structure default.'] },
+    { archetype: 'process', score: 0, reasons: [] },
+    { archetype: 'plan', score: 0, reasons: [] },
+    { archetype: 'notes', score: 0, reasons: [] },
+  ]
+  const add = (archetype: TextImportArchetype, value: number, reason: string) => {
+    const target = scores.find((candidate) => candidate.archetype === archetype)
+    if (!target || value <= 0) {
+      return
+    }
+    target.score += value
+    target.reasons.push(reason)
+  }
+
+  if (/(analysis|research|argument|report|study|分析|研究|论证|报告|观点|结论)/iu.test(sourceName)) {
+    add('analysis', 3, 'Source name looks analytical.')
+  }
+  if (/(sop|runbook|playbook|workflow|process|procedure|method|流程|方法|操作|说明)/iu.test(sourceName)) {
+    add('process', 3, 'Source name looks procedural.')
+  }
+  if (/(plan|roadmap|proposal|方案|规划|计划|路线图)/iu.test(sourceName)) {
+    add('plan', 3, 'Source name looks plan-oriented.')
+  }
+  if (/(meeting|minutes|notes|纪要|会议|访谈|对话|记录|sync|1on1)/iu.test(sourceName)) {
+    add('notes', 3, 'Source name looks like notes or minutes.')
+  }
+
+  add('analysis', countUnits(units, 'claim', 'evidence', 'metric', 'comparison', 'limitation', 'summary') * 0.7, 'Claims, evidence, and analysis units detected.')
+  add('process', orderedCount * 1.1 + countUnits(units, 'step', 'criterion', 'principle', 'prerequisite') * 0.95, 'Steps, criteria, and principles detected.')
+  add('plan', countUnits(units, 'goal', 'strategy', 'action', 'owner', 'timeline', 'risk', 'metric') * 0.9, 'Plan signals detected.')
+  add('notes', taskListCount * 1.1 + countUnits(units, 'decision', 'question', 'owner', 'timeline', 'action') * 0.95, 'Notes signals detected.')
+
+  if (/(具体怎么做|步骤|筛选表|判断|打分|落地|做法|框架|流程|方法|SOP|操作说明)/iu.test(sourceText)) {
+    add('process', 3, 'Procedural guidance signals detected.')
+  }
+  if (/(目标|路线图|里程碑|负责人|时间线|下一步|计划|方案|roadmap|milestone)/iu.test(sourceText)) {
+    add('plan', 2.2, 'Planning language detected.')
+  }
+  if (/(会议纪要|对话记录|用户|助手|决定|待确认|open question|action item)/iu.test(sourceText)) {
+    add('notes', 2.4, 'Conversation or meeting-note structure detected.')
+  }
+  if (headingCount >= 2 && countUnits(units, 'claim', 'evidence', 'metric') >= 3) {
+    add('analysis', 1.5, 'Structured argument or research sections detected.')
+  }
+
+  return scores.sort((left, right) => right.score - left.score)
+}
+
+function findDocumentSectionForUnit(
+  unit: TextImportSemanticUnit,
+  sections: DocumentSectionPlan[],
+  rootId: string,
+): string {
+  for (let index = unit.headingPath.length - 1; index >= 0; index -= 1) {
+    const titleKey = normalizeTitleKey(unit.headingPath[index] ?? '')
+    const matches = sections
+      .filter((section) => section.titleKey === titleKey && section.lineStart <= unit.lineStart)
+      .sort((left, right) => right.lineStart - left.lineStart)
+    if (matches[0]) {
+      return matches[0].id
+    }
+  }
+  const nearest = [...sections]
+    .filter((section) => section.lineStart <= unit.lineStart)
+    .sort((left, right) => right.lineStart - left.lineStart)[0]
+  return nearest?.id ?? rootId
+}
+
+function appendTaskMetadataToNote(unit: TextImportSemanticUnit): string {
+  const output = inferTaskOutput(unit.text)
+  const block = [
+    'status: todo',
+    output ? `output: ${output}` : null,
+  ].filter((line): line is string => Boolean(line)).join('\n')
+  return [normalizeText(unit.excerpt), block].filter(Boolean).join('\n\n')
+}
+
+export function buildTextImportDocumentStructurePlan(options: {
+  rootTitle: string
+  classification: TextImportClassification
+  preprocessedHints: TextImportPreprocessHint[]
+  semanticUnits: TextImportSemanticUnit[]
+  nodeBudget: TextImportNodeBudget
+}): { nodePlans: TextImportNodePlan[]; templateSummary: TextImportTemplateSummary } {
+  const nodePlans: TextImportNodePlan[] = []
+  const rootId = 'import_root'
+  nodePlans.push({
+    id: rootId,
+    parentId: null,
+    order: 0,
+    title: options.rootTitle,
+    note: null,
+    semanticRole: 'section',
+    semanticType: 'section',
+    confidence: 'high',
+    sourceAnchors: [],
+    groupKey: 'logic_spine',
+    priority: 'primary',
+    collapsedByDefault: false,
+    templateSlot: null,
+  })
+
+  const meaningfulHints = options.preprocessedHints.filter((hint) => {
+    const pseudoUnit: TextImportSemanticUnit = {
+      id: hint.id,
+      unitType: 'summary',
+      text: hint.text,
+      excerpt: hint.raw,
+      confidence: 'medium',
+      lineStart: hint.lineStart,
+      lineEnd: hint.lineEnd,
+      sourcePath: hint.sourcePath,
+      headingPath: hint.sourcePath,
+    }
+    return !isPackagingSemanticUnit(pseudoUnit)
+  })
+  const headings = meaningfulHints.filter((hint) => hint.kind === 'heading')
+  const firstHeading = headings[0]
+  const skipDocumentTitleHeading =
+    Boolean(firstHeading && firstHeading.lineStart <= 2 && headings.length > 1)
+  const headingIdByLine = new Map<number, string>()
+  const sectionPlans: DocumentSectionPlan[] = []
+  const headingStack: Array<{ level: number; id: string }> = []
+
+  headings.forEach((heading, headingIndex) => {
+    if (skipDocumentTitleHeading && heading === firstHeading) {
+      return
+    }
+    if (nodePlans.length >= options.nodeBudget.maxTotalNodes) {
+      return
+    }
+    while (headingStack.length > 0 && headingStack[headingStack.length - 1].level >= heading.level) {
+      headingStack.pop()
+    }
+    const parentId = headingStack[headingStack.length - 1]?.id ?? rootId
+    const siblingOrder = nodePlans.filter((node) => node.parentId === parentId).length
+    const nodeId = createPlanId('section', headingIndex)
+    headingIdByLine.set(heading.lineStart, nodeId)
+    headingStack.push({ level: heading.level, id: nodeId })
+    sectionPlans.push({
+      id: nodeId,
+      titleKey: normalizeTitleKey(heading.text),
+      lineStart: heading.lineStart,
+      level: heading.level,
+    })
+    nodePlans.push({
+      id: nodeId,
+      parentId,
+      order: siblingOrder,
+      title: compressDocumentLabel(heading.text, '主题块'),
+      note: null,
+      semanticRole: 'section',
+      semanticType: 'section',
+      confidence: 'high',
+      sourceAnchors: [{ lineStart: heading.lineStart, lineEnd: heading.lineEnd }],
+      groupKey: 'logic_spine',
+      priority: parentId === rootId ? 'primary' : 'secondary',
+      collapsedByDefault: false,
+      templateSlot: null,
+    })
+  })
+
+  const units = options.semanticUnits
+    .filter((unit) => !isPackagingSemanticUnit(unit))
+    .filter((unit) => !headingIdByLine.has(unit.lineStart))
+
+  const lastClaimBySection = new Map<string, string>()
+  units.forEach((unit, unitIndex) => {
+    if (nodePlans.length >= options.nodeBudget.maxTotalNodes) {
+      return
+    }
+    let semanticType = mapUnitToDocumentNodeType(unit)
+    const sectionParentId = findDocumentSectionForUnit(unit, sectionPlans, rootId)
+    let parentId = sectionParentId
+    if (semanticType === 'evidence' || semanticType === 'metric') {
+      parentId = lastClaimBySection.get(sectionParentId) ?? sectionParentId
+    }
+    if (semanticType === 'section' && sectionParentId !== rootId && unit.unitType !== 'step') {
+      semanticType = 'claim'
+    }
+    const nodeId = createPlanId(`unit_${semanticType}`, unitIndex)
+    const siblingOrder = nodePlans.filter((node) => node.parentId === parentId).length
+    const note = semanticType === 'task'
+      ? appendTaskMetadataToNote(unit)
+      : normalizeText(unit.excerpt) || null
+    nodePlans.push({
+      id: nodeId,
+      parentId,
+      order: siblingOrder,
+      title: compressDocumentLabel(unit.text, semanticType === 'task' ? '待执行动作' : '文档节点'),
+      note,
+      semanticRole: documentRoleForType(semanticType),
+      semanticType,
+      confidence: unit.confidence,
+      sourceAnchors: createAnchorsFromUnit(unit),
+      groupKey: semanticType === 'evidence' || semanticType === 'metric' ? 'supporting_evidence' : 'logic_spine',
+      priority: semanticType === 'evidence' || semanticType === 'metric' ? 'supporting' : 'secondary',
+      collapsedByDefault: semanticType === 'evidence',
+      templateSlot: null,
+    })
+    if (semanticType === 'claim') {
+      lastClaimBySection.set(sectionParentId, nodeId)
+    }
+  })
+
+  return {
+    nodePlans,
+    templateSummary: {
+      archetype: options.classification.archetype,
+      visibleSlots: [],
+      foldedSlots: [],
+    },
+  }
 }
 
 function estimateSlotPriority(entry: SlotPlanEntry): number {
@@ -1490,29 +1977,29 @@ function selectTemplateSlotForUnit(
     case 'method':
       if (unit.unitType === 'goal' || unit.unitType === 'summary') return 'goal'
       if (unit.unitType === 'use_case') return 'use_cases'
-      if (unit.unitType === 'prerequisite' || /(鍓嶆彁|鍑嗗|鐜|渚濊禆)/iu.test(text)) return 'prerequisites'
+      if (unit.unitType === 'prerequisite' || /(前提|准备|环境|依赖)/iu.test(text)) return 'prerequisites'
       if (unit.unitType === 'step' || unit.unitType === 'action') return 'steps'
       if (unit.unitType === 'principle' || /(principle|guideline|rule)/iu.test(text)) return 'principles'
-      if (unit.unitType === 'criterion' || unit.unitType === 'metric') return 'criteria'
+      if (unit.unitType === 'criterion' || unit.unitType === 'metric' || unit.unitType === 'question') return 'criteria'
       if (unit.unitType === 'risk' || unit.unitType === 'issue' || unit.unitType === 'limitation') return 'pitfalls'
       return 'examples'
     case 'argument':
-      if (unit.unitType === 'claim' || /(鏍稿績瑙傜偣|涓诲紶|璁虹偣)/iu.test(text)) return 'claims'
+      if (unit.unitType === 'claim' || /(核心观点|主张|论点)/iu.test(text)) return 'claims'
       if (unit.unitType === 'summary') return 'thesis'
       if (unit.unitType === 'metric') return 'data'
       if (unit.unitType === 'limitation' || unit.unitType === 'risk' || /(counterexample|limitation|tradeoff)/iu.test(text)) return 'limitations'
-      if (/(缁撹|鍥犳|鎵€浠缁间笂)/iu.test(text)) return 'conclusion'
+      if (/(结论|因此|所以|综上)/iu.test(text)) return 'conclusion'
       return unit.unitType === 'evidence' || unit.unitType === 'example' ? 'evidence' : 'claims'
     case 'plan':
       if (unit.unitType === 'goal' || unit.unitType === 'summary') return 'goal'
-      if (unit.unitType === 'strategy' || /(绛栫暐|璺緞|鏂规)/iu.test(text)) return 'strategy'
+      if (unit.unitType === 'strategy' || /(策略|路径|方案)/iu.test(text)) return 'strategy'
       if (unit.unitType === 'owner') return 'owners'
       if (unit.unitType === 'timeline') return 'timeline'
       if (unit.unitType === 'risk' || unit.unitType === 'issue') return 'risks'
       if (unit.unitType === 'metric') return 'success_metrics'
       return 'actions'
     case 'report':
-      if (unit.unitType === 'result' || /(缁撴灉|杈炬垚|浜у嚭)/iu.test(text)) return 'key_results'
+      if (unit.unitType === 'result' || /(结果|达成|产出)/iu.test(text)) return 'key_results'
       if (unit.unitType === 'progress' || /(progress|ongoing|in progress)/iu.test(text)) return 'progress'
       if (unit.unitType === 'metric') return 'metrics'
       if (unit.unitType === 'risk' || unit.unitType === 'issue') return 'blockers'
@@ -1530,15 +2017,15 @@ function selectTemplateSlotForUnit(
       if (unit.unitType === 'cause') return 'causes'
       if (unit.unitType === 'impact') return 'impacts'
       if (unit.unitType === 'issue' || unit.unitType === 'risk') return 'issues'
-      if (/(淇|缂撹В|mitigation|fix)/iu.test(text) || unit.unitType === 'action') return 'fixes'
-      if (/(棰勯槻|闃叉|閬垮厤鍐嶆|prevention)/iu.test(text) || unit.unitType === 'principle') return 'preventions'
+      if (/(修复|缓解|mitigation|fix)/iu.test(text) || unit.unitType === 'action') return 'fixes'
+      if (/(预防|防止|避免再次|prevention)/iu.test(text) || unit.unitType === 'principle') return 'preventions'
       if (unit.unitType === 'evidence' || unit.unitType === 'metric' || unit.unitType === 'example') return 'evidence'
       return 'background'
     case 'knowledge':
       if (unit.unitType === 'definition' || unit.unitType === 'summary') return 'definition'
-      if (/(缁勬垚|妯″潡|component)/iu.test(text)) return 'components'
-      if (/(鍘熺悊|鏈哄埗|mechanism|how it works)/iu.test(text) || unit.unitType === 'principle') return 'mechanism'
-      if (/(鍒嗙被|category|type)/iu.test(text)) return 'categories'
+      if (/(组成|模块|component)/iu.test(text)) return 'components'
+      if (/(原理|机制|mechanism|how it works)/iu.test(text) || unit.unitType === 'principle') return 'mechanism'
+      if (/(分类|category|type)/iu.test(text)) return 'categories'
       if (unit.unitType === 'comparison') return 'comparisons'
       if (unit.unitType === 'risk' || unit.unitType === 'limitation') return 'cautions'
       return 'examples'
@@ -1580,7 +2067,9 @@ function buildSlotAssignments(
   archetype: TextImportArchetype,
   semanticUnits: TextImportSemanticUnit[],
 ): PlannedUnitAssignment[] {
-  const assignments: PlannedUnitAssignment[] = semanticUnits.map((unit) => ({
+  const relevantUnits = semanticUnits.filter((unit) => !isPackagingSemanticUnit(unit))
+  const unitsForPlanning = relevantUnits.length > 0 ? relevantUnits : semanticUnits
+  const assignments: PlannedUnitAssignment[] = unitsForPlanning.map((unit) => ({
     unit,
     slot: selectTemplateSlotForUnit(archetype, unit),
     parentUnitId: null,
@@ -1627,7 +2116,7 @@ export function buildTextImportTemplatePlan(options: {
   semanticUnits: TextImportSemanticUnit[]
   nodeBudget: TextImportNodeBudget
 }): { nodePlans: TextImportNodePlan[]; templateSummary: TextImportTemplateSummary } {
-  const slotDefinitions = TEMPLATE_SLOT_ORDER[options.archetype]
+  const slotDefinitions = TEMPLATE_SLOT_ORDER[options.archetype] ?? TEMPLATE_SLOT_ORDER.mixed ?? []
   const assignments = buildSlotAssignments(options.archetype, options.semanticUnits)
   const assignmentsBySlot = new Map<TextImportTemplateSlot, PlannedUnitAssignment[]>()
 
@@ -1822,12 +2311,20 @@ export function planTextImportFromSemanticHints(options: {
     archetypeMode: options.archetypeMode,
   })
   const profile = options.profile ?? mapTextImportArchetypeToContentProfile(classification.archetype)
-  const template = buildTextImportTemplatePlan({
-    rootTitle: options.rootTitle,
-    archetype: classification.archetype,
-    semanticUnits,
-    nodeBudget: options.nodeBudget,
-  })
+  const template = isDocumentStructureArchetype(classification.archetype)
+    ? buildTextImportDocumentStructurePlan({
+        rootTitle: options.rootTitle,
+        classification,
+        preprocessedHints: options.preprocessedHints,
+        semanticUnits,
+        nodeBudget: options.nodeBudget,
+      })
+    : buildTextImportTemplatePlan({
+        rootTitle: options.rootTitle,
+        archetype: classification.archetype,
+        semanticUnits,
+        nodeBudget: options.nodeBudget,
+      })
 
   return {
     nodePlans: template.nodePlans,

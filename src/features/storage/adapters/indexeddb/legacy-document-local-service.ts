@@ -210,6 +210,10 @@ function normalizeKnowledgeTaskFields(
     depends_on: Array.isArray(value.depends_on)
       ? value.depends_on.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
       : [],
+    output:
+      typeof value.output === 'string' && value.output.trim().length > 0
+        ? value.output
+        : null,
     source_refs: Array.isArray(value.source_refs)
       ? value.source_refs
           .map((item) => normalizeKnowledgeSourceRef(item))
@@ -222,6 +226,31 @@ function normalizeKnowledgeTaskFields(
   }
 }
 
+function normalizeKnowledgeSemanticNodeType(value: unknown): KnowledgeSemanticNode['type'] | null {
+  switch (value) {
+    case 'section':
+    case 'claim':
+    case 'evidence':
+    case 'task':
+    case 'decision':
+    case 'risk':
+    case 'metric':
+    case 'question':
+      return value
+    case 'topic':
+    case 'goal':
+    case 'project':
+    case 'review':
+      return 'section'
+    case 'insight':
+      return 'claim'
+    case 'criterion':
+      return 'metric'
+    default:
+      return null
+  }
+}
+
 function normalizeKnowledgeSemanticNode(
   value: Partial<KnowledgeSemanticNode> | undefined,
 ): KnowledgeSemanticNode | null {
@@ -229,25 +258,14 @@ function normalizeKnowledgeSemanticNode(
     return null
   }
 
-  const validTypeSet = new Set([
-    'topic',
-    'criterion',
-    'insight',
-    'question',
-    'evidence',
-    'decision',
-    'goal',
-    'project',
-    'task',
-    'review',
-  ])
-  if (!validTypeSet.has(value.type)) {
+  const normalizedType = normalizeKnowledgeSemanticNodeType(value.type)
+  if (!normalizedType) {
     return null
   }
 
   return {
     id: value.id,
-    type: value.type,
+    type: normalizedType,
     title: typeof value.title === 'string' && value.title.trim().length > 0 ? value.title : 'Untitled',
     summary: typeof value.summary === 'string' ? value.summary : '',
     detail: typeof value.detail === 'string' ? value.detail : '',
@@ -280,6 +298,7 @@ function normalizeKnowledgeSemanticEdge(
     'belongs_to',
     'supports',
     'contradicts',
+    'contrasts_with',
     'leads_to',
     'depends_on',
     'derived_from',
@@ -291,7 +310,7 @@ function normalizeKnowledgeSemanticEdge(
   return {
     from: value.from,
     to: value.to,
-    type: value.type,
+    type: value.type === 'contradicts' ? 'contrasts_with' : value.type,
     label: typeof value.label === 'string' ? value.label : null,
     source_refs: Array.isArray(value.source_refs)
       ? value.source_refs
@@ -332,19 +351,7 @@ function normalizePreviewNode(value: Partial<TextImportPreviewItem> | undefined)
       value.semanticRole === 'evidence'
         ? value.semanticRole
         : undefined,
-    semanticType:
-      value.semanticType === 'topic' ||
-      value.semanticType === 'criterion' ||
-      value.semanticType === 'insight' ||
-      value.semanticType === 'question' ||
-      value.semanticType === 'evidence' ||
-      value.semanticType === 'decision' ||
-      value.semanticType === 'goal' ||
-      value.semanticType === 'project' ||
-      value.semanticType === 'task' ||
-      value.semanticType === 'review'
-        ? value.semanticType
-        : null,
+    semanticType: normalizeKnowledgeSemanticNodeType(value.semanticType) ?? null,
     confidence:
       value.confidence === 'high' || value.confidence === 'medium' || value.confidence === 'low'
         ? value.confidence
@@ -387,19 +394,7 @@ function normalizeNodePlan(value: Partial<TextImportNodePlan> | undefined): Text
       value.semanticRole === 'evidence'
         ? value.semanticRole
         : 'summary',
-    semanticType:
-      value.semanticType === 'topic' ||
-      value.semanticType === 'criterion' ||
-      value.semanticType === 'insight' ||
-      value.semanticType === 'question' ||
-      value.semanticType === 'evidence' ||
-      value.semanticType === 'decision' ||
-      value.semanticType === 'goal' ||
-      value.semanticType === 'project' ||
-      value.semanticType === 'task' ||
-      value.semanticType === 'review'
-        ? value.semanticType
-        : null,
+    semanticType: normalizeKnowledgeSemanticNodeType(value.semanticType) ?? null,
     confidence:
       value.confidence === 'high' || value.confidence === 'medium' || value.confidence === 'low'
         ? value.confidence

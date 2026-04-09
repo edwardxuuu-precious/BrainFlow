@@ -155,12 +155,24 @@ describe('local-text-import-core', () => {
     })
 
     const root = built.response.previewNodes.find((node) => node.parentId === null)
+    const duplicateTitleCounts = built.response.previewNodes.reduce<Record<string, number>>((counts, node) => {
+      counts[node.title] = (counts[node.title] ?? 0) + 1
+      return counts
+    }, {})
 
     expect(root?.title).toBe('Import: GTM_main')
+    expect(['analysis', 'process', 'plan', 'notes']).toContain(built.response.classification.archetype)
+    expect(built.response.diagnostics?.densityStats.sourceAnchorCount).toBeGreaterThan(0)
+    expect(built.response.diagnostics?.densityStats.evidenceNodeCount).toBeLessThan(
+      built.response.previewNodes.length / 2,
+    )
+    expect(duplicateTitleCounts['证据'] ?? 0).toBeLessThanOrEqual(1)
     expect(built.response.semanticNodes.some((node) => node.id.startsWith('semantic_gtm_'))).toBe(false)
     expect(
       built.response.previewNodes.some(
-        (node) => node.title === '\u7b2c\u4e00\u6ce2\u5e94\u8be5\u5148\u6253\u8c01',
+        (node) =>
+          node.title === '\u7b2c\u4e00\u6ce2\u5e94\u8be5\u5148\u6253\u8c01' &&
+          node.parentId === null,
       ),
     ).toBe(false)
     expect(built.response.previewNodes[0]?.sourceAnchors?.length ?? 0).toBeGreaterThanOrEqual(0)
@@ -201,8 +213,8 @@ describe('local-text-import-core', () => {
       semanticHints: [],
     })
 
-    expect(built.response.classification.archetype).toBe('method')
-    expect(built.response.templateSummary.visibleSlots).toContain('steps')
+    expect(built.response.classification.archetype).toBe('process')
+    expect(built.response.templateSummary.visibleSlots).toEqual([])
     expect(
       built.response.previewNodes.some((node) => (node.note ?? '').includes('environment setup')),
     ).toBe(true)
@@ -211,6 +223,96 @@ describe('local-text-import-core', () => {
         node.title.includes('Goal: get every new hire through environment setup in the first week.'),
       ),
     ).toBe(false)
+  })
+
+  it('uses document-structure semantics across SOP, research, plan, and meeting notes', () => {
+    const cases = [
+      {
+        sourceName: 'support_sop.md',
+        expectedType: 'process',
+        rawText: [
+          '# Refund SOP',
+          '## Intake',
+          'Confirm the order id and issue category.',
+          '## Decision rules',
+          '- Metric: refund amount under $100 can be approved immediately.',
+          '## Execution',
+          '- Output a refund decision record after comparing policy and customer evidence.',
+        ].join('\n'),
+      },
+      {
+        sourceName: 'pricing_research.md',
+        expectedType: 'analysis',
+        rawText: [
+          '# Pricing research',
+          '## Claim',
+          'The free tier is causing support load to rise.',
+          '## Evidence',
+          'Support tickets increased 35% in March.',
+          '## Risk',
+          'Risk: paid conversion may drop if limits are too aggressive.',
+        ].join('\n'),
+      },
+      {
+        sourceName: 'q2_roadmap_plan.md',
+        expectedType: 'plan',
+        rawText: [
+          '# Q2 roadmap plan',
+          '## Goal',
+          'Ship the beta to the design partner cohort.',
+          '## Milestones',
+          '- Validate onboarding and output a launch readiness report.',
+          '## Metric',
+          'KPI: activation rate above 40%.',
+        ].join('\n'),
+      },
+      {
+        sourceName: 'design_meeting_notes.md',
+        expectedType: 'notes',
+        rawText: [
+          '# Design meeting notes',
+          '## Decisions',
+          'Decision: adopt option A for the editor toolbar.',
+          '## Open questions',
+          'Question: can we ship without bulk edit?',
+          '## Actions',
+          '- Create a comparison table for option A and option B.',
+        ].join('\n'),
+      },
+    ]
+
+    cases.forEach((entry) => {
+      const document = createMindMapDocument('Import doc')
+      const built = createLocalTextImportPreview({
+        documentId: document.id,
+        documentTitle: document.title,
+        baseDocumentUpdatedAt: document.updatedAt,
+        context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
+        anchorTopicId: document.rootTopicId,
+        sourceName: entry.sourceName,
+        sourceType: 'file',
+        intent: 'distill_structure',
+        rawText: entry.rawText,
+        preprocessedHints: preprocessTextToImportHints(entry.rawText),
+        semanticHints: [],
+      })
+      const legacyTypes = new Set(['topic', 'criterion', 'insight', 'goal', 'project', 'review'])
+      const genericTitles = new Set(['证据', '数据', '分论点'])
+      const previewById = new Map(built.response.previewNodes.map((node) => [node.id, node]))
+
+      expect(built.response.classification.archetype).toBe(entry.expectedType)
+      expect(built.response.previewNodes.some((node) => legacyTypes.has(node.semanticType ?? ''))).toBe(false)
+      expect(built.response.previewNodes.some((node) => genericTitles.has(node.title))).toBe(false)
+      built.response.previewNodes
+        .filter((node) => node.parentId !== null && node.semanticType !== 'section')
+        .forEach((node) => expect(node.sourceAnchors?.length ?? 0).toBeGreaterThan(0))
+      built.response.previewNodes
+        .filter((node) => node.semanticType === 'evidence' || node.semanticType === 'metric')
+        .forEach((node) => {
+          const parent = previewById.get(node.parentId ?? '')
+          expect(parent?.semanticType === 'section' || parent?.semanticType === 'claim').toBe(true)
+        })
+    })
   })
 
   it('keeps per-file archetype summaries in batch previews', () => {

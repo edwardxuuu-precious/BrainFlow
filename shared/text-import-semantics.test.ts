@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { TextImportNodePlan } from './ai-contract.js'
-import { compileTextImportNodePlans, resolveTextImportPlanningOptions } from './text-import-semantics.js'
+import {
+  compileTextImportNodePlans,
+  deriveTextImportSemanticHints,
+  deriveTextImportSemanticUnits,
+  inferTextImportSemanticHintKind,
+  resolveTextImportPlanningOptions,
+} from './text-import-semantics.js'
 
 describe('compileTextImportNodePlans', () => {
   it('keeps semantic review hints on preview nodes while emitting title-and-note-only create_child operations', () => {
@@ -145,7 +151,7 @@ describe('resolveTextImportPlanningOptions', () => {
     })
 
     expect(planning.resolvedPreset).toBe('preserve')
-    expect(planning.resolvedArchetype).toBe('method')
+    expect(planning.resolvedArchetype).toBe('process')
     expect(planning.summary.recommendedRoute).toBe('local_markdown')
     expect(planning.summary.structureScore).toBeGreaterThan(0.5)
   })
@@ -183,6 +189,79 @@ describe('resolveTextImportPlanningOptions', () => {
     })
 
     expect(planning.resolvedPreset).toBe('distill')
+  })
+
+  it('does not classify plain numbered Chinese guidance as metrics', () => {
+    expect(inferTextImportSemanticHintKind('预算是否存在', 'paragraph').kind).toBe('metric')
+    expect(inferTextImportSemanticHintKind('立即购买性 35% + 痛感强度 30%', 'paragraph').kind).toBe('metric')
+    expect(inferTextImportSemanticHintKind('2) 判断“谁最痛”，不要听表态', 'heading').kind).not.toBe(
+      'metric',
+    )
+    expect(inferTextImportSemanticHintKind('先列出 5–8 个候选 segment', 'paragraph').kind).not.toBe(
+      'metric',
+    )
+  })
+
+  it('recognizes Chinese method keywords after semantic unit inference', () => {
+    const preprocessedHints = [
+      {
+        id: 'hint_principle',
+        kind: 'paragraph' as const,
+        text: '关键原则：先聚焦 beachhead segment。',
+        raw: '关键原则：先聚焦 beachhead segment。',
+        level: 0,
+        lineStart: 1,
+        lineEnd: 1,
+        sourcePath: ['GTM'],
+        language: null,
+        rows: undefined,
+      },
+      {
+        id: 'hint_criteria',
+        kind: 'paragraph' as const,
+        text: '检验标准：痛感强度、立即购买性、触达效率、案例扩散性。',
+        raw: '检验标准：痛感强度、立即购买性、触达效率、案例扩散性。',
+        level: 0,
+        lineStart: 2,
+        lineEnd: 2,
+        sourcePath: ['GTM'],
+        language: null,
+        rows: undefined,
+      },
+      {
+        id: 'hint_strategy',
+        kind: 'paragraph' as const,
+        text: '策略方案：用一轮 customer discovery 验证。',
+        raw: '策略方案：用一轮 customer discovery 验证。',
+        level: 0,
+        lineStart: 3,
+        lineEnd: 3,
+        sourcePath: ['GTM'],
+        language: null,
+        rows: undefined,
+      },
+      {
+        id: 'hint_result',
+        kind: 'paragraph' as const,
+        text: '最终输出一条清晰的 beachhead 定义。',
+        raw: '最终输出一条清晰的 beachhead 定义。',
+        level: 0,
+        lineStart: 4,
+        lineEnd: 4,
+        sourcePath: ['GTM'],
+        language: null,
+        rows: undefined,
+      },
+    ]
+    const semanticHints = deriveTextImportSemanticHints(preprocessedHints)
+    const units = deriveTextImportSemanticUnits({ preprocessedHints, semanticHints })
+
+    expect(units.map((unit) => unit.unitType)).toEqual([
+      'principle',
+      'criterion',
+      'strategy',
+      'result',
+    ])
   })
 
   it('marks close preset scores as low confidence while still choosing one', () => {

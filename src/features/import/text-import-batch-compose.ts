@@ -158,14 +158,9 @@ function summarizeFileWrapperNote(
 ): string | null {
   const parts = [
     `Route: ${file.route === 'local_markdown' ? 'Local structured import' : 'Codex import'}`,
-    `Archetype: ${response.classification.archetype}`,
+    `Document type: ${response.classification.archetype}`,
+    `Nodes: ${response.previewNodes.length}`,
   ]
-  if (response.templateSummary.visibleSlots.length > 0) {
-    parts.push(`Visible slots: ${response.templateSummary.visibleSlots.join(', ')}`)
-  }
-  if (response.templateSummary.foldedSlots.length > 0) {
-    parts.push(`Folded slots: ${response.templateSummary.foldedSlots.join(', ')}`)
-  }
   if ((response.diagnostics?.qualitySignals.needsDeepPassCount ?? 0) > 0) {
     parts.push('Needs deeper review')
   }

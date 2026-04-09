@@ -45,6 +45,7 @@ describe('text-import-layering', () => {
           due_date: null,
           priority: 'high',
           depends_on: [],
+          output: null,
           source_refs: [],
           definition_of_done: 'We confirm repeated urgency in three calls.',
         },

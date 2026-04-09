@@ -35,9 +35,7 @@ const BANNED_PRIMARY_TITLES = new Set([
   '用户',
   '助手',
   '备注',
-  '结论',
-  '拆解',
-  '建议下一步',
+  'GTM 对话整理',
 ])
 
 interface ImportLayerSourceInput {
@@ -159,6 +157,22 @@ function mapPlanNodeToSemanticType(plan: TextImportNodePlan): KnowledgeSemanticN
   return inferSemanticTypeFromPreviewLike(plan)
 }
 
+function normalizeSemanticNodeType(type: KnowledgeSemanticNodeType): KnowledgeSemanticNodeType {
+  switch (type) {
+    case 'topic':
+    case 'goal':
+    case 'project':
+    case 'review':
+      return 'section'
+    case 'criterion':
+      return 'metric'
+    case 'insight':
+      return 'claim'
+    default:
+      return type
+  }
+}
+
 export function inferSemanticTypeFromPreviewLike(
   item: {
     semanticRole?: TextImportNodePlan['semanticRole']
@@ -167,23 +181,26 @@ export function inferSemanticTypeFromPreviewLike(
   },
 ): KnowledgeSemanticNodeType {
   if (item.semanticType) {
-    return item.semanticType
+    return normalizeSemanticNodeType(item.semanticType)
   }
 
   const slot = item.templateSlot
-  if (slot === 'criteria') return 'criterion'
+  if (slot === 'criteria') return 'metric'
   if (slot === 'evidence' || slot === 'examples' || slot === 'data') return 'evidence'
   if (slot === 'decisions') return 'decision'
-  if (slot === 'goal') return 'goal'
+  if (slot === 'goal') return 'section'
   if (slot === 'actions' || slot === 'steps' || slot === 'next_steps') return 'task'
-  if (slot === 'strategy' || slot === 'themes' || slot === 'claims' || slot === 'components') return 'project'
-  if (slot === 'summary' || slot === 'key_results' || slot === 'progress') return 'review'
+  if (slot === 'strategy' || slot === 'themes' || slot === 'components') return 'section'
+  if (slot === 'claims' || slot === 'summary' || slot === 'key_results' || slot === 'progress') return 'claim'
   if (slot === 'open_questions') return 'question'
   if (item.semanticRole === 'decision') return 'decision'
   if (item.semanticRole === 'question') return 'question'
-  if (item.semanticRole === 'evidence' || item.semanticRole === 'metric') return 'evidence'
+  if (item.semanticRole === 'metric') return 'metric'
+  if (item.semanticRole === 'evidence') return 'evidence'
+  if (item.semanticRole === 'risk') return 'risk'
   if (item.semanticRole === 'action') return 'task'
-  return 'topic'
+  if (item.semanticRole === 'summary') return 'claim'
+  return 'section'
 }
 
 function isSentenceLike(value: string): boolean {
@@ -197,25 +214,37 @@ function compactSemanticTitle(title: string, type: KnowledgeSemanticNodeType): s
   }
 
   switch (type) {
+    case 'metric':
     case 'criterion':
-      return '判断标准'
+      return truncateSemanticTitle(normalized, '判断标准')
     case 'question':
-      return '关键问题'
+      return truncateSemanticTitle(normalized, '关键问题')
     case 'evidence':
-      return '证据'
+      return truncateSemanticTitle(normalized, '证据')
     case 'decision':
-      return '决策'
-    case 'goal':
-      return '目标'
-    case 'project':
-      return '项目'
+      return truncateSemanticTitle(normalized, '决策')
     case 'task':
-      return '任务'
+      return truncateSemanticTitle(normalized, '任务')
+    case 'risk':
+      return truncateSemanticTitle(normalized, '风险')
+    case 'claim':
+      return truncateSemanticTitle(normalized, '判断')
+    case 'goal':
+    case 'project':
+    case 'section':
+      return truncateSemanticTitle(normalized, '主题')
     case 'review':
-      return '复盘'
+      return truncateSemanticTitle(normalized, '复盘')
     default:
-      return normalized.slice(0, 24) || '主题'
+      return truncateSemanticTitle(normalized, '主题')
   }
+}
+
+function truncateSemanticTitle(value: string, fallback: string): string {
+  if (!value) {
+    return fallback
+  }
+  return value.length > 28 ? `${value.slice(0, 27).trimEnd()}…` : value
 }
 
 function mergeTextParts(parts: Array<string | null | undefined>): string {
@@ -301,6 +330,9 @@ function parseTaskNoteParagraph(
           ? (value as NonNullable<KnowledgeSemanticNode['task']>['priority'])
           : null
         break
+      case 'output':
+        patch.output = value || null
+        break
       case 'definition_of_done':
         patch.definition_of_done = value || null
         break
@@ -367,6 +399,7 @@ function buildTaskNoteBlock(task: NonNullable<KnowledgeSemanticNode['task']> | n
     task.due_date ? `due_date: ${task.due_date}` : null,
     task.priority ? `priority: ${task.priority}` : null,
     task.depends_on.length > 0 ? `depends_on: ${task.depends_on.join(', ')}` : null,
+    task.output ? `output: ${task.output}` : null,
     task.definition_of_done ? `definition_of_done: ${task.definition_of_done}` : null,
   ].filter((line): line is string => Boolean(line))
 
@@ -408,6 +441,7 @@ function createDefaultTaskFields(
     due_date: null,
     priority,
     depends_on: [],
+    output: null,
     source_refs: [],
     definition_of_done: null,
   }
@@ -535,13 +569,19 @@ function createPlannerFallbackGraph(options: {
       compactTitle !== collapseWhitespace(plan.title)
         ? mergeTextParts([plan.title, plan.note])
         : mergeTextParts([plan.note])
+    const sourceRefs = planAnchorsToSourceRefs(plan, options.sources, options.sourceInputs)
+    const parsedPlanNote = parseKnowledgeNodeNote({
+      note: plan.note,
+      title: compactTitle,
+      summary: collapseWhitespace(plan.title),
+    })
     return {
       id: plan.id,
       type: semanticType,
       title: compactTitle,
       summary: collapseWhitespace(plan.title),
-      detail: mergedDetail,
-      source_refs: [],
+      detail: parsedPlanNote.detail || mergedDetail,
+      source_refs: sourceRefs,
       confidence: plan.confidence,
       task:
         semanticType === 'task'
@@ -549,10 +589,12 @@ function createPlannerFallbackGraph(options: {
               status: 'todo',
               owner: null,
               due_date: null,
-              priority: plan.priority === 'primary' ? 'high' : 'medium',
+              priority: parsedPlanNote.taskPatch.priority ?? null,
               depends_on: [],
-              source_refs: [],
+              output: parsedPlanNote.taskPatch.output ?? null,
               definition_of_done: null,
+              ...parsedPlanNote.taskPatch,
+              source_refs: sourceRefs,
             }
           : null,
     }
@@ -565,9 +607,21 @@ function createPlannerFallbackGraph(options: {
       to: plan.parentId as string,
       type: 'belongs_to',
       label: null,
-      source_refs: [],
+      source_refs: planAnchorsToSourceRefs(plan, options.sources, options.sourceInputs),
       confidence: plan.confidence,
     }))
+  planned.nodePlans
+    .filter((plan) => plan.parentId && (plan.semanticType === 'evidence' || plan.semanticType === 'metric'))
+    .forEach((plan) => {
+      semanticEdges.push({
+        from: plan.id,
+        to: plan.parentId as string,
+        type: 'supports',
+        label: null,
+        source_refs: planAnchorsToSourceRefs(plan, options.sources, options.sourceInputs),
+        confidence: plan.confidence,
+      })
+    })
 
   return {
     classification: planned.classification,
@@ -585,9 +639,11 @@ function canonicalizeSemanticGraph(graph: {
   semanticEdges: KnowledgeSemanticEdge[]
 } {
   const semanticNodes = graph.semanticNodes.map<KnowledgeSemanticNode>((node) => {
-    const compactTitle = compactSemanticTitle(node.title, node.type)
+    const normalizedType = normalizeSemanticNodeType(node.type)
+    const compactTitle = compactSemanticTitle(node.title, normalizedType)
     return {
       ...node,
+      type: normalizedType,
       title: compactTitle,
       summary: collapseWhitespace(node.summary) || compactTitle,
       detail:
@@ -615,6 +671,32 @@ function sourceRefsToAnchors(sourceRefs: KnowledgeSourceRef[]): Array<{ lineStar
   return uniqueBy(
     sourceRefs.map((ref) => ({ lineStart: ref.lineStart, lineEnd: ref.lineEnd })),
     (anchor) => `${anchor.lineStart}:${anchor.lineEnd}`,
+  )
+}
+
+function planAnchorsToSourceRefs(
+  plan: TextImportNodePlan,
+  sources: KnowledgeSource[],
+  sourceInputs: ImportLayerSourceInput[],
+): KnowledgeSourceRef[] {
+  return uniqueBy(
+    plan.sourceAnchors.map((anchor) => {
+      const sourceMatch = sourceInputs
+        .map((sourceInput, index) => ({
+          source: sources[index],
+          hint: sourceInput.preprocessedHints.find(
+            (hint) => hint.lineStart === anchor.lineStart && hint.lineEnd === anchor.lineEnd,
+          ),
+        }))
+        .find((candidate) => candidate.source && candidate.hint)
+      return {
+        sourceId: sourceMatch?.source?.id ?? sources[0]?.id ?? 'source_1',
+        lineStart: anchor.lineStart,
+        lineEnd: anchor.lineEnd,
+        pathTitles: sourceMatch?.hint?.sourcePath ?? [],
+      }
+    }),
+    (ref) => `${ref.sourceId}:${ref.lineStart}:${ref.lineEnd}:${ref.pathTitles.join('>')}`,
   )
 }
 
@@ -660,7 +742,7 @@ function sortChildren(
   edgesByParent: Map<string, KnowledgeSemanticEdge[]>,
   allowedTypes?: KnowledgeSemanticNodeType[],
 ): KnowledgeSemanticNode[] {
-  const edges = edgesByParent.get(parentId) ?? []
+  const edges = (edgesByParent.get(parentId) ?? []).filter((edge) => edge.type === 'belongs_to')
   return edges
     .map((edge) => nodesById.get(edge.from))
     .filter((node): node is KnowledgeSemanticNode => !!node)
@@ -680,8 +762,16 @@ function createThinkingProjection(options: {
     group.push(edge)
     edgesByParent.set(edge.to, group)
   })
+  const hasParent = new Set(
+    options.semanticEdges
+      .filter((edge) => edge.type === 'belongs_to')
+      .map((edge) => edge.from),
+  )
   const center =
-    options.semanticNodes.find((node) => node.type === 'question' && /第一波应该先打谁/u.test(node.title)) ??
+    options.semanticNodes.find((node) => node.id === 'import_root') ??
+    options.semanticNodes.find((node) => node.type === 'section' && !hasParent.has(node.id)) ??
+    options.semanticNodes.find((node) => node.type === 'section') ??
+    options.semanticNodes.find((node) => node.type === 'claim') ??
     options.semanticNodes.find((node) => node.type === 'question') ??
     options.semanticNodes.find((node) => node.type === 'goal') ??
     options.semanticNodes[0]
@@ -719,6 +809,7 @@ function createThinkingProjection(options: {
     (node) => !BANNED_PRIMARY_TITLES.has(node.title),
   )
   const executionRoot =
+    options.semanticNodes.find((node) => node.type === 'section' && node.id !== center.id) ??
     options.semanticNodes.find((node) => node.type === 'goal' && node.id !== center.id) ??
     options.semanticNodes.find((node) => node.type === 'project' && node.id !== center.id) ??
     null
@@ -754,13 +845,17 @@ function createThinkingProjection(options: {
               ? 'evidence'
               : node.type === 'task'
                 ? 'action'
-                : node.type === 'criterion'
-                  ? 'summary'
-                  : 'section',
+                : node.type === 'metric'
+                  ? 'metric'
+                  : node.type === 'risk'
+                    ? 'risk'
+                    : node.type === 'claim'
+                      ? 'summary'
+                      : 'section',
       confidence: node.confidence,
       sourceAnchors: sourceRefsToAnchors(node.source_refs),
       templateSlot:
-        node.type === 'criterion'
+        node.type === 'metric'
           ? 'criteria'
           : node.type === 'task'
             ? 'actions'
@@ -818,8 +913,9 @@ export function createExecutionProjection(options: {
     group.push(edge)
     edgesByParent.set(edge.to, group)
   })
-  const allowedTypes: KnowledgeSemanticNodeType[] = ['goal', 'project', 'task', 'decision', 'review']
+  const allowedTypes: KnowledgeSemanticNodeType[] = ['section', 'claim', 'task', 'decision', 'risk', 'metric', 'goal', 'project', 'review']
   const root =
+    options.semanticNodes.find((node) => node.type === 'section') ??
     options.semanticNodes.find((node) => node.type === 'goal') ??
     options.semanticNodes.find((node) => node.type === 'project') ??
     options.semanticNodes.find((node) => allowedTypes.includes(node.type))
@@ -858,7 +954,11 @@ export function createExecutionProjection(options: {
           ? 'decision'
           : node.type === 'task'
             ? 'action'
-            : node.type === 'review'
+            : node.type === 'risk'
+              ? 'risk'
+              : node.type === 'metric'
+                ? 'metric'
+                : node.type === 'claim' || node.type === 'review'
               ? 'summary'
               : 'section',
       confidence: node.confidence,

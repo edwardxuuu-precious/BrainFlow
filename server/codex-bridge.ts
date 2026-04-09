@@ -181,6 +181,7 @@ interface RawKnowledgeSemanticTaskFields {
   due_date?: string | null
   priority?: string | null
   depends_on?: string[] | null
+  output?: string | null
   source_refs?: RawKnowledgeSourceRef[] | null
   definition_of_done?: string | null
 }
@@ -1261,24 +1262,45 @@ function normalizeKnowledgeSource(
   }
 }
 
+function normalizeKnowledgeSemanticNodeType(value: string | null | undefined): KnowledgeSemanticNode['type'] | null {
+  switch (value) {
+    case 'section':
+    case 'claim':
+    case 'evidence':
+    case 'task':
+    case 'decision':
+    case 'risk':
+    case 'metric':
+    case 'question':
+      return value
+    case 'topic':
+    case 'goal':
+    case 'project':
+    case 'review':
+      return 'section'
+    case 'insight':
+      return 'claim'
+    case 'criterion':
+      return 'metric'
+    default:
+      return null
+  }
+}
+
 function normalizeKnowledgeSemanticNode(
   value: RawKnowledgeSemanticNode | null | undefined,
 ): KnowledgeSemanticNode | null {
   const id = normalizeText(value?.id)
   const type = normalizeText(value?.type)
   const title = normalizeText(value?.title)
-  if (
-    !id ||
-    !type ||
-    !title ||
-    !['topic', 'criterion', 'insight', 'question', 'evidence', 'decision', 'goal', 'project', 'task', 'review'].includes(type)
-  ) {
+  const normalizedType = normalizeKnowledgeSemanticNodeType(type)
+  if (!id || !normalizedType || !title) {
     return null
   }
 
   return {
     id,
-    type: type as KnowledgeSemanticNode['type'],
+    type: normalizedType,
     title,
     summary: normalizeText(value?.summary) ?? '',
     detail: normalizeText(value?.detail) ?? '',
@@ -1305,6 +1327,7 @@ function normalizeKnowledgeSemanticNode(
                   ? 'medium'
                   : null,
             depends_on: normalizeStringArray(value.task.depends_on) ?? [],
+            output: normalizeText(value.task.output) ?? null,
             source_refs: (value.task.source_refs ?? [])
               .map((item) => normalizeKnowledgeSourceRef(item))
               .filter((item): item is KnowledgeSourceRef => item !== null),
@@ -1324,7 +1347,7 @@ function normalizeKnowledgeSemanticEdge(
     !from ||
     !to ||
     !type ||
-    !['belongs_to', 'supports', 'contradicts', 'leads_to', 'depends_on', 'derived_from'].includes(type)
+    !['belongs_to', 'supports', 'contradicts', 'contrasts_with', 'leads_to', 'depends_on', 'derived_from'].includes(type)
   ) {
     return null
   }
@@ -1332,7 +1355,7 @@ function normalizeKnowledgeSemanticEdge(
   return {
     from,
     to,
-    type: type as KnowledgeSemanticEdge['type'],
+    type: (type === 'contradicts' ? 'contrasts_with' : type) as KnowledgeSemanticEdge['type'],
     label: normalizeText(value?.label) ?? null,
     source_refs: (value?.source_refs ?? [])
       .map((item) => normalizeKnowledgeSourceRef(item))
@@ -2566,14 +2589,17 @@ function buildTextImportPrompt(
     'Text import goal:',
     '- Return valid JSON only.',
     '- Analyze the source text and the current mind map before proposing changes.',
-    '- Preserve source facts, but optimize for a mind-map structure that is easier to scan than the raw text.',
+    '- Preserve source facts, but generate a document structure graph, not a brainstorming mind map.',
     '- Respect importIntent, archetype, archetypeMode, contentProfile, semanticHintSummary, and nodeBudget.',
-    '- Classify the source into one archetype first: method, argument, plan, report, meeting, postmortem, knowledge, or mixed.',
+    '- Classify the source into one document type first: analysis, process, plan, or notes.',
     '- Return classification and templateSummary even when you also return nodePlans.',
-    '- Prefer semantic planning first. Output nodePlans when possible, then leave previewNodes and operations empty or null unless you need them for a safe fallback.',
+    '- Prefer semantic planning first. Build the nodePlans from source order: parse markdown blocks, classify each block, build an ordered logic spine, attach supporting evidence to the nearest section or claim, extract only strict executable tasks, compress labels, and preserve source anchors.',
     '- nodePlans must stay flat. Each node plan must include id, parentId, order, title, note, semanticRole, confidence, sourceAnchors, groupKey, priority, collapsedByDefault, and templateSlot.',
     '- Use semanticRole to distinguish section, summary, decision, action, risk, question, metric, timeline, and evidence.',
-    '- Use templateSlot to explain the semantic slot inside the chosen archetype, for example steps, claims, evidence, risks, or metrics.',
+    '- Do not create empty template branches such as 适用场景, 检验标准, 数据, 证据, 核心观点, or 分论点 unless the source explicitly has that heading.',
+    '- Do not put all evidence under one generic 证据 branch. Evidence, metrics, examples, quotes, and criteria must sit under the section or claim they support.',
+    '- Create task nodes only when the text has an explicit action verb and a concrete output; principles, definitions, criteria, and background remain section, claim, metric, risk, question, or evidence nodes.',
+    '- Use templateSlot only when the source explicitly names such a structure; otherwise keep it null.',
     '- sourceAnchors should cite the supporting line ranges from the imported source whenever possible.',
     '- Avoid generic titles, sibling explosions, and dumping long raw notes into leaf nodes.',
     '- Treat the selected anchor topic as the preferred insertion point, but do not mutate locked nodes or restructure existing topics unless the JSON fallback path clearly needs it.',
