@@ -225,7 +225,7 @@ function createTopicFromPreviewItem(
     title: item.title.trim() || 'New topic',
     note: item.note ?? '',
     noteRich: createTopicRichTextFromPlainText(item.note ?? ''),
-    aiLocked: false,
+    aiLocked: item.locked ?? false,
     isCollapsed: false,
     branchSide: 'auto',
     layout: {
@@ -397,6 +397,15 @@ function serializeProjectionFromMountedSubtree(
       confidence: previousNode?.confidence ?? 'medium',
       sourceAnchors: cloneSourceAnchors(previousNode?.sourceAnchors),
       templateSlot: previousNode?.templateSlot ?? null,
+      structureRole: previousNode?.structureRole ?? null,
+      locked: previousNode?.locked ?? topic.aiLocked,
+      sourceModuleId: previousNode?.sourceModuleId ?? null,
+      proposedReorder: previousNode?.proposedReorder ?? null,
+      proposedReparent: previousNode?.proposedReparent ?? null,
+      taskDependsOn: previousNode?.taskDependsOn ? [...previousNode.taskDependsOn] : [],
+      inferredOutput:
+        typeof previousNode?.inferredOutput === 'boolean' ? previousNode.inferredOutput : null,
+      mirroredTaskId: previousNode?.mirroredTaskId ?? null,
     })
 
     topic.childIds.forEach((childId, childIndex) => {

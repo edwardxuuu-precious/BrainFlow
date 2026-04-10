@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "document-to-logic-map/v1-output",
+  "$id": "document-to-logic-map/v2-output",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -14,7 +14,7 @@
   ],
   "properties": {
     "spec_version": {
-      "const": "document-to-logic-map/v1"
+      "const": "document-to-logic-map/v2"
     },
     "document_type": {
       "type": "string",
@@ -45,7 +45,13 @@
           "note",
           "semantic_role",
           "confidence",
-          "source_spans"
+          "source_spans",
+          "structure_role",
+          "locked",
+          "source_module_id",
+          "proposed_reorder",
+          "proposed_reparent",
+          "task"
         ],
         "properties": {
           "id": { "type": "string" },
@@ -77,16 +83,58 @@
               }
             }
           },
+          "structure_role": {
+            "type": ["string", "null"],
+            "enum": [
+              "root_context",
+              "judgment_module",
+              "core_judgment_group",
+              "judgment_basis_group",
+              "potential_action_group",
+              "core_judgment",
+              "basis_item",
+              "action_item",
+              "execution_root",
+              "execution_task_mirror",
+              null
+            ]
+          },
+          "locked": { "type": "boolean" },
+          "source_module_id": { "type": ["string", "null"] },
+          "proposed_reorder": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["after_node_id", "reason"],
+            "properties": {
+              "after_node_id": { "type": ["string", "null"] },
+              "reason": { "type": ["string", "null"] }
+            }
+          },
+          "proposed_reparent": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["new_parent_id", "reason"],
+            "properties": {
+              "new_parent_id": { "type": ["string", "null"] },
+              "reason": { "type": ["string", "null"] }
+            }
+          },
           "task": {
             "type": ["object", "null"],
             "additionalProperties": false,
-            "required": ["status", "output"],
+            "required": ["status", "output", "depends_on", "inferred_output", "mirrored_task_id"],
             "properties": {
               "status": {
                 "type": "string",
                 "enum": ["todo", "in_progress", "blocked", "done"]
               },
-              "output": { "type": ["string", "null"] }
+              "output": { "type": ["string", "null"] },
+              "depends_on": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "inferred_output": { "type": "boolean" },
+              "mirrored_task_id": { "type": ["string", "null"] }
             }
           }
         }

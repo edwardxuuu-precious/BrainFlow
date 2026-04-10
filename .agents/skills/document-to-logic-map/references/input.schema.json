@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "document-to-logic-map/v1-input",
+  "$id": "document-to-logic-map/v2-input",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "spec_version": {
-      "const": "document-to-logic-map/v1"
+      "const": "document-to-logic-map/v2"
     },
     "source": {
       "type": "object",
@@ -106,10 +106,10 @@
           "line_end": { "type": "integer" },
           "source_path": { "type": "array", "items": { "type": "string" } },
           "language": { "type": ["string", "null"] },
-          "items": { "type": "array", "items": { "type": "string" } },
-          "checked": { "type": "array", "items": { "type": "boolean" } },
+          "items": { "type": ["array", "null"], "items": { "type": "string" } },
+          "checked": { "type": ["array", "null"], "items": { "type": "boolean" } },
           "rows": {
-            "type": "array",
+            "type": ["array", "null"],
             "items": { "type": "array", "items": { "type": "string" } }
           }
         }
@@ -124,8 +124,8 @@
           "type": ["string", "null"],
           "enum": ["analysis", "process", "plan", "notes", null]
         },
-        "max_total_nodes": { "type": "integer" },
-        "max_depth": { "type": "integer" }
+        "max_total_nodes": { "type": ["integer", "null"] },
+        "max_depth": { "type": ["integer", "null"] }
       }
     }
   }

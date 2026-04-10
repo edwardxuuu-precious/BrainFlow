@@ -6,6 +6,9 @@ import type {
   KnowledgeSemanticNodeType,
   KnowledgeSource,
   KnowledgeSourceRef,
+  KnowledgeStructureReorderProposal,
+  KnowledgeStructureReparentProposal,
+  KnowledgeStructureRole,
   KnowledgeView,
   KnowledgeViewProjection,
   KnowledgeViewType,
@@ -158,6 +161,14 @@ interface ProjectionNode {
   confidence: TextImportConfidence
   sourceAnchors: Array<{ lineStart: number; lineEnd: number }>
   templateSlot: TextImportTemplateSlot | null
+  structureRole: KnowledgeStructureRole | null
+  locked: boolean | null
+  sourceModuleId: string | null
+  proposedReorder: KnowledgeStructureReorderProposal | null
+  proposedReparent: KnowledgeStructureReparentProposal | null
+  taskDependsOn: string[]
+  inferredOutput: boolean | null
+  mirroredTaskId: string | null
 }
 
 function semanticRoleFromNodeType(type: KnowledgeSemanticNodeType | null): TextImportNodePlan['semanticRole'] {
@@ -478,6 +489,12 @@ function parseTaskNoteParagraph(
           ? value.split(',').map((item) => item.trim()).filter(Boolean)
           : []
         break
+      case 'inferred_output':
+        patch.inferred_output = value === 'true'
+        break
+      case 'mirrored_task_id':
+        patch.mirrored_task_id = value || null
+        break
       default:
         return { isTaskBlock: false, patch: {} }
     }
@@ -537,6 +554,8 @@ function buildTaskNoteBlock(task: NonNullable<KnowledgeSemanticNode['task']> | n
     task.priority ? `priority: ${task.priority}` : null,
     task.depends_on.length > 0 ? `depends_on: ${task.depends_on.join(', ')}` : null,
     task.output ? `output: ${task.output}` : null,
+    task.inferred_output ? 'inferred_output: true' : null,
+    task.mirrored_task_id ? `mirrored_task_id: ${task.mirrored_task_id}` : null,
     task.definition_of_done ? `definition_of_done: ${task.definition_of_done}` : null,
   ].filter((line): line is string => Boolean(line))
 
@@ -579,6 +598,8 @@ function createDefaultTaskFields(
     priority,
     depends_on: [],
     output: null,
+    inferred_output: false,
+    mirrored_task_id: null,
     source_refs: [],
     definition_of_done: null,
   }
@@ -615,6 +636,16 @@ export function deriveSemanticGraphFromPreviewNodes(options: {
         ? {
             ...(existing?.task ?? createDefaultTaskFields()),
             ...parsedNote.taskPatch,
+            depends_on: node.taskDependsOn ?? parsedNote.taskPatch.depends_on ?? existing?.task?.depends_on ?? [],
+            inferred_output:
+              typeof node.inferredOutput === 'boolean'
+                ? node.inferredOutput
+                : parsedNote.taskPatch.inferred_output ?? existing?.task?.inferred_output ?? false,
+            mirrored_task_id:
+              node.mirroredTaskId ??
+              parsedNote.taskPatch.mirrored_task_id ??
+              existing?.task?.mirrored_task_id ??
+              null,
             source_refs: existing?.task?.source_refs ?? [],
           }
         : null
@@ -627,6 +658,12 @@ export function deriveSemanticGraphFromPreviewNodes(options: {
       detail: parsedNote.detail,
       source_refs: existing?.source_refs ?? [],
       confidence: node.confidence ?? existing?.confidence ?? 'medium',
+      structure_role: node.structureRole ?? existing?.structure_role ?? null,
+      locked:
+        typeof node.locked === 'boolean' ? node.locked : existing?.locked ?? false,
+      source_module_id: node.sourceModuleId ?? existing?.source_module_id ?? null,
+      proposed_reorder: node.proposedReorder ?? existing?.proposed_reorder ?? null,
+      proposed_reparent: node.proposedReparent ?? existing?.proposed_reparent ?? null,
       task: nextTask,
     }
   })
@@ -729,6 +766,8 @@ function createPlannerFallbackGraph(options: {
               priority: parsedPlanNote.taskPatch.priority ?? null,
               depends_on: [],
               output: parsedPlanNote.taskPatch.output ?? null,
+              inferred_output: parsedPlanNote.taskPatch.inferred_output ?? false,
+              mirrored_task_id: parsedPlanNote.taskPatch.mirrored_task_id ?? null,
               definition_of_done: null,
               ...parsedPlanNote.taskPatch,
               source_refs: sourceRefs,
@@ -858,6 +897,14 @@ function buildProjectionFromNodes(options: {
     priority: node.parentId === null ? 'primary' : node.semanticType === 'evidence' ? 'supporting' : 'secondary',
     collapsedByDefault: node.parentId !== null && node.semanticType === 'evidence',
     templateSlot: node.templateSlot,
+    structureRole: node.structureRole,
+    locked: node.locked,
+    sourceModuleId: node.sourceModuleId,
+    proposedReorder: node.proposedReorder,
+    proposedReparent: node.proposedReparent,
+    taskDependsOn: [...node.taskDependsOn],
+    inferredOutput: node.inferredOutput,
+    mirroredTaskId: node.mirroredTaskId,
   }))
   const compiled = compileTextImportNodePlans({
     insertionParentTopicId: options.fallbackInsertionParentTopicId,
@@ -871,6 +918,74 @@ function buildProjectionFromNodes(options: {
     previewNodes: compiled.previewNodes,
     operations: compiled.operations,
   }
+}
+
+const JUDGMENT_TREE_ROLES = new Set<KnowledgeStructureRole>([
+  'root_context',
+  'judgment_module',
+  'core_judgment_group',
+  'judgment_basis_group',
+  'potential_action_group',
+  'core_judgment',
+  'basis_item',
+  'action_item',
+  'execution_root',
+  'execution_task_mirror',
+])
+
+function isJudgmentTreeGraph(nodes: KnowledgeSemanticNode[]): boolean {
+  return nodes.some((node) => node.structure_role && JUDGMENT_TREE_ROLES.has(node.structure_role))
+}
+
+function projectionNodeFromSemanticNode(options: {
+  node: KnowledgeSemanticNode
+  parentId: string | null
+  order: number
+}): ProjectionNode {
+  const { node, parentId, order } = options
+  return {
+    id: node.id,
+    parentId,
+    order,
+    title: node.title,
+    note: buildKnowledgeNodeNote({
+      title: node.title,
+      summary: node.summary,
+      detail: node.detail,
+      task: node.type === 'task' ? node.task : null,
+    }),
+    semanticType: node.type,
+    semanticRole: semanticRoleFromNodeType(node.type),
+    confidence: node.confidence,
+    sourceAnchors: sourceRefsToAnchors(node.source_refs),
+    templateSlot: null,
+    structureRole: node.structure_role ?? null,
+    locked: node.locked ?? false,
+    sourceModuleId: node.source_module_id ?? null,
+    proposedReorder: node.proposed_reorder ?? null,
+    proposedReparent: node.proposed_reparent ?? null,
+    taskDependsOn: [...(node.task?.depends_on ?? [])],
+    inferredOutput: node.task ? node.task.inferred_output : null,
+    mirroredTaskId: node.task?.mirrored_task_id ?? null,
+  }
+}
+
+function sortNodesByReorderProposals(nodes: KnowledgeSemanticNode[]): KnowledgeSemanticNode[] {
+  const ordered = [...nodes]
+  ordered.forEach((node) => {
+    const afterId = node.proposed_reorder?.after_node_id
+    if (!afterId) {
+      return
+    }
+    const fromIndex = ordered.findIndex((candidate) => candidate.id === node.id)
+    const targetIndex = ordered.findIndex((candidate) => candidate.id === afterId)
+    if (fromIndex < 0 || targetIndex < 0 || fromIndex === targetIndex) {
+      return
+    }
+    const [moved] = ordered.splice(fromIndex, 1)
+    ordered.splice(targetIndex + 1, 0, moved)
+  })
+  return ordered
 }
 
 function sortChildren(
@@ -908,6 +1023,14 @@ function collectVisibleThinkingChildren(
     }),
     (node) => node.id,
   )
+}
+
+function collectJudgmentChildren(
+  parentId: string,
+  nodesById: Map<string, KnowledgeSemanticNode>,
+  edgesByParent: Map<string, KnowledgeSemanticEdge[]>,
+): KnowledgeSemanticNode[] {
+  return sortNodesByReorderProposals(sortChildren(parentId, nodesById, edgesByParent))
 }
 
 function selectThinkingCenter(options: {
@@ -1112,6 +1235,74 @@ function createThinkingProjection(options: {
     group.push(edge)
     edgesByParent.set(edge.to, group)
   })
+
+  if (isJudgmentTreeGraph(options.semanticNodes)) {
+    const rootContext =
+      options.semanticNodes.find((node) => node.structure_role === 'root_context') ??
+      options.semanticNodes.find(
+        (node) =>
+          collectJudgmentChildren(node.id, nodesById, edgesByParent).some(
+            (child) => child.structure_role === 'judgment_module',
+          ),
+      ) ??
+      options.semanticNodes[0]
+
+    if (!rootContext) {
+      return buildProjectionFromNodes({
+        viewId: options.viewId,
+        viewType: PRIMARY_KNOWLEDGE_VIEW_TYPE,
+        summary: 'No semantic nodes were available for the thinking view.',
+        nodes: [],
+        fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
+      })
+    }
+
+    const projectionNodes: ProjectionNode[] = [
+      projectionNodeFromSemanticNode({
+        node: rootContext,
+        parentId: null,
+        order: 0,
+      }),
+    ]
+    const visited = new Set<string>([rootContext.id])
+    const walkJudgmentBranch = (
+      node: KnowledgeSemanticNode,
+      parentId: string,
+      order: number,
+    ): void => {
+      if (visited.has(node.id)) {
+        return
+      }
+      visited.add(node.id)
+      projectionNodes.push(
+        projectionNodeFromSemanticNode({
+          node,
+          parentId,
+          order,
+        }),
+      )
+
+      collectJudgmentChildren(node.id, nodesById, edgesByParent).forEach((child, childIndex) => {
+        walkJudgmentBranch(child, node.id, childIndex)
+      })
+    }
+
+    const judgmentModules = collectJudgmentChildren(rootContext.id, nodesById, edgesByParent).filter(
+      (node) => node.structure_role === 'judgment_module',
+    )
+    judgmentModules.forEach((module, moduleIndex) => {
+      walkJudgmentBranch(module, rootContext.id, moduleIndex)
+    })
+
+    return buildProjectionFromNodes({
+      viewId: options.viewId,
+      viewType: PRIMARY_KNOWLEDGE_VIEW_TYPE,
+      summary: `Projected a judgment-tree thinking view with ${judgmentModules.length} modules.`,
+      nodes: projectionNodes,
+      fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
+    })
+  }
+
   const hasParent = new Set(
     options.semanticEdges
       .filter((edge) => edge.type === 'belongs_to')
@@ -1143,22 +1334,11 @@ function createThinkingProjection(options: {
   }
 
   const projectionNodes: ProjectionNode[] = [
-    {
-      id: center.id,
+    projectionNodeFromSemanticNode({
+      node: center,
       parentId: null,
       order: 0,
-      title: center.title,
-      note: buildKnowledgeNodeNote({
-        title: center.title,
-        summary: center.summary,
-        detail: center.detail,
-      }),
-      semanticType: center.type,
-      semanticRole: semanticRoleFromNodeType(center.type),
-      confidence: center.confidence,
-      sourceAnchors: sourceRefsToAnchors(center.source_refs),
-      templateSlot: null,
-    },
+    }),
   ]
   const visited = new Set<string>([center.id])
   const directPrimaryBranches = collectVisibleThinkingChildren(center.id, nodesById, edgesByParent)
@@ -1183,23 +1363,13 @@ function createThinkingProjection(options: {
     parentId: string,
     order: number,
   ): void => {
-    projectionNodes.push({
-      id: node.id,
-      parentId,
-      order,
-      title: node.title,
-      note: buildKnowledgeNodeNote({
-        title: node.title,
-        summary: node.summary,
-        detail: node.detail,
-        task: node.type === 'task' ? node.task : null,
+    projectionNodes.push(
+      projectionNodeFromSemanticNode({
+        node,
+        parentId,
+        order,
       }),
-      semanticType: node.type,
-      semanticRole: semanticRoleFromNodeType(node.type),
-      confidence: node.confidence,
-      sourceAnchors: sourceRefsToAnchors(node.source_refs),
-      templateSlot: null,
-    })
+    )
   }
 
   const walkBranch = (
@@ -1263,6 +1433,93 @@ export function createExecutionProjection(options: {
     group.push(edge)
     edgesByParent.set(edge.to, group)
   })
+
+  if (isJudgmentTreeGraph(options.semanticNodes)) {
+    const rootContext =
+      options.semanticNodes.find((node) => node.structure_role === 'root_context') ??
+      options.semanticNodes[0] ??
+      null
+    const executionRootId = 'execution_root'
+    const executionRoot: ProjectionNode = {
+      id: executionRootId,
+      parentId: null,
+      order: 0,
+      title: '执行汇总',
+      note: '任务镜像汇总，保留来源模块引用。',
+      semanticType: 'section',
+      semanticRole: 'section',
+      confidence: 'high',
+      sourceAnchors: [],
+      templateSlot: null,
+      structureRole: 'execution_root',
+      locked: false,
+      sourceModuleId: null,
+      proposedReorder: null,
+      proposedReparent: null,
+      taskDependsOn: [],
+      inferredOutput: null,
+      mirroredTaskId: null,
+    }
+    const projectionNodes: ProjectionNode[] = [executionRoot]
+    const judgmentModules =
+      rootContext
+        ? collectJudgmentChildren(rootContext.id, nodesById, edgesByParent).filter(
+            (node) => node.structure_role === 'judgment_module',
+          )
+        : []
+
+    const collectModuleTasks = (node: KnowledgeSemanticNode): KnowledgeSemanticNode[] => {
+      const tasks: KnowledgeSemanticNode[] = node.type === 'task' ? [node] : []
+      collectJudgmentChildren(node.id, nodesById, edgesByParent).forEach((child) => {
+        tasks.push(...collectModuleTasks(child))
+      })
+      return tasks
+    }
+
+    let mirrorOrder = 0
+    judgmentModules.forEach((module) => {
+      const tasks = collectModuleTasks(module)
+      tasks.forEach((task) => {
+        const mirrorId = task.task?.mirrored_task_id ?? `execution::${task.id}`
+        const moduleTitle = nodesById.get(task.source_module_id ?? module.id)?.title ?? module.title
+        projectionNodes.push({
+          id: mirrorId,
+          parentId: executionRootId,
+          order: mirrorOrder,
+          title: task.title,
+          note: buildKnowledgeNodeNote({
+            title: task.title,
+            summary: `来源模块：${moduleTitle}`,
+            detail: task.detail,
+            task: task.task,
+          }),
+          semanticType: 'task',
+          semanticRole: semanticRoleFromNodeType('task'),
+          confidence: task.confidence,
+          sourceAnchors: sourceRefsToAnchors(task.source_refs),
+          templateSlot: null,
+          structureRole: 'execution_task_mirror',
+          locked: task.locked ?? false,
+          sourceModuleId: task.source_module_id ?? module.id,
+          proposedReorder: task.proposed_reorder ?? null,
+          proposedReparent: task.proposed_reparent ?? null,
+          taskDependsOn: [...(task.task?.depends_on ?? [])],
+          inferredOutput: task.task?.inferred_output ?? false,
+          mirroredTaskId: mirrorId,
+        })
+        mirrorOrder += 1
+      })
+    })
+
+    return buildProjectionFromNodes({
+      viewId: options.viewId,
+      viewType: 'execution_view',
+      summary: `Projected ${Math.max(projectionNodes.length - 1, 0)} mirrored tasks into the execution view.`,
+      nodes: projectionNodes,
+      fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
+    })
+  }
+
   const allowedTypes: KnowledgeSemanticNodeType[] = ['section', 'claim', 'task', 'decision', 'risk', 'metric', 'goal', 'project', 'review']
   const root =
     options.semanticNodes.find((node) => node.type === 'section') ??
@@ -1287,23 +1544,13 @@ export function createExecutionProjection(options: {
       return
     }
     visited.add(node.id)
-    projectionNodes.push({
-      id: node.id,
-      parentId,
-      order,
-      title: node.title,
-      note: buildKnowledgeNodeNote({
-        title: node.title,
-        summary: node.summary,
-        detail: node.detail,
-        task: node.task,
+    projectionNodes.push(
+      projectionNodeFromSemanticNode({
+        node,
+        parentId,
+        order,
       }),
-      semanticType: node.type,
-      semanticRole: semanticRoleFromNodeType(node.type),
-      confidence: node.confidence,
-      sourceAnchors: sourceRefsToAnchors(node.source_refs),
-      templateSlot: null,
-    })
+    )
 
     sortChildren(node.id, nodesById, edgesByParent)
       .filter((child) => allowedTypes.includes(child.type))
@@ -1344,6 +1591,14 @@ export function createArchiveProjection(options: {
     confidence: 'high',
     sourceAnchors: [],
     templateSlot: null,
+    structureRole: null,
+    locked: false,
+    sourceModuleId: null,
+    proposedReorder: null,
+    proposedReparent: null,
+    taskDependsOn: [],
+    inferredOutput: null,
+    mirroredTaskId: null,
   })
   options.sources.forEach((source, sourceIndex) => {
     const rootId = `archive_${source.id}`
@@ -1358,6 +1613,14 @@ export function createArchiveProjection(options: {
       confidence: 'high',
       sourceAnchors: [],
       templateSlot: null,
+      structureRole: null,
+      locked: false,
+      sourceModuleId: null,
+      proposedReorder: null,
+      proposedReparent: null,
+      taskDependsOn: [],
+      inferredOutput: null,
+      mirroredTaskId: null,
     })
 
     const seen = new Set<string>()
@@ -1393,6 +1656,14 @@ export function createArchiveProjection(options: {
             confidence: hint.kind === 'heading' ? 'high' : 'medium',
             sourceAnchors: [{ lineStart: hint.lineStart, lineEnd: hint.lineEnd }],
             templateSlot: null,
+            structureRole: null,
+            locked: false,
+            sourceModuleId: null,
+            proposedReorder: null,
+            proposedReparent: null,
+            taskDependsOn: [],
+            inferredOutput: null,
+            mirroredTaskId: null,
           })
           seen.add(archiveNodeId)
         }

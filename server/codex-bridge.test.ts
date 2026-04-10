@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import type {
   AiChatRequest,
@@ -9,6 +10,10 @@ import type {
 } from '../shared/ai-contract.js'
 import type { SyncAnalyzeConflictRequest } from '../shared/sync-contract.js'
 import { CodexBridgeError, createCodexBridge } from './codex-bridge.js'
+
+const GTM_V2_OUTPUT = JSON.parse(
+  readFileSync(new URL('../docs/test_docs/GTM_main.document-to-logic-map.v2.json', import.meta.url), 'utf8'),
+)
 
 const readyStatus: CodexStatus = {
   cliInstalled: true,
@@ -424,22 +429,22 @@ describe('createCodexBridge', () => {
       'Use the repo skill `document-to-logic-map` for this import.',
     )
     expect(execute.mock.calls[0][0]).toContain(
-      '"spec_version": "document-to-logic-map/v1"',
+      '"spec_version": "document-to-logic-map/v2"',
     )
     expect(execute.mock.calls[0][0]).toContain(
       '"semantic_hint_count": 0',
     )
     expect(execute.mock.calls[0][0]).toContain(
-      '- Keep titles short and move source detail into `note`.',
+      '- Each judgment module must use the fixed skeleton: 核心判断 -> 判断依据 -> 潜在动作.',
     )
     expect(execute.mock.calls[0][0]).toContain(
-      '- Normalize headings into wrapper, semantic, or archival headings before you build the spine.',
+      '- Rewrite the visible thinking structure into a judgment tree around the core question instead of preserving the source outline.',
     )
     expect(execute.mock.calls[0][0]).toContain(
-      '- Choose the root from the highest-information semantic unit, such as the core question, thesis, main decision, or main job-to-be-done. Do not default the root to the file title.',
+      '- Choose the root from the highest-information semantic unit, such as the core question, thesis, main decision, or main job-to-be-done. The root may keep light source context in note, but do not default it to the file title.',
     )
     expect(execute.mock.calls[0][0]).toContain(
-      '- When the document type is analysis, preserve breadth at level 1. If you extract 4-8 peer sections, keep all of them visible instead of collapsing the document to one branch.',
+      '- Extract tasks with high recall. If the action is clear but the deliverable is incomplete, infer `task.output` and mark `inferred_output=true` instead of dropping the task.',
     )
   })
 
@@ -543,6 +548,66 @@ describe('createCodexBridge', () => {
       title: '第一波应该先打谁',
     })
     expect(result.viewProjections[result.activeViewId as string]?.previewNodes.length).toBeGreaterThan(0)
+  })
+
+  it('normalizes v2 judgment-tree payloads and mirrors tasks into execution view', async () => {
+    const execute = vi.fn().mockResolvedValue(JSON.stringify(GTM_V2_OUTPUT))
+
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockResolvedValue(readyStatus),
+        execute,
+        executeMessage: vi.fn(),
+      },
+      promptStore: createPromptStore(),
+    })
+
+    const result = await bridge.previewTextImport({
+      ...baseImportRequest,
+      sourceName: 'GTM_main.md',
+      rawText: '# GTM main',
+    })
+
+    const thinkingRoot = result.previewNodes.find((node) => node.parentId === null)
+    const firstLevelTitles = result.previewNodes
+      .filter((node) => node.parentId === thinkingRoot?.id)
+      .map((node) => node.title)
+    const executionViewId = result.views.find((view) => view.type === 'execution_view')?.id as string
+    const executionProjection = result.viewProjections[executionViewId]
+    const executionTitles = executionProjection.previewNodes.map((node) => node.title)
+    const mirroredTypes = executionProjection.previewNodes
+      .filter((node) => node.parentId !== null)
+      .map((node) => node.structureRole)
+
+    expect(thinkingRoot?.title).toBe('第一波应该先打谁')
+    expect(firstLevelTitles).toEqual([
+      '先明确筛选问题',
+      '先按处境切分',
+      '先识别真实痛感',
+      '再判断购买成熟度',
+      '再判断触达效率',
+      '再判断案例扩散',
+      '再统一四维评分',
+      '最后做 Discovery 验证',
+    ])
+    expect(firstLevelTitles).not.toContain('制作 Beachhead Segment 四维筛选表')
+    expect(
+      result.semanticNodes.find((node) => node.id === 'task_build_scoring_sheet'),
+    ).toMatchObject({
+      source_module_id: 'module_scoring',
+      task: {
+        mirrored_task_id: 'execution::task_build_scoring_sheet',
+        inferred_output: false,
+      },
+    })
+    expect(executionProjection.previewNodes[0]).toMatchObject({
+      title: '执行汇总',
+      structureRole: 'execution_root',
+    })
+    expect(executionTitles).toContain('制作 Beachhead Segment 四维筛选表')
+    expect(executionTitles).toContain('跑一轮 customer discovery 验证候选 segment')
+    expect(executionTitles).not.toContain('先明确筛选问题')
+    expect(mirroredTypes.every((value) => value === 'execution_task_mirror')).toBe(true)
   })
 
   it('strips formatting fields from imported structural operations', async () => {

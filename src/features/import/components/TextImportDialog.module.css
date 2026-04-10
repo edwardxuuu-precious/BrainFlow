@@ -215,6 +215,12 @@
   border-top: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 70%, white 30%);
 }
 
+.inputPanel,
+.statusStrip,
+.section {
+  flex: 0 0 auto;
+}
+
 .sectionHeader,
 .reviewHeader {
   display: flex;

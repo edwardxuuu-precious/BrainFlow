@@ -56,6 +56,8 @@ describe('text-import-layering', () => {
           priority: 'high',
           depends_on: [],
           output: null,
+          inferred_output: false,
+          mirrored_task_id: null,
           source_refs: [],
           definition_of_done: 'We confirm repeated urgency in three calls.',
         },
@@ -414,6 +416,8 @@ describe('text-import-layering', () => {
           priority: null,
           depends_on: [],
           output: 'Setup-friction report',
+          inferred_output: false,
+          mirrored_task_id: null,
           source_refs: [],
           definition_of_done: null,
         },
@@ -508,5 +512,185 @@ describe('text-import-layering', () => {
       'Median setup takes 18 minutes',
       'Ship setup audit',
     ])
+  })
+
+  it('projects v2 judgment modules in thinking view and mirrors only tasks in execution view', () => {
+    const semanticNodes: KnowledgeSemanticNode[] = [
+      {
+        id: 'root_context',
+        type: 'question',
+        title: 'Who should we target first?',
+        summary: 'Who should we target first?',
+        detail: 'Keep the original GTM question as the visible root context.',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'root_context',
+        task: null,
+      },
+      {
+        id: 'module_context',
+        type: 'section',
+        title: '先按处境切分',
+        summary: '先按处境切分',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'judgment_module',
+        task: null,
+      },
+      {
+        id: 'module_scoring',
+        type: 'section',
+        title: '再统一四维评分',
+        summary: '再统一四维评分',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'judgment_module',
+        task: null,
+      },
+      {
+        id: 'module_context_core',
+        type: 'section',
+        title: '核心判断',
+        summary: '核心判断',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'core_judgment_group',
+        source_module_id: 'module_context',
+        task: null,
+      },
+      {
+        id: 'module_context_basis',
+        type: 'section',
+        title: '判断依据',
+        summary: '判断依据',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'judgment_basis_group',
+        source_module_id: 'module_context',
+        task: null,
+      },
+      {
+        id: 'module_context_actions',
+        type: 'section',
+        title: '潜在动作',
+        summary: '潜在动作',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'potential_action_group',
+        source_module_id: 'module_context',
+        task: null,
+      },
+      {
+        id: 'module_scoring_actions',
+        type: 'section',
+        title: '潜在动作',
+        summary: '潜在动作',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'potential_action_group',
+        source_module_id: 'module_scoring',
+        task: null,
+      },
+      {
+        id: 'task_segments',
+        type: 'task',
+        title: '列候选 segment',
+        summary: '列候选 segment',
+        detail: 'Write 5 to 8 candidate segments.',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'action_item',
+        source_module_id: 'module_context',
+        task: {
+          status: 'todo',
+          owner: null,
+          due_date: null,
+          priority: null,
+          depends_on: [],
+          output: '候选 segment 列表',
+          inferred_output: true,
+          mirrored_task_id: 'execution::task_segments',
+          source_refs: [],
+          definition_of_done: null,
+        },
+      },
+      {
+        id: 'task_sheet',
+        type: 'task',
+        title: '制作筛选表',
+        summary: '制作筛选表',
+        detail: 'Build the four-dimension scoring sheet.',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'action_item',
+        source_module_id: 'module_scoring',
+        task: {
+          status: 'todo',
+          owner: null,
+          due_date: null,
+          priority: null,
+          depends_on: ['task_segments'],
+          output: '四维筛选表',
+          inferred_output: false,
+          mirrored_task_id: 'execution::task_sheet',
+          source_refs: [],
+          definition_of_done: null,
+        },
+      },
+    ]
+    const semanticEdges: KnowledgeSemanticEdge[] = [
+      { from: 'module_context', to: 'root_context', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'module_scoring', to: 'root_context', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'module_context_core', to: 'module_context', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'module_context_basis', to: 'module_context', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'module_context_actions', to: 'module_context', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'module_scoring_actions', to: 'module_scoring', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'task_segments', to: 'module_context_actions', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'task_sheet', to: 'module_scoring_actions', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'task_sheet', to: 'task_segments', type: 'depends_on', label: null, source_refs: [], confidence: 'high' },
+    ]
+
+    const compiled = compileSemanticLayerViews({
+      bundleId: 'bundle_gtm_v2',
+      bundleTitle: 'GTM',
+      sources: [createSource('GTM')],
+      semanticNodes,
+      semanticEdges,
+      fallbackInsertionParentTopicId: 'topic_root',
+      documentType: 'analysis',
+    })
+    const thinkingProjection = compiled.viewProjections[compiled.activeViewId]
+    const executionProjection = compiled.viewProjections[
+      compiled.views.find((view) => view.type === 'execution_view')?.id as string
+    ]
+
+    expect(thinkingProjection.previewNodes[0]).toMatchObject({
+      id: 'root_context',
+      title: 'Who should we target first?',
+      structureRole: 'root_context',
+    })
+    expect(
+      thinkingProjection.previewNodes.filter((node) => node.parentId === 'root_context').map((node) => node.title),
+    ).toEqual(['先按处境切分', '再统一四维评分'])
+    expect(
+      thinkingProjection.previewNodes.filter((node) => node.parentId === 'module_context').map((node) => node.title),
+    ).toEqual(['核心判断', '判断依据', '潜在动作'])
+    expect(executionProjection.previewNodes[0]).toMatchObject({
+      title: '执行汇总',
+      structureRole: 'execution_root',
+    })
+    expect(executionProjection.previewNodes.filter((node) => node.parentId !== null).map((node) => node.title)).toEqual([
+      '列候选 segment',
+      '制作筛选表',
+    ])
+    expect(
+      executionProjection.previewNodes.filter((node) => node.parentId !== null).every((node) => node.semanticType === 'task'),
+    ).toBe(true)
   })
 })

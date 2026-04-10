@@ -133,6 +133,24 @@ interface RawImportPreviewItem {
   confidence?: string | null
   sourceAnchors?: Array<{ lineStart?: number | null; lineEnd?: number | null }> | null
   templateSlot?: string | null
+  structureRole?: string | null
+  locked?: boolean | null
+  sourceModuleId?: string | null
+  proposedReorder?:
+    | {
+        after_node_id?: string | null
+        reason?: string | null
+      }
+    | null
+  proposedReparent?:
+    | {
+        new_parent_id?: string | null
+        reason?: string | null
+      }
+    | null
+  taskDependsOn?: string[] | null
+  inferredOutput?: boolean | null
+  mirroredTaskId?: string | null
 }
 
 interface RawImportNodePlan {
@@ -148,6 +166,24 @@ interface RawImportNodePlan {
   priority?: string | null
   collapsedByDefault?: boolean | null
   templateSlot?: string | null
+  structureRole?: string | null
+  locked?: boolean | null
+  sourceModuleId?: string | null
+  proposedReorder?:
+    | {
+        after_node_id?: string | null
+        reason?: string | null
+      }
+    | null
+  proposedReparent?:
+    | {
+        new_parent_id?: string | null
+        reason?: string | null
+      }
+    | null
+  taskDependsOn?: string[] | null
+  inferredOutput?: boolean | null
+  mirroredTaskId?: string | null
 }
 
 interface RawImportClassification {
@@ -185,6 +221,8 @@ interface RawKnowledgeSemanticTaskFields {
   priority?: string | null
   depends_on?: string[] | null
   output?: string | null
+  inferred_output?: boolean | null
+  mirrored_task_id?: string | null
   source_refs?: RawKnowledgeSourceRef[] | null
   definition_of_done?: string | null
 }
@@ -197,6 +235,21 @@ interface RawKnowledgeSemanticNode {
   detail?: string | null
   source_refs?: RawKnowledgeSourceRef[] | null
   confidence?: string | null
+  structure_role?: string | null
+  locked?: boolean | null
+  source_module_id?: string | null
+  proposed_reorder?:
+    | {
+        after_node_id?: string | null
+        reason?: string | null
+      }
+    | null
+  proposed_reparent?:
+    | {
+        new_parent_id?: string | null
+        reason?: string | null
+      }
+    | null
   task?: RawKnowledgeSemanticTaskFields | null
 }
 
@@ -277,6 +330,9 @@ interface RawDocumentToLogicMapSpan {
 interface RawDocumentToLogicMapTask {
   status?: string | null
   output?: string | null
+  depends_on?: string[] | null
+  inferred_output?: boolean | null
+  mirrored_task_id?: string | null
 }
 
 interface RawDocumentToLogicMapNode {
@@ -290,6 +346,21 @@ interface RawDocumentToLogicMapNode {
   confidence?: number | string | null
   source_spans?: RawDocumentToLogicMapSpan[] | null
   task?: RawDocumentToLogicMapTask | null
+  structure_role?: string | null
+  locked?: boolean | null
+  source_module_id?: string | null
+  proposed_reorder?:
+    | {
+        after_node_id?: string | null
+        reason?: string | null
+      }
+    | null
+  proposed_reparent?:
+    | {
+        new_parent_id?: string | null
+        reason?: string | null
+      }
+    | null
 }
 
 interface RawDocumentToLogicMapPayload {
@@ -1302,6 +1373,59 @@ function normalizeTemplateSlot(
     : null
 }
 
+function normalizeStructureRole(
+  value: string | null | undefined,
+): TextImportNodePlan['structureRole'] {
+  const normalized = normalizeText(value)
+  return normalized &&
+    [
+      'root_context',
+      'judgment_module',
+      'core_judgment_group',
+      'judgment_basis_group',
+      'potential_action_group',
+      'core_judgment',
+      'basis_item',
+      'action_item',
+      'execution_root',
+      'execution_task_mirror',
+    ].includes(normalized)
+    ? (normalized as NonNullable<TextImportNodePlan['structureRole']>)
+    : null
+}
+
+function normalizeProposedReorder(
+  value:
+    | RawImportPreviewItem['proposedReorder']
+    | RawImportNodePlan['proposedReorder']
+    | RawDocumentToLogicMapNode['proposed_reorder'],
+): TextImportNodePlan['proposedReorder'] {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  return {
+    after_node_id: normalizeText(value.after_node_id) ?? null,
+    reason: normalizeText(value.reason) ?? null,
+  }
+}
+
+function normalizeProposedReparent(
+  value:
+    | RawImportPreviewItem['proposedReparent']
+    | RawImportNodePlan['proposedReparent']
+    | RawDocumentToLogicMapNode['proposed_reparent'],
+): TextImportNodePlan['proposedReparent'] {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  return {
+    new_parent_id: normalizeText(value.new_parent_id) ?? null,
+    reason: normalizeText(value.reason) ?? null,
+  }
+}
+
 function createFallbackImportClassification(request: TextImportRequest): TextImportClassification {
   return {
     archetype: request.archetype ?? 'mixed',
@@ -1476,12 +1600,19 @@ function normalizeKnowledgeSemanticNode(
                   : null,
             depends_on: normalizeStringArray(value.task.depends_on) ?? [],
             output: normalizeText(value.task.output) ?? null,
+            inferred_output: typeof value.task.inferred_output === 'boolean' ? value.task.inferred_output : false,
+            mirrored_task_id: normalizeText(value.task.mirrored_task_id) ?? null,
             source_refs: (value.task.source_refs ?? [])
               .map((item) => normalizeKnowledgeSourceRef(item))
               .filter((item): item is KnowledgeSourceRef => item !== null),
             definition_of_done: normalizeText(value.task.definition_of_done) ?? null,
           }
         : null,
+    structure_role: normalizeStructureRole(value?.structure_role),
+    locked: typeof value?.locked === 'boolean' ? value.locked : false,
+    source_module_id: normalizeText(value?.source_module_id) ?? null,
+    proposed_reorder: normalizeProposedReorder(value?.proposed_reorder),
+    proposed_reparent: normalizeProposedReparent(value?.proposed_reparent),
   }
 }
 
@@ -1632,6 +1763,14 @@ function normalizeImportPreviewItem(value: RawImportPreviewItem): TextImportPrev
         : undefined,
     sourceAnchors: normalizeSourceAnchors(value.sourceAnchors),
     templateSlot: normalizeTemplateSlot(value.templateSlot),
+    structureRole: normalizeStructureRole(value.structureRole),
+    locked: typeof value.locked === 'boolean' ? value.locked : null,
+    sourceModuleId: normalizeText(value.sourceModuleId) ?? null,
+    proposedReorder: normalizeProposedReorder(value.proposedReorder),
+    proposedReparent: normalizeProposedReparent(value.proposedReparent),
+    taskDependsOn: normalizeStringArray(value.taskDependsOn) ?? [],
+    inferredOutput: typeof value.inferredOutput === 'boolean' ? value.inferredOutput : null,
+    mirroredTaskId: normalizeText(value.mirroredTaskId) ?? null,
   }
 }
 
@@ -1668,6 +1807,14 @@ function normalizeImportNodePlan(value: RawImportNodePlan): TextImportNodePlan {
         : null,
     collapsedByDefault: typeof value.collapsedByDefault === 'boolean' ? value.collapsedByDefault : null,
     templateSlot: normalizeTemplateSlot(value.templateSlot),
+    structureRole: normalizeStructureRole(value.structureRole),
+    locked: typeof value.locked === 'boolean' ? value.locked : null,
+    sourceModuleId: normalizeText(value.sourceModuleId) ?? null,
+    proposedReorder: normalizeProposedReorder(value.proposedReorder),
+    proposedReparent: normalizeProposedReparent(value.proposedReparent),
+    taskDependsOn: normalizeStringArray(value.taskDependsOn) ?? [],
+    inferredOutput: typeof value.inferredOutput === 'boolean' ? value.inferredOutput : null,
+    mirroredTaskId: normalizeText(value.mirroredTaskId) ?? null,
   }
 }
 
@@ -2139,10 +2286,18 @@ type NormalizedDocumentToLogicMapNode = {
   semanticRole: DocumentToLogicMapNodeType
   confidence: TextImportNodePlan['confidence']
   sourceAnchors: TextImportNodePlan['sourceAnchors']
+  structureRole: TextImportNodePlan['structureRole']
+  locked: boolean
+  sourceModuleId: string | null
+  proposedReorder: TextImportNodePlan['proposedReorder']
+  proposedReparent: TextImportNodePlan['proposedReparent']
   task:
     | {
         status: 'todo' | 'in_progress' | 'blocked' | 'done'
         output: string | null
+        dependsOn: string[]
+        inferredOutput: boolean
+        mirroredTaskId: string | null
       }
     | null
 }
@@ -2181,11 +2336,19 @@ function normalizeDocumentToLogicMapNode(
     semanticRole: type,
     confidence: normalizeDocumentToLogicMapConfidence(value.confidence),
     sourceAnchors: normalizeDocumentToLogicMapSourceAnchors(value.source_spans),
+    structureRole: normalizeStructureRole(value.structure_role),
+    locked: typeof value.locked === 'boolean' ? value.locked : false,
+    sourceModuleId: normalizeText(value.source_module_id) ?? null,
+    proposedReorder: normalizeProposedReorder(value.proposed_reorder),
+    proposedReparent: normalizeProposedReparent(value.proposed_reparent),
     task:
       type === 'task'
         ? {
             status: taskStatus,
             output: normalizeText(value.task?.output) ?? null,
+            dependsOn: normalizeStringArray(value.task?.depends_on) ?? [],
+            inferredOutput: typeof value.task?.inferred_output === 'boolean' ? value.task.inferred_output : false,
+            mirroredTaskId: normalizeText(value.task?.mirrored_task_id) ?? null,
           }
         : null,
   }
@@ -2276,6 +2439,14 @@ function buildDocumentToLogicMapNodePlans(
             : 'secondary',
     collapsedByDefault: node.type === 'evidence',
     templateSlot: null,
+    structureRole: node.structureRole,
+    locked: node.locked,
+    sourceModuleId: node.sourceModuleId,
+    proposedReorder: node.proposedReorder,
+    proposedReparent: node.proposedReparent,
+    taskDependsOn: [...(node.task?.dependsOn ?? [])],
+    inferredOutput: node.task?.inferredOutput ?? null,
+    mirroredTaskId: node.task?.mirroredTaskId ?? null,
   }))
 }
 
@@ -2294,6 +2465,11 @@ function buildDocumentToLogicMapSemanticNodes(
       detail: node.note ?? '',
       source_refs: sourceRefs,
       confidence: node.confidence,
+      structure_role: node.structureRole,
+      locked: node.locked,
+      source_module_id: node.sourceModuleId,
+      proposed_reorder: node.proposedReorder,
+      proposed_reparent: node.proposedReparent,
       task:
         node.type === 'task'
           ? {
@@ -2301,8 +2477,10 @@ function buildDocumentToLogicMapSemanticNodes(
               owner: null,
               due_date: null,
               priority: null,
-              depends_on: [],
+              depends_on: [...(node.task?.dependsOn ?? [])],
               output: node.task?.output ?? null,
+              inferred_output: node.task?.inferredOutput ?? false,
+              mirrored_task_id: node.task?.mirroredTaskId ?? null,
               source_refs: sourceRefs,
               definition_of_done: null,
             }
@@ -2341,6 +2519,17 @@ function buildDocumentToLogicMapSemanticEdges(
         confidence: node.confidence,
       })
     }
+
+    node.task?.dependsOn.forEach((dependencyId) => {
+      edges.push({
+        from: node.id,
+        to: dependencyId,
+        type: 'depends_on',
+        label: null,
+        source_refs: sourceRefs,
+        confidence: node.confidence,
+      })
+    })
   })
 
   return edges
@@ -3110,7 +3299,7 @@ function buildTextImportPromptContext(request: TextImportRequest): BuiltTextImpo
       : null
 
   const promptContext = {
-    spec_version: 'document-to-logic-map/v1',
+    spec_version: 'document-to-logic-map/v2',
     source: {
       name: request.sourceName,
       type: request.sourceType,
@@ -3237,27 +3426,29 @@ function buildDocumentToLogicMapPrompt(
     '',
     'Import goal:',
     '- Return valid JSON only.',
-    '- Follow the `document-to-logic-map/v1` input and output contracts exactly.',
+    '- Follow the `document-to-logic-map/v2` input and output contracts exactly.',
     '- First classify the source as analysis, process, plan, or notes.',
-    '- Normalize headings into wrapper, semantic, or archival headings before you build the spine.',
+    '- Rewrite the visible thinking structure into a judgment tree around the core question instead of preserving the source outline.',
     '- Treat wrapper headings such as 说明, 备注, 对话记录, 用户, 助手, 文件格式, 本文说明, 当前对话整理, 对话整理, Markdown 记录, Turn n · User, and Turn n · Assistant as archival unless they clearly carry the thesis.',
-    '- Wrapper headings must not become the first two visible levels of the logic map. Preserve them for archive handling instead.',
-    '- For conversation-export documents, derive the spine from the user core question, the assistant main conclusion, and the assistant decomposition sections.',
-    '- Choose the root from the highest-information semantic unit, such as the core question, thesis, main decision, or main job-to-be-done. Do not default the root to the file title.',
-    '- Build the main spine in original source order instead of forcing a preset template.',
+    '- Wrapper headings and conversation-export scaffolding must stay out of the visible thinking spine. Keep them only for archive handling.',
+    '- For conversation-export documents, keep only the core question and the judgment modules in the visible tree. Do not surface 用户, 助手, 对话记录, 说明, or 备注 as visible logic branches.',
+    '- Choose the root from the highest-information semantic unit, such as the core question, thesis, main decision, or main job-to-be-done. The root may keep light source context in note, but do not default it to the file title.',
     '- Only use these node types: section, claim, evidence, task, decision, risk, metric, question.',
     '- `semantic_role` must equal `type` for every node.',
-    '- Attach evidence and metrics to the nearest supporting claim, or the nearest section if no claim exists yet.',
-    '- Create task nodes only when the text contains both a concrete action and a concrete output.',
-    '- Do not invent placeholder parent nodes such as steps, use cases, criteria, data, evidence, or sub-arguments unless the source explicitly has that heading.',
-    '- Do not let wrapper headings, archive branches, or source-outline nodes become the visible logic spine.',
-    '- When the document type is analysis, preserve breadth at level 1. If you extract 4-8 peer sections, keep all of them visible instead of collapsing the document to one branch.',
-    '- For analysis documents, each first-order section may expose 1-3 representative children: a claim, a metric/evidence/question, and a task only when both action and deliverable are explicit.',
-    '- Keep titles short and move source detail into `note`.',
+    '- Visible level-1 branches must be independent judgment modules with judgment-phrase titles. Do not mix question sentences, neutral theme labels, and top-level tasks at the same level.',
+    '- Order judgment modules by prerequisite or causal dependency, not by source order or heading depth. Use source order only as a weak tie-breaker.',
+    '- Each judgment module must use the fixed skeleton: 核心判断 -> 判断依据 -> 潜在动作.',
+    '- Attach evidence, questions, observations, interview prompts, and checks under 判断依据 instead of dumping them into one long note.',
+    '- Split nodes when semantic roles differ. Do not hide mixed judgment/basis/action content inside one long note.',
+    '- Extract tasks with high recall. If the action is clear but the deliverable is incomplete, infer `task.output` and mark `inferred_output=true` instead of dropping the task.',
+    '- Keep logic tasks under their owning judgment module. Do not let top-level tasks such as 制作筛选表抢占一级分支 unless the whole document is a pure execution plan.',
+    '- Return node-level metadata for structure_role, locked, proposed_reorder, proposed_reparent, and source_module_id, plus task metadata for depends_on, inferred_output, and mirrored_task_id.',
+    '- The execution view will mirror tasks separately. Do not emit execution-only judgment branches in the main thinking tree.',
+    '- Keep titles short and use child nodes, not long notes, to carry basis items and actions.',
     '- Preserve source-grounded spans and confidence for every node.',
     mode === 'repair'
-      ? '- This is a repair attempt because the previous output was not schema-compatible or structurally weak. Tighten the tree, remove duplicates, and keep the source order intact.'
-      : '- Prefer a complete, stable logic tree on the first attempt.',
+      ? '- This is a repair attempt because the previous output was not schema-compatible or structurally weak. Tighten the judgment tree, remove duplicates, and restore the fixed module skeleton.'
+      : '- Prefer a complete, stable judgment tree on the first attempt.',
     '',
     'Skill input JSON:',
     promptContextText,

@@ -137,6 +137,28 @@ export interface KnowledgeSourceRef {
   pathTitles: string[]
 }
 
+export type KnowledgeStructureRole =
+  | 'root_context'
+  | 'judgment_module'
+  | 'core_judgment_group'
+  | 'judgment_basis_group'
+  | 'potential_action_group'
+  | 'core_judgment'
+  | 'basis_item'
+  | 'action_item'
+  | 'execution_root'
+  | 'execution_task_mirror'
+
+export interface KnowledgeStructureReorderProposal {
+  after_node_id: string | null
+  reason: string | null
+}
+
+export interface KnowledgeStructureReparentProposal {
+  new_parent_id: string | null
+  reason: string | null
+}
+
 export interface KnowledgeSemanticTaskFields {
   status: KnowledgeTaskStatus
   owner: string | null
@@ -144,6 +166,8 @@ export interface KnowledgeSemanticTaskFields {
   priority: KnowledgeTaskPriority | null
   depends_on: string[]
   output: string | null
+  inferred_output: boolean
+  mirrored_task_id: string | null
   source_refs: KnowledgeSourceRef[]
   definition_of_done: string | null
 }
@@ -156,6 +180,11 @@ export interface KnowledgeSemanticNode {
   detail: string
   source_refs: KnowledgeSourceRef[]
   confidence: TextImportConfidence
+  structure_role?: KnowledgeStructureRole | null
+  locked?: boolean
+  source_module_id?: string | null
+  proposed_reorder?: KnowledgeStructureReorderProposal | null
+  proposed_reparent?: KnowledgeStructureReparentProposal | null
   task: KnowledgeSemanticTaskFields | null
 }
 
@@ -490,6 +519,14 @@ export interface TextImportNodePlan {
   priority?: TextImportNodePriority | null
   collapsedByDefault?: boolean | null
   templateSlot?: TextImportTemplateSlot | null
+  structureRole?: KnowledgeStructureRole | null
+  locked?: boolean | null
+  sourceModuleId?: string | null
+  proposedReorder?: KnowledgeStructureReorderProposal | null
+  proposedReparent?: KnowledgeStructureReparentProposal | null
+  taskDependsOn?: string[]
+  inferredOutput?: boolean | null
+  mirroredTaskId?: string | null
 }
 
 export interface TextImportClassification {
@@ -559,6 +596,14 @@ export interface TextImportPreviewItem {
   confidence?: TextImportConfidence
   sourceAnchors?: TextImportSourceAnchor[]
   templateSlot?: TextImportTemplateSlot | null
+  structureRole?: KnowledgeStructureRole | null
+  locked?: boolean | null
+  sourceModuleId?: string | null
+  proposedReorder?: KnowledgeStructureReorderProposal | null
+  proposedReparent?: KnowledgeStructureReparentProposal | null
+  taskDependsOn?: string[]
+  inferredOutput?: boolean | null
+  mirroredTaskId?: string | null
 }
 
 export interface TextImportPreviewNode extends TextImportPreviewItem {

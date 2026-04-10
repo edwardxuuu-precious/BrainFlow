@@ -41,9 +41,18 @@ function buildDraftItemsFromNodePlans(nodePlans: TextImportNodePlan[]): TextImpo
     matchedTopicId: null,
     reason: null,
     semanticRole: plan.semanticRole,
+    semanticType: plan.semanticType ?? null,
     confidence: plan.confidence,
     sourceAnchors: plan.sourceAnchors.map((anchor) => ({ ...anchor })),
     templateSlot: plan.templateSlot ?? null,
+    structureRole: plan.structureRole ?? null,
+    locked: typeof plan.locked === 'boolean' ? plan.locked : null,
+    sourceModuleId: plan.sourceModuleId ?? null,
+    proposedReorder: plan.proposedReorder ?? null,
+    proposedReparent: plan.proposedReparent ?? null,
+    taskDependsOn: [...(plan.taskDependsOn ?? [])],
+    inferredOutput: typeof plan.inferredOutput === 'boolean' ? plan.inferredOutput : null,
+    mirroredTaskId: plan.mirroredTaskId ?? null,
   }))
 }
 
@@ -115,6 +124,14 @@ function flattenDraftNodes(
         (node.parentId === null ? 'primary' : node.children.length > 0 ? 'secondary' : null),
       collapsedByDefault: metadata?.collapsedByDefault ?? null,
       templateSlot: node.templateSlot ?? null,
+      structureRole: node.structureRole ?? null,
+      locked: typeof node.locked === 'boolean' ? node.locked : null,
+      sourceModuleId: node.sourceModuleId ?? null,
+      proposedReorder: node.proposedReorder ?? null,
+      proposedReparent: node.proposedReparent ?? null,
+      taskDependsOn: [...(node.taskDependsOn ?? [])],
+      inferredOutput: typeof node.inferredOutput === 'boolean' ? node.inferredOutput : null,
+      mirroredTaskId: node.mirroredTaskId ?? null,
     })
     node.children.forEach(visit)
   }

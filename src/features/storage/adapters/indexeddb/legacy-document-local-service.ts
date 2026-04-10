@@ -218,6 +218,11 @@ function normalizeKnowledgeTaskFields(
       typeof value.output === 'string' && value.output.trim().length > 0
         ? value.output
         : null,
+    inferred_output: typeof value.inferred_output === 'boolean' ? value.inferred_output : false,
+    mirrored_task_id:
+      typeof value.mirrored_task_id === 'string' && value.mirrored_task_id.trim().length > 0
+        ? value.mirrored_task_id
+        : null,
     source_refs: Array.isArray(value.source_refs)
       ? value.source_refs
           .map((item) => normalizeKnowledgeSourceRef(item))
@@ -282,6 +287,56 @@ function normalizeKnowledgeSemanticNode(
       value.confidence === 'high' || value.confidence === 'medium' || value.confidence === 'low'
         ? value.confidence
         : 'low',
+    structure_role:
+      value.structure_role === 'root_context' ||
+      value.structure_role === 'judgment_module' ||
+      value.structure_role === 'core_judgment_group' ||
+      value.structure_role === 'judgment_basis_group' ||
+      value.structure_role === 'potential_action_group' ||
+      value.structure_role === 'core_judgment' ||
+      value.structure_role === 'basis_item' ||
+      value.structure_role === 'action_item' ||
+      value.structure_role === 'execution_root' ||
+      value.structure_role === 'execution_task_mirror'
+        ? value.structure_role
+        : null,
+    locked: typeof value.locked === 'boolean' ? value.locked : false,
+    source_module_id:
+      typeof value.source_module_id === 'string' && value.source_module_id.trim().length > 0
+        ? value.source_module_id
+        : null,
+    proposed_reorder:
+      value.proposed_reorder &&
+      typeof value.proposed_reorder === 'object'
+        ? {
+            after_node_id:
+              typeof value.proposed_reorder.after_node_id === 'string' &&
+              value.proposed_reorder.after_node_id.trim().length > 0
+                ? value.proposed_reorder.after_node_id
+                : null,
+            reason:
+              typeof value.proposed_reorder.reason === 'string' &&
+              value.proposed_reorder.reason.trim().length > 0
+                ? value.proposed_reorder.reason
+                : null,
+          }
+        : null,
+    proposed_reparent:
+      value.proposed_reparent &&
+      typeof value.proposed_reparent === 'object'
+        ? {
+            new_parent_id:
+              typeof value.proposed_reparent.new_parent_id === 'string' &&
+              value.proposed_reparent.new_parent_id.trim().length > 0
+                ? value.proposed_reparent.new_parent_id
+                : null,
+            reason:
+              typeof value.proposed_reparent.reason === 'string' &&
+              value.proposed_reparent.reason.trim().length > 0
+                ? value.proposed_reparent.reason
+                : null,
+          }
+        : null,
     task: normalizeKnowledgeTaskFields(value.task),
   }
 }
@@ -345,6 +400,8 @@ function normalizePreviewNode(value: Partial<TextImportPreviewItem> | undefined)
     reason: typeof value.reason === 'string' ? value.reason : null,
     semanticRole:
       value.semanticRole === 'section' ||
+      value.semanticRole === 'claim' ||
+      value.semanticRole === 'task' ||
       value.semanticRole === 'summary' ||
       value.semanticRole === 'decision' ||
       value.semanticRole === 'action' ||
@@ -372,6 +429,46 @@ function normalizePreviewNode(value: Partial<TextImportPreviewItem> | undefined)
           .filter((anchor): anchor is { lineStart: number; lineEnd: number } => anchor !== null)
       : [],
     templateSlot: typeof value.templateSlot === 'string' ? value.templateSlot : null,
+    structureRole:
+      value.structureRole === 'root_context' ||
+      value.structureRole === 'judgment_module' ||
+      value.structureRole === 'core_judgment_group' ||
+      value.structureRole === 'judgment_basis_group' ||
+      value.structureRole === 'potential_action_group' ||
+      value.structureRole === 'core_judgment' ||
+      value.structureRole === 'basis_item' ||
+      value.structureRole === 'action_item' ||
+      value.structureRole === 'execution_root' ||
+      value.structureRole === 'execution_task_mirror'
+        ? value.structureRole
+        : null,
+    locked: typeof value.locked === 'boolean' ? value.locked : null,
+    sourceModuleId: typeof value.sourceModuleId === 'string' ? value.sourceModuleId : null,
+    proposedReorder:
+      value.proposedReorder && typeof value.proposedReorder === 'object'
+        ? {
+            after_node_id:
+              typeof value.proposedReorder.after_node_id === 'string'
+                ? value.proposedReorder.after_node_id
+                : null,
+            reason: typeof value.proposedReorder.reason === 'string' ? value.proposedReorder.reason : null,
+          }
+        : null,
+    proposedReparent:
+      value.proposedReparent && typeof value.proposedReparent === 'object'
+        ? {
+            new_parent_id:
+              typeof value.proposedReparent.new_parent_id === 'string'
+                ? value.proposedReparent.new_parent_id
+                : null,
+            reason: typeof value.proposedReparent.reason === 'string' ? value.proposedReparent.reason : null,
+          }
+        : null,
+    taskDependsOn: Array.isArray(value.taskDependsOn)
+      ? value.taskDependsOn.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : [],
+    inferredOutput: typeof value.inferredOutput === 'boolean' ? value.inferredOutput : null,
+    mirroredTaskId: typeof value.mirroredTaskId === 'string' ? value.mirroredTaskId : null,
   }
 }
 
@@ -388,6 +485,8 @@ function normalizeNodePlan(value: Partial<TextImportNodePlan> | undefined): Text
     note: typeof value.note === 'string' ? value.note : null,
     semanticRole:
       value.semanticRole === 'section' ||
+      value.semanticRole === 'claim' ||
+      value.semanticRole === 'task' ||
       value.semanticRole === 'summary' ||
       value.semanticRole === 'decision' ||
       value.semanticRole === 'action' ||
@@ -421,6 +520,46 @@ function normalizeNodePlan(value: Partial<TextImportNodePlan> | undefined): Text
         : null,
     collapsedByDefault: typeof value.collapsedByDefault === 'boolean' ? value.collapsedByDefault : null,
     templateSlot: typeof value.templateSlot === 'string' ? value.templateSlot : null,
+    structureRole:
+      value.structureRole === 'root_context' ||
+      value.structureRole === 'judgment_module' ||
+      value.structureRole === 'core_judgment_group' ||
+      value.structureRole === 'judgment_basis_group' ||
+      value.structureRole === 'potential_action_group' ||
+      value.structureRole === 'core_judgment' ||
+      value.structureRole === 'basis_item' ||
+      value.structureRole === 'action_item' ||
+      value.structureRole === 'execution_root' ||
+      value.structureRole === 'execution_task_mirror'
+        ? value.structureRole
+        : null,
+    locked: typeof value.locked === 'boolean' ? value.locked : null,
+    sourceModuleId: typeof value.sourceModuleId === 'string' ? value.sourceModuleId : null,
+    proposedReorder:
+      value.proposedReorder && typeof value.proposedReorder === 'object'
+        ? {
+            after_node_id:
+              typeof value.proposedReorder.after_node_id === 'string'
+                ? value.proposedReorder.after_node_id
+                : null,
+            reason: typeof value.proposedReorder.reason === 'string' ? value.proposedReorder.reason : null,
+          }
+        : null,
+    proposedReparent:
+      value.proposedReparent && typeof value.proposedReparent === 'object'
+        ? {
+            new_parent_id:
+              typeof value.proposedReparent.new_parent_id === 'string'
+                ? value.proposedReparent.new_parent_id
+                : null,
+            reason: typeof value.proposedReparent.reason === 'string' ? value.proposedReparent.reason : null,
+          }
+        : null,
+    taskDependsOn: Array.isArray(value.taskDependsOn)
+      ? value.taskDependsOn.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : [],
+    inferredOutput: typeof value.inferredOutput === 'boolean' ? value.inferredOutput : null,
+    mirroredTaskId: typeof value.mirroredTaskId === 'string' ? value.mirroredTaskId : null,
   }
 }
 

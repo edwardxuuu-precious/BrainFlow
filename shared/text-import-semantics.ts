@@ -2393,6 +2393,14 @@ export function deriveTextImportNodePlansFromPreviewNodes(options: {
       priority: isRoot ? 'primary' : hasChildren ? 'secondary' : null,
       collapsedByDefault: null,
       templateSlot: node.templateSlot ?? null,
+      structureRole: node.structureRole ?? null,
+      locked: typeof node.locked === 'boolean' ? node.locked : null,
+      sourceModuleId: node.sourceModuleId ?? null,
+      proposedReorder: node.proposedReorder ?? null,
+      proposedReparent: node.proposedReparent ?? null,
+      taskDependsOn: node.taskDependsOn ? [...node.taskDependsOn] : [],
+      inferredOutput: typeof node.inferredOutput === 'boolean' ? node.inferredOutput : null,
+      mirroredTaskId: node.mirroredTaskId ?? null,
     }
   })
 }
@@ -2449,6 +2457,14 @@ export function compileTextImportNodePlans(options: {
       confidence: plan.confidence,
       sourceAnchors: plan.sourceAnchors.map((anchor) => ({ ...anchor })),
       templateSlot: plan.templateSlot ?? null,
+      structureRole: plan.structureRole ?? null,
+      locked: typeof plan.locked === 'boolean' ? plan.locked : null,
+      sourceModuleId: plan.sourceModuleId ?? null,
+      proposedReorder: plan.proposedReorder ?? null,
+      proposedReparent: plan.proposedReparent ?? null,
+      taskDependsOn: [...(plan.taskDependsOn ?? [])],
+      inferredOutput: typeof plan.inferredOutput === 'boolean' ? plan.inferredOutput : null,
+      mirroredTaskId: plan.mirroredTaskId ?? null,
     })),
   )
 
