@@ -201,6 +201,9 @@
   justify-content: center;
   width: 22px;
   height: 22px;
+  border: 1px solid color-mix(in srgb, var(--branch-color), white 60%);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--branch-color), white 92%);
   color: #5a6672;
   cursor: help;
   transition: transform 150ms ease;
@@ -218,11 +221,6 @@
 .taskIcon {
   background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
   color: #1e40af;
-}
-
-.noteIcon {
-  background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-  color: #4b5563;
 }
 
 .taskStatusIcon[data-task-status='todo'] {
@@ -313,6 +311,55 @@
   min-width: 0;
 }
 
+.detailPreview {
+  display: -webkit-box;
+  overflow: hidden;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--branch-color), white 68%);
+  border-radius: 10px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--branch-color), white 93%),
+      color-mix(in srgb, var(--branch-color), white 96%)
+    );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  color: color-mix(in srgb, var(--topic-text, var(--color-text)), #64748b 36%);
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.root .detailPreview {
+  padding: 9px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  -webkit-line-clamp: 3;
+}
+
+.selected .detailPreview,
+.active .detailPreview {
+  border-color: color-mix(in srgb, var(--branch-color), white 54%);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--branch-color), white 88%),
+      color-mix(in srgb, var(--branch-color), white 93%)
+    );
+}
+
+.locked .detailPreview {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--branch-color), white 91%),
+      color-mix(in srgb, var(--topic-fill, #ffffff), #eef2f5 12%)
+    );
+}
+
 .metaRow {
   display: flex;
   align-items: center;
@@ -393,19 +440,6 @@
 
 .taskBadge[data-task-status='todo'] {
   color: #4e5965;
-}
-
-.noteIndicator {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: 1px solid color-mix(in srgb, var(--branch-color), white 64%);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--branch-color), white 90%);
-  color: color-mix(in srgb, var(--branch-color), #5b6470 48%);
 }
 
 .input {

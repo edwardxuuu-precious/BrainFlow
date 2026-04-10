@@ -49,7 +49,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
   const isEditing = editingTopicId === id && editingSurface === 'canvas'
   const isSelected = selected
   const isActive = activeTopicId === id
-  const hasNote = data.note.trim().length > 0
+  const hasNotePreview = data.notePreview.trim().length > 0
   const isLocked = data.aiLocked
   const labels = data.metadata.labels.slice(0, 2)
   const extraLabelCount = Math.max(0, data.metadata.labels.length - labels.length)
@@ -132,7 +132,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
       />
 
       <div className={styles.content}>
-        {(isLocked || hasNote || topicType) && (
+        {(isLocked || topicType) && (
           <div className={styles.statusBar}>
             {isLocked ? (
               <span
@@ -145,20 +145,6 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                 <Icon name="lock" size={14} strokeWidth={2} />
                 {hoveredIcon === 'lock' ? (
                   <span className={styles.statusTooltip}>AI 锁定：节点不会被 AI 修改</span>
-                ) : null}
-              </span>
-            ) : null}
-            {hasNote ? (
-              <span
-                className={classNames(styles.statusIcon, styles.noteIcon)}
-                onMouseEnter={() => setHoveredIcon('note')}
-                onMouseLeave={() => setHoveredIcon(null)}
-                role="img"
-                aria-label="已添加详细内容"
-              >
-                <Icon name="note" size={14} strokeWidth={2} />
-                {hoveredIcon === 'note' ? (
-                  <span className={styles.statusTooltip}>已添加详细内容</span>
                 ) : null}
               </span>
             ) : null}
@@ -226,6 +212,12 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
                 {data.title}
               </div>
             </div>
+
+            {hasNotePreview ? (
+              <div className={styles.detailPreview} title={data.notePreview}>
+                {data.notePreview}
+              </div>
+            ) : null}
 
             {showMetaRow ? (
               <div className={styles.metaRow}>

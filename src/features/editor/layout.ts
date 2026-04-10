@@ -1,6 +1,7 @@
 import { type Edge, Position, type XYPosition, type Node } from '@xyflow/react'
 import type { MindMapDocument, TopicMetadata, TopicNode, TopicStyle } from '../documents/types'
 import { normalizeTopicMetadata, normalizeTopicStyle } from '../documents/topic-defaults'
+import { getTopicNotePreview } from '../documents/topic-rich-text'
 import {
   getRootChildForTopic,
   getTopicDepth,
@@ -25,6 +26,17 @@ const NODE_VERTICAL_PADDING = 20
 const CONTENT_ROW_GAP = 4
 const STATUS_BAR_HEIGHT = 22
 const META_ROW_HEIGHT = 22
+const DETAIL_PREVIEW_FONT_SIZE = 12
+const DETAIL_PREVIEW_ROOT_FONT_SIZE = 13
+const DETAIL_PREVIEW_LINE_HEIGHT = 1.45
+const DETAIL_PREVIEW_LINE_LIMIT = 2
+const DETAIL_PREVIEW_ROOT_LINE_LIMIT = 3
+const DETAIL_PREVIEW_VERTICAL_PADDING = 14
+const DETAIL_PREVIEW_ROOT_VERTICAL_PADDING = 18
+const DETAIL_PREVIEW_HORIZONTAL_PADDING = 20
+const DETAIL_PREVIEW_ROOT_HORIZONTAL_PADDING = 24
+const DETAIL_PREVIEW_WIDTH_BOOST = 24
+const DETAIL_PREVIEW_ROOT_WIDTH_BOOST = 18
 
 interface NodeMetrics {
   width: number
@@ -43,6 +55,7 @@ export interface TopicRenderData extends Record<string, unknown> {
   topicId: string
   title: string
   note: string
+  notePreview: string
   aiLocked: boolean
   metadata: TopicMetadata
   style: TopicStyle
@@ -67,7 +80,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function hasTopicStatusBar(topic: TopicNode): boolean {
-  return topic.aiLocked || topic.note.trim().length > 0 || (!!topic.metadata.type && topic.metadata.type !== 'normal')
+  return topic.aiLocked || (!!topic.metadata.type && topic.metadata.type !== 'normal')
 }
 
 function hasTopicMetaRow(metadata: TopicMetadata): boolean {
@@ -78,11 +91,17 @@ function hasTopicMetaRow(metadata: TopicMetadata): boolean {
   )
 }
 
+function getTopicDetailPreview(topic: TopicNode, isRoot: boolean): string {
+  return getTopicNotePreview(topic.noteRich, topic.note, isRoot ? 144 : 96)
+}
+
 function measureNode(
   topic: TopicNode,
   isRoot: boolean,
   options?: { priority?: 'primary' | 'secondary' | 'supporting' | null; topicType?: TopicMetadata['type'] },
 ): Pick<NodeMetrics, 'width' | 'height'> {
+  const notePreview = getTopicDetailPreview(topic, isRoot)
+  const hasDetailPreview = notePreview.length > 0
   const baseWidth = isRoot ? 248 : 148
   const maxWidth = isRoot ? 420 : 320
   const priorityBoost =
@@ -92,7 +111,12 @@ function measureNode(
   const titleTypography = getTopicTitleTypography(topic.title, titleKind)
   const horizontalPadding = isRoot ? ROOT_HORIZONTAL_PADDING : NODE_HORIZONTAL_PADDING
   const verticalPadding = isRoot ? ROOT_VERTICAL_PADDING : NODE_VERTICAL_PADDING
-  const minimumWidth = baseWidth + priorityBoost + typeBoost
+  const detailWidthBoost = hasDetailPreview
+    ? isRoot
+      ? DETAIL_PREVIEW_ROOT_WIDTH_BOOST
+      : DETAIL_PREVIEW_WIDTH_BOOST
+    : 0
+  const minimumWidth = baseWidth + priorityBoost + typeBoost + detailWidthBoost
   const estimatedTitleWidth =
     measureWeightedTitleWidth(
       topic.title,
@@ -106,10 +130,34 @@ function measureNode(
   })
   const hasStatusBar = hasTopicStatusBar(topic)
   const hasMetaRow = hasTopicMetaRow(topic.metadata)
-  const contentRowCount = 1 + Number(hasStatusBar) + Number(hasMetaRow)
+  const detailFontSize = isRoot ? DETAIL_PREVIEW_ROOT_FONT_SIZE : DETAIL_PREVIEW_FONT_SIZE
+  const detailLineLimit = isRoot ? DETAIL_PREVIEW_ROOT_LINE_LIMIT : DETAIL_PREVIEW_LINE_LIMIT
+  const detailVerticalPadding = isRoot
+    ? DETAIL_PREVIEW_ROOT_VERTICAL_PADDING
+    : DETAIL_PREVIEW_VERTICAL_PADDING
+  const detailHorizontalPadding = isRoot
+    ? DETAIL_PREVIEW_ROOT_HORIZONTAL_PADDING
+    : DETAIL_PREVIEW_HORIZONTAL_PADDING
+  const detailMeasurement = hasDetailPreview
+    ? Math.min(
+        detailLineLimit,
+        Math.max(
+          1,
+          Math.ceil(
+            measureWeightedTitleWidth(notePreview, detailFontSize) /
+              Math.max(1, width - horizontalPadding - detailHorizontalPadding),
+          ),
+        ),
+      ) *
+        detailFontSize *
+        DETAIL_PREVIEW_LINE_HEIGHT +
+      detailVerticalPadding
+    : 0
+  const contentRowCount = 1 + Number(hasStatusBar) + Number(hasDetailPreview) + Number(hasMetaRow)
   const contentHeight =
     titleMeasurement.height +
     (hasStatusBar ? STATUS_BAR_HEIGHT : 0) +
+    detailMeasurement +
     (hasMetaRow ? META_ROW_HEIGHT : 0) +
     Math.max(0, contentRowCount - 1) * CONTENT_ROW_GAP
 
@@ -237,6 +285,7 @@ export function layoutMindMap(doc: MindMapDocument): LayoutResult {
         topicId,
         title: topic.title,
         note: topic.note,
+        notePreview: getTopicDetailPreview(topic, topicId === doc.rootTopicId),
         aiLocked: topic.aiLocked,
         metadata: normalizeTopicMetadata(topic.metadata),
         style: normalizeTopicStyle(topic.style),

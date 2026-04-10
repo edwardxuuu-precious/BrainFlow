@@ -45,16 +45,19 @@ describe('TopicNode', () => {
     resetEditorStore()
   })
 
-  it('shows a note marker when the topic note is not empty', () => {
+  it('shows an inline note preview instead of a standalone note marker', () => {
     const document = createMindMapDocument()
     const branchId = document.topics[document.rootTopicId].childIds[0]
     const branchTitle = document.topics[branchId].title
-    document.topics[branchId].note = '记录上下文'
+    document.topics[branchId].note = '谁最先愿意为这个结果付费，谁就更接近第一波目标用户。'
 
     useEditorStore.getState().setDocument(document)
     renderTopicNode(createTopicNodeProps(branchId, document))
 
-    expect(screen.getByRole('img', { name: /详细内容/ })).toBeInTheDocument()
+    expect(
+      screen.getByText('谁最先愿意为这个结果付费，谁就更接近第一波目标用户。'),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: '已添加详细内容' })).not.toBeInTheDocument()
     expect(screen.getByText(branchTitle).closest('[data-selected]')).toHaveAttribute(
       'data-selected',
       'false',

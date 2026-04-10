@@ -285,6 +285,17 @@ function extractPlainTextFromRuns(runs: TopicRichTextTextRun[]): string {
   return runs.map((run) => run.text).join('')
 }
 
+function normalizeTopicNotePreviewSource(value: string): string {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/^\s*[-*•]\s+/, '').trim())
+    .filter(Boolean)
+    .join(' · ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export function createPlainParagraphRichText(text: string): TopicRichTextDocument | null {
   const normalized = normalizeRichTextValue(text)
   if (normalized.trim().length === 0) {
@@ -346,6 +357,21 @@ export function getRenderableTopicRichText(
   note: string,
 ): TopicRichTextDocument | null {
   return normalizeTopicRichText(noteRich) ?? createTopicRichTextFromPlainText(note)
+}
+
+export function getTopicNotePreview(
+  noteRich: TopicRichTextDocument | null | undefined,
+  note: string,
+  maxLength = 96,
+): string {
+  const plainText = extractPlainTextFromTopicRichText(noteRich)
+  const normalized = normalizeTopicNotePreviewSource(plainText || note)
+
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+
+  return `${normalized.slice(0, maxLength).trimEnd()}…`
 }
 
 export function normalizeTopicRichText(value: unknown): TopicRichTextDocument | null {

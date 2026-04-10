@@ -92,4 +92,18 @@ describe('layoutMindMap', () => {
 
     expect(Number(rootNode?.style?.height ?? 0)).toBeGreaterThan(82)
   })
+
+  it('allocates extra height and preview text for nodes with detailed content', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    document.topics[branchId].note =
+      '准是痛点，要看现实代价，不看口头态度。优先展示真实购买信号，而不是抽象画像。'
+
+    const layout = layoutMindMap(document)
+    const branchNode = layout.renderNodes.find((node) => node.id === branchId)
+
+    expect(branchNode).toBeDefined()
+    expect(branchNode?.data.notePreview).toContain('准是痛点，要看现实代价')
+    expect(Number(branchNode?.style?.height ?? 0)).toBeGreaterThan(54)
+  })
 })
