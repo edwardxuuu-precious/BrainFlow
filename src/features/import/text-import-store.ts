@@ -287,15 +287,12 @@ function resolveImportAnchorTopicId(
 }
 
 function createModeHint(mode: TextImportJobMode, jobType: TextImportJobType): string {
-  if (mode === 'local_markdown') {
-    return jobType === 'batch'
-      ? 'Using the local structured-text batch pipeline. Structured Markdown stays local, while semantic merges only apply when the target topic is unchanged.'
-      : 'Using the local structured-text pipeline for clearly structured content. Semantic merges only apply when the target topic is unchanged.'
+  void mode
+  if (jobType === 'batch') {
+    return 'Using the skill-backed import pipeline. Each file is converted into an ordered logic map before semantic merge review.'
   }
 
-  return jobType === 'batch'
-    ? 'Using the hybrid import batch pipeline. Structured Markdown stays on the local path, and only weakly structured files use Codex.'
-    : 'Using the Codex import pipeline for weakly structured or prose-heavy text.'
+  return 'Using the skill-backed import pipeline. The source is converted into a logic tree with evidence attachment and strict task extraction.'
 }
 
 function createSelectionContext(
@@ -637,9 +634,7 @@ async function startSinglePreview(
   activeJobHandle = jobHandle
   const previewQueuedAt = Date.now()
   const initialStatusText =
-    jobHandle.mode === 'local_markdown'
-      ? 'Preparing the local structured-text import pipeline...'
-      : 'Preparing the Codex import pipeline for weakly structured text...'
+    'Preparing the skill-backed import pipeline...'
 
   set({
     isOpen: true,
@@ -947,9 +942,7 @@ async function startBatchPreview(
     activeJobType: jobHandle.jobType,
     modeHint: createModeHint(jobHandle.mode, jobHandle.jobType),
     statusText:
-      jobHandle.mode === 'local_markdown'
-        ? 'Preparing the local structured-text batch pipeline...'
-        : 'Preparing the hybrid import batch pipeline...',
+      'Preparing the skill-backed batch import pipeline...',
     semanticCandidateCount: 0,
     semanticAdjudicatedCount: 0,
     semanticFallbackCount: 0,

@@ -388,6 +388,9 @@ export type TextImportSemanticHintKind =
 
 export type TextImportSemanticRole =
   | 'section'
+  | 'claim'
+  | 'task'
+  | 'evidence'
   | 'summary'
   | 'decision'
   | 'action'
@@ -395,7 +398,6 @@ export type TextImportSemanticRole =
   | 'question'
   | 'metric'
   | 'timeline'
-  | 'evidence'
 
 export type TextImportSemanticUnitType =
   | 'summary'

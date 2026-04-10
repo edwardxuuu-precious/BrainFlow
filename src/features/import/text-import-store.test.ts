@@ -180,7 +180,7 @@ describe('text-import-store', () => {
     expect(useTextImportStore.getState().draftConfirmed).toBe(false)
     expect(useTextImportStore.getState().progress).toBe(100)
     expect(useTextImportStore.getState().progressIndeterminate).toBe(false)
-    expect(useTextImportStore.getState().modeHint).toContain('Codex import pipeline')
+    expect(useTextImportStore.getState().modeHint).toContain('skill-backed import pipeline')
     expect(useTextImportStore.getState().isPreviewing).toBe(false)
     expect(useTextImportStore.getState().previewFinishedAt).not.toBeNull()
   })
@@ -245,7 +245,7 @@ describe('text-import-store', () => {
 
     vi.mocked(startTextImportJob).mockImplementation((_request, _onEvent) => ({
       jobId: 'job_auto',
-      mode: 'local_markdown',
+      mode: 'codex_import',
       jobType: 'single',
       cancel: vi.fn(),
     }))
@@ -275,7 +275,7 @@ describe('text-import-store', () => {
     expect(useTextImportStore.getState().presetOverride).toBeNull()
     expect(useTextImportStore.getState().planningSummaries[0]).toMatchObject({
       resolvedPreset: 'preserve',
-      resolvedArchetype: 'method',
+      resolvedArchetype: 'process',
       isManual: false,
     })
   })
@@ -287,7 +287,7 @@ describe('text-import-store', () => {
 
     vi.mocked(startTextImportJob).mockImplementation((_request, _onEvent) => ({
       jobId: 'job_current_selection',
-      mode: 'local_markdown',
+      mode: 'codex_import',
       jobType: 'single',
       cancel: vi.fn(),
     }))
@@ -320,7 +320,7 @@ describe('text-import-store', () => {
 
     vi.mocked(startTextImportJob).mockImplementation((_request, _onEvent) => ({
       jobId: 'job_manual',
-      mode: 'local_markdown',
+      mode: 'codex_import',
       jobType: 'single',
       cancel: vi.fn(),
     }))
@@ -569,7 +569,7 @@ describe('text-import-store', () => {
 
     vi.mocked(startTextImportBatchJob).mockImplementation((_request, _onEvent) => ({
       jobId: 'job_batch_summary',
-      mode: 'local_markdown',
+      mode: 'codex_import',
       jobType: 'batch',
       cancel: vi.fn(),
     }))

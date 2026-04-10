@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { CodexBridgeIssue } from '../shared/ai-contract.js'
 
 export interface CodexRunnerStatus {
@@ -69,6 +69,7 @@ interface CodexRunnerDependencies {
   readdir?: typeof readdir
   platform?: NodeJS.Platform
   env?: NodeJS.ProcessEnv
+  workspaceRoot?: string
 }
 
 interface CommandResult {
@@ -86,6 +87,7 @@ class CommandNotFoundError extends Error {
 
 const VSCODE_CODEX_EXTENSION_PREFIX = 'openai.chatgpt-'
 const VSCODE_CODEX_EXTENSION_SUFFIX = '-win32-x64'
+const REPO_IMPORT_SKILL_RELATIVE_PATH = '.agents/skills/document-to-logic-map'
 
 async function runCommand(
   command: string,
@@ -481,6 +483,8 @@ async function executeCodexJsonCommand(
   prompt: string,
   options: {
     cwd: string
+    agentRoot: string
+    skillConfigOverride: string
     schemaPath?: string
     kind: 'structured' | 'message'
     onEvent?: (event: CodexJsonEvent) => void
@@ -502,6 +506,10 @@ async function executeCodexJsonCommand(
     'read-only',
     '--ephemeral',
     '--json',
+    '--cd',
+    options.agentRoot,
+    '-c',
+    options.skillConfigOverride,
     '--skip-git-repo-check',
   ]
 
@@ -628,6 +636,19 @@ async function executeCodexJsonCommand(
   return finalText
 }
 
+function normalizeCodexConfigPath(value: string): string {
+  return value.replace(/\\/g, '/')
+}
+
+function escapeTomlBasicString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function buildSkillConfigOverride(workspaceRoot: string): string {
+  const skillPath = normalizeCodexConfigPath(resolve(workspaceRoot, REPO_IMPORT_SKILL_RELATIVE_PATH))
+  return `skills.config=[{path="${escapeTomlBasicString(skillPath)}",enabled=true}]`
+}
+
 export function createCodexRunner(dependencies?: CodexRunnerDependencies): CodexRunner {
   const executeCommand = dependencies?.runCommand ?? runCommand
   const executeStreamingCommand = dependencies?.runStreamingCommand ?? runStreamingCommand
@@ -637,6 +658,10 @@ export function createCodexRunner(dependencies?: CodexRunnerDependencies): Codex
   const readDirectory = dependencies?.readdir ?? readdir
   const platform = dependencies?.platform ?? process.platform
   const env = dependencies?.env ?? process.env
+  const workspaceRoot =
+    dependencies?.workspaceRoot ??
+    (env.BRAINFLOW_CODEX_WORK_ROOT ? resolve(env.BRAINFLOW_CODEX_WORK_ROOT) : resolve(process.cwd()))
+  const skillConfigOverride = buildSkillConfigOverride(workspaceRoot)
 
   return {
     async getStatus() {
@@ -687,6 +712,8 @@ export function createCodexRunner(dependencies?: CodexRunnerDependencies): Codex
         await writeTempFile(schemaPath, JSON.stringify(schema), 'utf8')
         return await executeCodexJsonCommand(executeStreamingCommand, codexCommand, prompt, {
           cwd: workingDirectory,
+          agentRoot: workspaceRoot,
+          skillConfigOverride,
           schemaPath,
           kind: 'structured',
           onEvent: options?.onEvent,
@@ -718,6 +745,8 @@ export function createCodexRunner(dependencies?: CodexRunnerDependencies): Codex
         workingDirectory = await makeTempDirectory(join(tmpdir(), 'brainflow-codex-'))
         return await executeCodexJsonCommand(executeStreamingCommand, codexCommand, prompt, {
           cwd: workingDirectory,
+          agentRoot: workspaceRoot,
+          skillConfigOverride,
           kind: 'message',
           onEvent: options?.onEvent,
           onStderrLine: options?.onStderrLine,

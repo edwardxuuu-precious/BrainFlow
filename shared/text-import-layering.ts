@@ -29,14 +29,74 @@ import {
 
 export const PRIMARY_KNOWLEDGE_VIEW_TYPE: KnowledgeViewType = 'thinking_view'
 
-const BANNED_PRIMARY_TITLES = new Set([
-  '说明',
-  '对话记录',
-  '用户',
-  '助手',
-  '备注',
-  'GTM 对话整理',
-])
+export type DocumentStructureType = Extract<
+  TextImportClassification['archetype'],
+  'analysis' | 'process' | 'plan' | 'notes'
+>
+
+type ThinkingHeadingClass = 'wrapper' | 'semantic' | 'archival'
+
+const WRAPPER_TITLE_PATTERNS = [
+  /^说明$/i,
+  /^备注$/i,
+  /^对话记录$/i,
+  /^用户$/i,
+  /^助手$/i,
+  /^user$/i,
+  /^assistant$/i,
+  /^文件格式$/i,
+  /^本文说明$/i,
+  /^当前对话整理$/i,
+  /^对话整理$/i,
+  /^markdown 记录$/i,
+  /^turn\s*\d+\s*[·.\-:]\s*user$/i,
+  /^turn\s*\d+\s*[·.\-:]\s*assistant$/i,
+]
+
+const ARCHIVAL_TITLE_PATTERNS = [
+  /^archive$/i,
+  /^source archive$/i,
+  /^source outline$/i,
+  /^source tree$/i,
+  /^原文结构$/i,
+  /^原文大纲$/i,
+  /^来源归档$/i,
+  /^来源大纲$/i,
+  /^source$/i,
+]
+
+const PREFERRED_SEMANTIC_TITLE_PATTERNS = [
+  /^结论$/i,
+  /^拆解$/i,
+  /^方法$/i,
+  /^决策$/i,
+  /^下一步$/i,
+]
+
+const GENERIC_ROOT_TITLE_PATTERNS = [
+  /^import(?:ed)? source$/i,
+  /^document$/i,
+  /^document title$/i,
+  /^logic map$/i,
+  /^map$/i,
+]
+
+const THINKING_ROOT_TYPE_SCORE: Record<KnowledgeSemanticNodeType, number> = {
+  question: 120,
+  decision: 112,
+  claim: 108,
+  section: 96,
+  task: 84,
+  risk: 80,
+  metric: 78,
+  evidence: 60,
+  topic: 72,
+  criterion: 78,
+  insight: 108,
+  goal: 92,
+  project: 88,
+  review: 70,
+}
 
 interface ImportLayerSourceInput {
   sourceName: string
@@ -68,6 +128,7 @@ export interface CompileSemanticLayerViewsOptions {
   semanticNodes: KnowledgeSemanticNode[]
   semanticEdges: KnowledgeSemanticEdge[]
   fallbackInsertionParentTopicId: string
+  documentType?: DocumentStructureType | null
 }
 
 export interface ImportLayerPreviewResult {
@@ -99,8 +160,52 @@ interface ProjectionNode {
   templateSlot: TextImportTemplateSlot | null
 }
 
+function semanticRoleFromNodeType(type: KnowledgeSemanticNodeType | null): TextImportNodePlan['semanticRole'] {
+  switch (type) {
+    case 'claim':
+      return 'claim'
+    case 'evidence':
+      return 'evidence'
+    case 'task':
+      return 'task'
+    case 'decision':
+      return 'decision'
+    case 'risk':
+      return 'risk'
+    case 'metric':
+    case 'criterion':
+      return 'metric'
+    case 'question':
+      return 'question'
+    case 'goal':
+    case 'project':
+    case 'review':
+    case 'section':
+    default:
+      return 'section'
+  }
+}
+
 function collapseWhitespace(value: string | null | undefined): string {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''
+}
+
+function normalizeTitleKey(value: string | null | undefined): string {
+  return collapseWhitespace(value).toLowerCase()
+}
+
+export function normalizeDocumentStructureType(
+  archetype: TextImportClassification['archetype'] | null | undefined,
+): DocumentStructureType | null {
+  switch (archetype) {
+    case 'analysis':
+    case 'process':
+    case 'plan':
+    case 'notes':
+      return archetype
+    default:
+      return null
+  }
 }
 
 function normalizeMultiline(value: string | null | undefined): string {
@@ -119,6 +224,38 @@ function uniqueBy<T>(items: T[], keyFn: (item: T) => string): T[] {
     result.push(item)
   })
   return result
+}
+
+function matchesAnyPattern(value: string, patterns: RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(value))
+}
+
+function classifyThinkingHeading(title: string): ThinkingHeadingClass {
+  const normalized = normalizeTitleKey(title)
+  if (!normalized) {
+    return 'semantic'
+  }
+  if (matchesAnyPattern(normalized, WRAPPER_TITLE_PATTERNS)) {
+    return 'wrapper'
+  }
+  if (matchesAnyPattern(normalized, ARCHIVAL_TITLE_PATTERNS)) {
+    return 'archival'
+  }
+  return 'semantic'
+}
+
+function isPreferredSemanticHeading(title: string): boolean {
+  const normalized = normalizeTitleKey(title)
+  return !!normalized && matchesAnyPattern(normalized, PREFERRED_SEMANTIC_TITLE_PATTERNS)
+}
+
+function isGenericRootTitle(title: string): boolean {
+  const normalized = normalizeTitleKey(title)
+  return !!normalized && matchesAnyPattern(normalized, GENERIC_ROOT_TITLE_PATTERNS)
+}
+
+function shouldHideInThinkingView(node: KnowledgeSemanticNode): boolean {
+  return classifyThinkingHeading(node.title) !== 'semantic'
 }
 
 function createSourceLayer(source: ImportLayerSourceInput, sourceId: string): KnowledgeSource {
@@ -749,11 +886,224 @@ function sortChildren(
     .filter((node) => (allowedTypes ? allowedTypes.includes(node.type) : true))
 }
 
+function collectVisibleThinkingChildren(
+  parentId: string,
+  nodesById: Map<string, KnowledgeSemanticNode>,
+  edgesByParent: Map<string, KnowledgeSemanticEdge[]>,
+  trail: Set<string> = new Set(),
+): KnowledgeSemanticNode[] {
+  if (trail.has(parentId)) {
+    return []
+  }
+
+  const nextTrail = new Set(trail)
+  nextTrail.add(parentId)
+
+  return uniqueBy(
+    sortChildren(parentId, nodesById, edgesByParent).flatMap((child) => {
+      if (!shouldHideInThinkingView(child)) {
+        return [child]
+      }
+      return collectVisibleThinkingChildren(child.id, nodesById, edgesByParent, nextTrail)
+    }),
+    (node) => node.id,
+  )
+}
+
+function selectThinkingCenter(options: {
+  semanticNodes: KnowledgeSemanticNode[]
+  nodesById: Map<string, KnowledgeSemanticNode>
+  edgesByParent: Map<string, KnowledgeSemanticEdge[]>
+  hasParent: Set<string>
+  bundleTitle: string
+  sourceTitles: string[]
+}): KnowledgeSemanticNode | null {
+  const containerTitles = new Set(
+    [options.bundleTitle, ...options.sourceTitles].map((title) => normalizeTitleKey(title)).filter(Boolean),
+  )
+
+  const ranked = options.semanticNodes
+    .map((node, index) => {
+      const visibleChildCount = collectVisibleThinkingChildren(
+        node.id,
+        options.nodesById,
+        options.edgesByParent,
+      ).length
+      const headingClass = classifyThinkingHeading(node.title)
+      let score = THINKING_ROOT_TYPE_SCORE[node.type] ?? 0
+
+      if (!options.hasParent.has(node.id)) {
+        score += 24
+      }
+      score += Math.min(visibleChildCount, 6) * 4
+      if (isPreferredSemanticHeading(node.title)) {
+        score += 10
+      }
+      if (!isGenericRootTitle(node.title)) {
+        score += 8
+      }
+      if (node.id === 'import_root') {
+        score -= 12
+      }
+      if (containerTitles.has(normalizeTitleKey(node.title))) {
+        score -= 24
+      }
+      if (headingClass === 'wrapper') {
+        score -= 72
+      } else if (headingClass === 'archival') {
+        score -= 56
+      }
+      if (node.type === 'evidence' || node.type === 'metric') {
+        score -= 24
+      }
+
+      return { node, index, score }
+    })
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score
+      }
+      return left.index - right.index
+    })
+
+  return ranked[0]?.node ?? null
+}
+
+function promoteAnalysisCenter(
+  center: KnowledgeSemanticNode,
+  nodesById: Map<string, KnowledgeSemanticNode>,
+  edgesByParent: Map<string, KnowledgeSemanticEdge[]>,
+): KnowledgeSemanticNode {
+  let current = center
+
+  while (true) {
+    const directChildren = collectVisibleThinkingChildren(current.id, nodesById, edgesByParent)
+    if (directChildren.length !== 1) {
+      return current
+    }
+
+    const candidate = directChildren[0]
+    const peerSections = collectVisibleThinkingChildren(candidate.id, nodesById, edgesByParent).filter(
+      (node) => node.type === 'section' || node.type === 'claim' || node.type === 'decision' || node.type === 'question',
+    )
+    if (peerSections.length < 4 || peerSections.length > 8) {
+      return current
+    }
+    current = candidate
+  }
+}
+
+function selectAnalysisBranchChildren(
+  branch: KnowledgeSemanticNode,
+  nodesById: Map<string, KnowledgeSemanticNode>,
+  edgesByParent: Map<string, KnowledgeSemanticEdge[]>,
+): KnowledgeSemanticNode[] {
+  const children = collectVisibleThinkingChildren(branch.id, nodesById, edgesByParent)
+  if (children.length <= 3) {
+    return children
+  }
+
+  const picks: KnowledgeSemanticNode[] = []
+  const seen = new Set<string>()
+  const pickFirst = (predicate: (node: KnowledgeSemanticNode) => boolean) => {
+    const match = children.find((node) => !seen.has(node.id) && predicate(node))
+    if (!match) {
+      return
+    }
+    seen.add(match.id)
+    picks.push(match)
+  }
+
+  pickFirst((node) => node.type === 'claim' || node.type === 'decision' || node.type === 'section')
+  pickFirst(
+    (node) =>
+      node.type === 'metric' ||
+      node.type === 'evidence' ||
+      node.type === 'question' ||
+      node.type === 'risk',
+  )
+  pickFirst((node) => node.type === 'task')
+
+  if (picks.length === 0) {
+    return children.slice(0, 3)
+  }
+
+  if (picks.length < 3) {
+    children.forEach((node) => {
+      if (picks.length >= 3 || seen.has(node.id)) {
+        return
+      }
+      seen.add(node.id)
+      picks.push(node)
+    })
+  }
+
+  return picks
+}
+
+export function inferDocumentStructureTypeFromSemanticGraph(options: {
+  bundleTitle: string
+  sourceTitles: string[]
+  semanticNodes: KnowledgeSemanticNode[]
+  semanticEdges: KnowledgeSemanticEdge[]
+}): DocumentStructureType | null {
+  if (options.semanticNodes.length === 0) {
+    return null
+  }
+
+  const nodesById = new Map(options.semanticNodes.map((node) => [node.id, node]))
+  const edgesByParent = new Map<string, KnowledgeSemanticEdge[]>()
+  options.semanticEdges.forEach((edge) => {
+    const group = edgesByParent.get(edge.to) ?? []
+    group.push(edge)
+    edgesByParent.set(edge.to, group)
+  })
+  const hasParent = new Set(
+    options.semanticEdges
+      .filter((edge) => edge.type === 'belongs_to')
+      .map((edge) => edge.from),
+  )
+  const initialCenter =
+    selectThinkingCenter({
+      semanticNodes: options.semanticNodes,
+      nodesById,
+      edgesByParent,
+      hasParent,
+      bundleTitle: options.bundleTitle,
+      sourceTitles: options.sourceTitles,
+    }) ?? options.semanticNodes[0]
+
+  if (!initialCenter) {
+    return null
+  }
+
+  const promotedCenter = promoteAnalysisCenter(initialCenter, nodesById, edgesByParent)
+  if (promotedCenter.id !== initialCenter.id) {
+    return 'analysis'
+  }
+
+  const peerSections = collectVisibleThinkingChildren(promotedCenter.id, nodesById, edgesByParent).filter(
+    (node) =>
+      node.type === 'section' ||
+      node.type === 'claim' ||
+      node.type === 'decision' ||
+      node.type === 'question',
+  )
+  if (peerSections.length >= 4 && peerSections.length <= 8) {
+    return 'analysis'
+  }
+
+  return null
+}
+
 function createThinkingProjection(options: {
   viewId: string
+  bundleTitle: string
+  sourceTitles: string[]
   semanticNodes: KnowledgeSemanticNode[]
   semanticEdges: KnowledgeSemanticEdge[]
   fallbackInsertionParentTopicId: string
+  documentType?: DocumentStructureType | null
 }): KnowledgeViewProjection {
   const nodesById = new Map(options.semanticNodes.map((node) => [node.id, node]))
   const edgesByParent = new Map<string, KnowledgeSemanticEdge[]>()
@@ -767,14 +1117,20 @@ function createThinkingProjection(options: {
       .filter((edge) => edge.type === 'belongs_to')
       .map((edge) => edge.from),
   )
+  const requestedDocumentType = normalizeDocumentStructureType(options.documentType) ?? null
+  const initialCenter =
+    selectThinkingCenter({
+      semanticNodes: options.semanticNodes,
+      nodesById,
+      edgesByParent,
+      hasParent,
+      bundleTitle: options.bundleTitle,
+      sourceTitles: options.sourceTitles,
+    }) ?? options.semanticNodes[0]
   const center =
-    options.semanticNodes.find((node) => node.id === 'import_root') ??
-    options.semanticNodes.find((node) => node.type === 'section' && !hasParent.has(node.id)) ??
-    options.semanticNodes.find((node) => node.type === 'section') ??
-    options.semanticNodes.find((node) => node.type === 'claim') ??
-    options.semanticNodes.find((node) => node.type === 'question') ??
-    options.semanticNodes.find((node) => node.type === 'goal') ??
-    options.semanticNodes[0]
+    requestedDocumentType === 'analysis'
+      ? promoteAnalysisCenter(initialCenter, nodesById, edgesByParent)
+      : initialCenter
 
   if (!center) {
     return buildProjectionFromNodes({
@@ -798,21 +1154,24 @@ function createThinkingProjection(options: {
         detail: center.detail,
       }),
       semanticType: center.type,
-      semanticRole: 'question',
+      semanticRole: semanticRoleFromNodeType(center.type),
       confidence: center.confidence,
       sourceAnchors: sourceRefsToAnchors(center.source_refs),
       templateSlot: null,
     },
   ]
   const visited = new Set<string>([center.id])
-  const directPrimaryBranches = sortChildren(center.id, nodesById, edgesByParent).filter(
-    (node) => !BANNED_PRIMARY_TITLES.has(node.title),
-  )
+  const directPrimaryBranches = collectVisibleThinkingChildren(center.id, nodesById, edgesByParent)
   const executionRoot =
-    options.semanticNodes.find((node) => node.type === 'section' && node.id !== center.id) ??
-    options.semanticNodes.find((node) => node.type === 'goal' && node.id !== center.id) ??
-    options.semanticNodes.find((node) => node.type === 'project' && node.id !== center.id) ??
-    null
+    requestedDocumentType === 'analysis'
+      ? null
+      : options.semanticNodes.find(
+          (node) =>
+            node.id !== center.id &&
+            !shouldHideInThinkingView(node) &&
+            (node.type === 'section' || node.type === 'goal' || node.type === 'project'),
+        ) ??
+        null
   const primaryBranches = [...directPrimaryBranches]
 
   if (executionRoot && !primaryBranches.some((node) => node.id === executionRoot.id)) {
@@ -836,34 +1195,10 @@ function createThinkingProjection(options: {
         task: node.type === 'task' ? node.task : null,
       }),
       semanticType: node.type,
-      semanticRole:
-        node.type === 'decision'
-          ? 'decision'
-          : node.type === 'question'
-            ? 'question'
-            : node.type === 'evidence'
-              ? 'evidence'
-              : node.type === 'task'
-                ? 'action'
-                : node.type === 'metric'
-                  ? 'metric'
-                  : node.type === 'risk'
-                    ? 'risk'
-                    : node.type === 'claim'
-                      ? 'summary'
-                      : 'section',
+      semanticRole: semanticRoleFromNodeType(node.type),
       confidence: node.confidence,
       sourceAnchors: sourceRefsToAnchors(node.source_refs),
-      templateSlot:
-        node.type === 'metric'
-          ? 'criteria'
-          : node.type === 'task'
-            ? 'actions'
-            : node.type === 'goal'
-              ? 'goal'
-              : node.type === 'decision'
-                ? 'decisions'
-                : null,
+      templateSlot: null,
     })
   }
 
@@ -878,18 +1213,33 @@ function createThinkingProjection(options: {
     visited.add(node.id)
     appendProjectionNode(node, parentId, order)
 
-    const children = sortChildren(node.id, nodesById, edgesByParent).filter(
-      (child) => !BANNED_PRIMARY_TITLES.has(child.title),
-    )
+    const children = collectVisibleThinkingChildren(node.id, nodesById, edgesByParent)
 
     children.forEach((child, childIndex) => {
       walkBranch(child, node.id, childIndex)
     })
   }
 
-  primaryBranches.forEach((branch, branchIndex) => {
-    walkBranch(branch, center.id, branchIndex)
-  })
+  if (requestedDocumentType === 'analysis') {
+    primaryBranches.forEach((branch, branchIndex) => {
+      if (visited.has(branch.id)) {
+        return
+      }
+      visited.add(branch.id)
+      appendProjectionNode(branch, center.id, branchIndex)
+      selectAnalysisBranchChildren(branch, nodesById, edgesByParent).forEach((child, childIndex) => {
+        if (visited.has(child.id)) {
+          return
+        }
+        visited.add(child.id)
+        appendProjectionNode(child, branch.id, childIndex)
+      })
+    })
+  } else {
+    primaryBranches.forEach((branch, branchIndex) => {
+      walkBranch(branch, center.id, branchIndex)
+    })
+  }
 
   return buildProjectionFromNodes({
     viewId: options.viewId,
@@ -949,28 +1299,10 @@ export function createExecutionProjection(options: {
         task: node.task,
       }),
       semanticType: node.type,
-      semanticRole:
-        node.type === 'decision'
-          ? 'decision'
-          : node.type === 'task'
-            ? 'action'
-            : node.type === 'risk'
-              ? 'risk'
-              : node.type === 'metric'
-                ? 'metric'
-                : node.type === 'claim' || node.type === 'review'
-              ? 'summary'
-              : 'section',
+      semanticRole: semanticRoleFromNodeType(node.type),
       confidence: node.confidence,
       sourceAnchors: sourceRefsToAnchors(node.source_refs),
-      templateSlot:
-        node.type === 'goal'
-          ? 'goal'
-          : node.type === 'task'
-            ? 'actions'
-            : node.type === 'decision'
-              ? 'decisions'
-              : null,
+      templateSlot: null,
     })
 
     sortChildren(node.id, nodesById, edgesByParent)
@@ -1057,7 +1389,7 @@ export function createArchiveProjection(options: {
             title: segment,
             note: segmentIndex === pathTitles.length - 1 && hint.kind !== 'heading' ? hint.text : null,
             semanticType: null,
-            semanticRole: segmentIndex === pathTitles.length - 1 ? 'summary' : 'section',
+            semanticRole: segmentIndex === pathTitles.length - 1 ? 'claim' : 'section',
             confidence: hint.kind === 'heading' ? 'high' : 'medium',
             sourceAnchors: [{ lineStart: hint.lineStart, lineEnd: hint.lineEnd }],
             templateSlot: null,
@@ -1100,8 +1432,26 @@ export function buildImportBundlePreview(
   const thinkingViewId = `${options.bundleId}_thinking`
   const thinkingProjection = createThinkingProjection({
     viewId: thinkingViewId,
+    bundleTitle: options.bundleTitle,
+    sourceTitles: sources.map((source) => source.title),
     semanticNodes: canonical.semanticNodes,
     semanticEdges: canonical.semanticEdges,
+    fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
+    documentType: normalizeDocumentStructureType(extracted.classification.archetype),
+  })
+  const executionViewId = `${options.bundleId}_execution`
+  const executionProjection = createExecutionProjection({
+    viewId: executionViewId,
+    semanticNodes: canonical.semanticNodes,
+    semanticEdges: canonical.semanticEdges,
+    fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
+  })
+  const archiveViewId = `${options.bundleId}_archive`
+  const archiveProjection = createArchiveProjection({
+    viewId: archiveViewId,
+    bundleTitle: options.bundleTitle,
+    sources,
+    sourceInputs: options.sources,
     fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
   })
 
@@ -1112,9 +1462,23 @@ export function buildImportBundlePreview(
       visible_node_ids: thinkingProjection.previewNodes.map((node) => node.id),
       layout_type: 'mindmap',
     },
+    {
+      id: executionViewId,
+      type: 'execution_view',
+      visible_node_ids: executionProjection.previewNodes.map((node) => node.id),
+      layout_type: 'execution',
+    },
+    {
+      id: archiveViewId,
+      type: 'archive_view',
+      visible_node_ids: archiveProjection.previewNodes.map((node) => node.id),
+      layout_type: 'archive',
+    },
   ]
   const viewProjections: Record<string, KnowledgeViewProjection> = {
     [thinkingViewId]: thinkingProjection,
+    [executionViewId]: executionProjection,
+    [archiveViewId]: archiveProjection,
   }
   const defaultViewId = thinkingViewId
   const activeViewId = thinkingViewId
@@ -1160,8 +1524,25 @@ export function compileSemanticLayerViews(
   const thinkingViewId = `${options.bundleId}_thinking`
   const thinkingProjection = createThinkingProjection({
     viewId: thinkingViewId,
+    bundleTitle: options.bundleTitle,
+    sourceTitles: options.sources.map((source) => source.title),
     semanticNodes: options.semanticNodes,
     semanticEdges: options.semanticEdges,
+    fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
+    documentType: normalizeDocumentStructureType(options.documentType),
+  })
+  const executionViewId = `${options.bundleId}_execution`
+  const executionProjection = createExecutionProjection({
+    viewId: executionViewId,
+    semanticNodes: options.semanticNodes,
+    semanticEdges: options.semanticEdges,
+    fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
+  })
+  const archiveViewId = `${options.bundleId}_archive`
+  const archiveProjection = createArchiveProjection({
+    viewId: archiveViewId,
+    bundleTitle: options.bundleTitle,
+    sources: options.sources,
     fallbackInsertionParentTopicId: options.fallbackInsertionParentTopicId,
   })
 
@@ -1173,9 +1554,23 @@ export function compileSemanticLayerViews(
         visible_node_ids: thinkingProjection.previewNodes.map((node) => node.id),
         layout_type: 'mindmap',
       },
+      {
+        id: executionViewId,
+        type: 'execution_view',
+        visible_node_ids: executionProjection.previewNodes.map((node) => node.id),
+        layout_type: 'execution',
+      },
+      {
+        id: archiveViewId,
+        type: 'archive_view',
+        visible_node_ids: archiveProjection.previewNodes.map((node) => node.id),
+        layout_type: 'archive',
+      },
     ],
     viewProjections: {
       [thinkingViewId]: thinkingProjection,
+      [executionViewId]: executionProjection,
+      [archiveViewId]: archiveProjection,
     },
     defaultViewId: thinkingViewId,
     activeViewId: thinkingViewId,

@@ -23,6 +23,15 @@ export class SyncConflictError<TPayload> extends Error {
   }
 }
 
+export class SyncApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
 export class SyncService<TPayload> {
   private readonly repository: SyncRepository<TPayload>
   private readonly pullLimit: number
@@ -118,6 +127,14 @@ export class SyncService<TPayload> {
             diffHints,
           })
         }
+        if (error instanceof Error && error.message === 'Workspace not found.') {
+          return {
+            applied,
+            cursor,
+            serverTime: Date.now(),
+            requiresBootstrap: true,
+          }
+        }
         throw error
       }
     }
@@ -143,18 +160,25 @@ export class SyncService<TPayload> {
     }
   }
 
-  resolveConflict(
+  async resolveConflict(
     userId: string,
     request: SyncResolveConflictRequest<TPayload>,
   ): Promise<SyncResolveConflictResponse<TPayload>> {
-    return this.repository.resolveConflict({
-      workspaceId: request.workspaceId,
-      userId,
-      deviceId: request.deviceId,
-      conflictId: request.conflictId,
-      resolution: request.resolution,
-      mergedPayload: request.mergedPayload,
-    })
+    try {
+      return await this.repository.resolveConflict({
+        workspaceId: request.workspaceId,
+        userId,
+        deviceId: request.deviceId,
+        conflictId: request.conflictId,
+        resolution: request.resolution,
+        mergedPayload: request.mergedPayload,
+      })
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Conflict not found.') {
+        throw new SyncApiError('Conflict not found.', 404)
+      }
+      throw error
+    }
   }
 
   async getWorkspaceFull(workspaceId: string): Promise<WorkspaceFullResponse<TPayload>> {

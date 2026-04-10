@@ -29,7 +29,11 @@ import type {
   MindMapWorkspaceState,
   TopicNode,
 } from '../../../documents/types'
-import { compileSemanticLayerViews, PRIMARY_KNOWLEDGE_VIEW_TYPE } from '../../../../../shared/text-import-layering'
+import {
+  compileSemanticLayerViews,
+  inferDocumentStructureTypeFromSemanticGraph,
+  PRIMARY_KNOWLEDGE_VIEW_TYPE,
+} from '../../../../../shared/text-import-layering'
 
 const DB_NAME = 'brainflow-documents-v1'
 const STORE_NAME = 'documents'
@@ -540,6 +544,12 @@ function normalizeKnowledgeImportBundle(
       semanticNodes: bundle.semanticNodes,
       semanticEdges: bundle.semanticEdges,
       fallbackInsertionParentTopicId: bundle.anchorTopicId ?? 'topic_root',
+      documentType: inferDocumentStructureTypeFromSemanticGraph({
+        bundleTitle: bundle.title,
+        sourceTitles: bundle.sources.map((source) => source.title),
+        semanticNodes: bundle.semanticNodes,
+        semanticEdges: bundle.semanticEdges,
+      }),
     })
 
     return {

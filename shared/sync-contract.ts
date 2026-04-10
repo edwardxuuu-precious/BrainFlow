@@ -130,6 +130,7 @@ export interface SyncPushResponse<TPayload> {
   }>
   cursor: number
   serverTime: number
+  requiresBootstrap?: boolean
 }
 
 export interface SyncPushConflictResponse<TPayload> {

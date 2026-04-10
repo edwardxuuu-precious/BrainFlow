@@ -106,7 +106,7 @@ function flattenDraftNodes(
       order: node.order,
       title: node.title,
       note: node.note,
-      semanticRole: node.semanticRole ?? (node.parentId === null || node.children.length > 0 ? 'section' : 'summary'),
+      semanticRole: node.semanticRole ?? (node.parentId === null || node.children.length > 0 ? 'section' : 'claim'),
       confidence: node.confidence ?? (node.parentId === null ? 'high' : 'medium'),
       sourceAnchors: node.sourceAnchors?.map((anchor) => ({ ...anchor })) ?? [],
       groupKey: metadata?.groupKey ?? null,

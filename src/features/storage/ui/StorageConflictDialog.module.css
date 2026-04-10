@@ -176,6 +176,29 @@
   color: #334155;
 }
 
+.errorPanel {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(220, 38, 38, 0.2);
+  background: rgba(254, 242, 242, 0.92);
+}
+
+.errorTitle {
+  display: block;
+  margin-bottom: 4px;
+  color: #991b1b;
+}
+
+.errorText {
+  margin: 0;
+  color: #7f1d1d;
+  line-height: 1.6;
+}
+
 .actions {
   display: flex;
   justify-content: flex-end;
@@ -199,6 +222,10 @@
   }
 
   .actions {
+    flex-direction: column;
+  }
+
+  .errorPanel {
     flex-direction: column;
   }
 }

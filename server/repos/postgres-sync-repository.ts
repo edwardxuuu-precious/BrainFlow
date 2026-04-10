@@ -453,7 +453,7 @@ export class PostgresSyncRepository<TPayload> implements SyncRepository<TPayload
 
   async resolveConflict(input: ResolveConflictInput<TPayload>): Promise<ResolveConflictResult<TPayload>> {
     const conflict = await this.getConflict(input.conflictId)
-    if (!conflict) {
+    if (!conflict || conflict.workspaceId !== input.workspaceId) {
       throw new Error('Conflict not found.')
     }
 

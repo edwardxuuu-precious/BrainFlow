@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import type { KnowledgeSemanticEdge, KnowledgeSemanticNode } from './ai-contract'
+import type { KnowledgeSemanticEdge, KnowledgeSemanticNode, KnowledgeSource } from './ai-contract.js'
 import {
   buildKnowledgeNodeNote,
   compileSemanticLayerViews,
   deriveSemanticGraphFromPreviewNodes,
-} from './text-import-layering'
+} from './text-import-layering.js'
+
+function createSource(title: string): KnowledgeSource {
+  return {
+    id: 'source_1',
+    type: 'paste',
+    title,
+    raw_content: '',
+    metadata: {},
+  }
+}
 
 describe('text-import-layering', () => {
   it('normalizes node notes without repeating the title or duplicated detail paragraphs', () => {
@@ -213,6 +223,290 @@ describe('text-import-layering', () => {
     expect(criteriaNodes.map((node) => node.note)).toEqual([
       'Look for channels with immediate reach.',
       'Look for repeated pain during interviews.',
+    ])
+  })
+
+  it('keeps wrapper headings out of the visible thinking spine and selects a semantic root', () => {
+    const semanticNodes: KnowledgeSemanticNode[] = [
+      {
+        id: 'import_root',
+        type: 'section',
+        title: 'Markdown 记录',
+        summary: 'Markdown 记录',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+      {
+        id: 'turn_user',
+        type: 'section',
+        title: 'Turn 1 · User',
+        summary: 'Turn 1 · User',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+      {
+        id: 'turn_assistant',
+        type: 'section',
+        title: 'Turn 1 · Assistant',
+        summary: 'Turn 1 · Assistant',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+      {
+        id: 'question_root',
+        type: 'question',
+        title: 'Should we target SMB first?',
+        summary: 'Should we target SMB first?',
+        detail: 'Choose the first segment with the strongest demand signal.',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+      {
+        id: 'answer',
+        type: 'claim',
+        title: 'Target SMB first',
+        summary: 'Target SMB first',
+        detail: 'SMB shows repeated urgency and faster access.',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+    ]
+    const semanticEdges: KnowledgeSemanticEdge[] = [
+      {
+        from: 'turn_user',
+        to: 'import_root',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'high',
+      },
+      {
+        from: 'turn_assistant',
+        to: 'import_root',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'high',
+      },
+      {
+        from: 'question_root',
+        to: 'turn_user',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'high',
+      },
+      {
+        from: 'answer',
+        to: 'question_root',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'high',
+      },
+    ]
+
+    const compiled = compileSemanticLayerViews({
+      bundleId: 'bundle_wrapper',
+      bundleTitle: 'Markdown 记录',
+      sources: [createSource('Markdown 记录')],
+      semanticNodes,
+      semanticEdges,
+      fallbackInsertionParentTopicId: 'topic_root',
+      documentType: 'analysis',
+    })
+    const projection = compiled.viewProjections[compiled.activeViewId]
+
+    expect(projection.previewNodes[0]).toMatchObject({
+      id: 'question_root',
+      title: 'Should we target SMB first?',
+    })
+    expect(projection.previewNodes.map((node) => node.title)).not.toContain('Markdown 记录')
+    expect(projection.previewNodes.map((node) => node.title)).not.toContain('Turn 1 · User')
+    expect(projection.previewNodes.map((node) => node.title)).not.toContain('Turn 1 · Assistant')
+  })
+
+  it('keeps breadth-first analysis branches visible and limits each section to representative children', () => {
+    const semanticNodes: KnowledgeSemanticNode[] = [
+      {
+        id: 'import_root',
+        type: 'section',
+        title: 'Q2 activation analysis',
+        summary: 'Q2 activation analysis',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+      {
+        id: 'thesis',
+        type: 'claim',
+        title: 'Activation stalls after signup',
+        summary: 'Activation stalls after signup',
+        detail: 'Users do not reach their first meaningful value quickly enough.',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+      ...['Demand signal', 'Setup friction', 'Time-to-value', 'Retention risk', 'Pricing pressure'].map(
+        (title, index) =>
+          ({
+            id: `section_${index + 1}`,
+            type: 'section',
+            title,
+            summary: title,
+            detail: `${title} detail`,
+            source_refs: [],
+            confidence: 'high',
+            task: null,
+          }) satisfies KnowledgeSemanticNode,
+      ),
+      {
+        id: 'section_1_claim',
+        type: 'claim',
+        title: 'Activation fails before the aha moment',
+        summary: 'Activation fails before the aha moment',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        task: null,
+      },
+      {
+        id: 'section_1_metric',
+        type: 'metric',
+        title: 'Median setup takes 18 minutes',
+        summary: 'Median setup takes 18 minutes',
+        detail: '',
+        source_refs: [],
+        confidence: 'medium',
+        task: null,
+      },
+      {
+        id: 'section_1_question',
+        type: 'question',
+        title: 'Which setup step creates the longest delay?',
+        summary: 'Which setup step creates the longest delay?',
+        detail: '',
+        source_refs: [],
+        confidence: 'medium',
+        task: null,
+      },
+      {
+        id: 'section_1_task',
+        type: 'task',
+        title: 'Ship setup audit',
+        summary: 'Ship setup audit',
+        detail: 'Generate a setup-friction report.',
+        source_refs: [],
+        confidence: 'high',
+        task: {
+          status: 'todo',
+          owner: null,
+          due_date: null,
+          priority: null,
+          depends_on: [],
+          output: 'Setup-friction report',
+          source_refs: [],
+          definition_of_done: null,
+        },
+      },
+    ]
+    const semanticEdges: KnowledgeSemanticEdge[] = [
+      {
+        from: 'thesis',
+        to: 'import_root',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'high',
+      },
+      ...[1, 2, 3, 4, 5].map(
+        (index) =>
+          ({
+            from: `section_${index}`,
+            to: 'thesis',
+            type: 'belongs_to',
+            label: null,
+            source_refs: [],
+            confidence: 'high',
+          }) satisfies KnowledgeSemanticEdge,
+      ),
+      {
+        from: 'section_1_claim',
+        to: 'section_1',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'high',
+      },
+      {
+        from: 'section_1_metric',
+        to: 'section_1',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'medium',
+      },
+      {
+        from: 'section_1_question',
+        to: 'section_1',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'medium',
+      },
+      {
+        from: 'section_1_task',
+        to: 'section_1',
+        type: 'belongs_to',
+        label: null,
+        source_refs: [],
+        confidence: 'high',
+      },
+    ]
+
+    const compiled = compileSemanticLayerViews({
+      bundleId: 'bundle_analysis',
+      bundleTitle: 'Q2 activation analysis',
+      sources: [createSource('Q2 activation analysis')],
+      semanticNodes,
+      semanticEdges,
+      fallbackInsertionParentTopicId: 'topic_root',
+      documentType: 'analysis',
+    })
+    const projection = compiled.viewProjections[compiled.activeViewId]
+
+    expect(projection.previewNodes[0]).toMatchObject({
+      id: 'thesis',
+      title: 'Activation stalls after signup',
+    })
+
+    const firstOrderSections = projection.previewNodes
+      .filter((node) => node.parentId === 'thesis')
+      .map((node) => node.title)
+    expect(firstOrderSections).toEqual([
+      'Demand signal',
+      'Setup friction',
+      'Time-to-value',
+      'Retention risk',
+      'Pricing pressure',
+    ])
+
+    const sectionOneChildren = projection.previewNodes
+      .filter((node) => node.parentId === 'section_1')
+      .map((node) => node.title)
+    expect(sectionOneChildren).toEqual([
+      'Activation fails before the aha moment',
+      'Median setup takes 18 minutes',
+      'Ship setup audit',
     ])
   })
 })

@@ -11,6 +11,7 @@ import type {
 import {
   compileSemanticLayerViews,
   deriveSemanticGraphFromPreviewNodes,
+  normalizeDocumentStructureType,
 } from '../../../shared/text-import-layering'
 import type { LocalTextImportBatchRequest, LocalTextImportSourceInput } from './local-text-import-core'
 import { deriveTextImportTitle } from './text-import-preprocess'
@@ -469,6 +470,7 @@ export function composeTextImportBatchPreview(
   const semanticGraph = deriveSemanticGraphFromPreviewNodes({ previewNodes: previewItems })
   const sources = createKnowledgeSources(sortedFiles)
   const bundleId = `import_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+  const classification = summarizeBatchClassification(sortedFiles)
   const compiled = compileSemanticLayerViews({
     bundleId,
     bundleTitle: batchTitle,
@@ -476,10 +478,10 @@ export function composeTextImportBatchPreview(
     semanticNodes: semanticGraph.semanticNodes,
     semanticEdges: semanticGraph.semanticEdges,
     fallbackInsertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+    documentType: normalizeDocumentStructureType(classification.archetype),
   })
   const activeViewId = compiled.activeViewId
   const activeProjection = compiled.viewProjections[activeViewId]
-  const classification = summarizeBatchClassification(sortedFiles)
   const templateSummary = summarizeBatchTemplate(sortedFiles)
 
   return {

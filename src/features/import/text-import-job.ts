@@ -9,11 +9,8 @@ import type { CodexRequestFailureKind } from '../ai/ai-client'
 import { composeTextImportBatchPreview, type BatchTextImportPreviewSource } from './text-import-batch-compose'
 import { streamCodexTextImportPreview } from './text-import-client'
 import {
-  createLocalTextImportPreview,
-  shouldUseLocalMarkdownImport,
   sortTextImportBatchSources,
   type LocalTextImportBatchRequest,
-  type LocalTextImportProgressUpdate,
   type SemanticMergeStage,
 } from './local-text-import-core'
 import { finalizeTextImportSemanticPreview } from './text-import-semantic-adjudication'
@@ -73,44 +70,6 @@ export interface TextImportJobHandle {
   cancel: () => void
 }
 
-type WorkerResponse =
-  | {
-      type: 'status'
-      jobId: string
-      stage: TextImportRunStage
-      message: string
-      progress: number
-      jobType?: TextImportJobType
-      fileCount?: number
-      completedFileCount?: number
-      currentFileName?: string | null
-      semanticMergeStage?: SemanticMergeStage
-      semanticCandidateCount?: number
-      semanticAdjudicatedCount?: number
-      semanticFallbackCount?: number
-      requestId?: string
-    }
-  | {
-      type: 'preview'
-      jobId: string
-      data: TextImportResponse
-      requestId?: string
-    }
-  | {
-      type: 'result'
-      jobId: string
-      data: TextImportResponse
-      requestId?: string
-    }
-  | {
-      type: 'error'
-      jobId: string
-      stage?: TextImportRunStage
-      message: string
-      rawMessage?: string
-      requestId?: string
-    }
-
 type StreamImportError = Error & {
   stage?: TextImportRunStage
   code?: CodexApiError['code']
@@ -120,33 +79,8 @@ type StreamImportError = Error & {
   requestId?: string
 }
 
-let sharedWorker: Worker | null = null
-
 function createJobId(): string {
   return `import_job_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
-}
-
-function selectTextImportJobMode(
-  request: Pick<TextImportRequest, 'sourceName' | 'sourceType' | 'rawText' | 'preprocessedHints'>,
-): TextImportJobMode {
-  return shouldUseLocalMarkdownImport(request as TextImportRequest)
-    ? 'local_markdown'
-    : 'codex_import'
-}
-
-function getWorker(): Worker {
-  if (!sharedWorker) {
-    sharedWorker = new Worker(new URL('./text-import.worker.ts', import.meta.url), {
-      type: 'module',
-    })
-  }
-
-  return sharedWorker
-}
-
-function disposeWorker(): void {
-  sharedWorker?.terminate()
-  sharedWorker = null
 }
 
 function mapCodexStageToProgress(stage: TextImportRunStage): number {
@@ -269,134 +203,6 @@ async function runCodexTextImportPreview(
   return response
 }
 
-function startWorkerBackedJob(
-  jobType: TextImportJobType,
-  message:
-    | { type: 'start_single'; jobId: string; request: TextImportRequest }
-    | { type: 'start_batch'; jobId: string; request: LocalTextImportBatchRequest },
-  onEvent: (event: TextImportJobEvent) => void,
-): TextImportJobHandle {
-  const jobId = createJobId()
-  const mode: TextImportJobMode = 'local_markdown'
-  const worker = getWorker()
-  const initialFileName =
-    message.type === 'start_single'
-      ? message.request.sourceName
-      : (message.request.files[0]?.sourceName ?? null)
-  const cleanup = () => {
-    worker.removeEventListener('message', handleMessage)
-    worker.removeEventListener('error', handleWorkerError)
-    worker.removeEventListener('messageerror', handleWorkerMessageError)
-  }
-  const handleMessage = (event: MessageEvent<WorkerResponse>) => {
-    const payload = event.data
-    if (!payload || payload.jobId !== jobId) {
-      return
-    }
-
-    if (payload.type === 'status') {
-      onEvent({
-        type: 'status',
-        stage: payload.stage,
-        message: payload.message,
-        progress: payload.progress,
-        mode,
-        jobType: payload.jobType ?? jobType,
-        fileCount: payload.fileCount,
-        completedFileCount: payload.completedFileCount,
-        currentFileName: payload.currentFileName,
-        semanticMergeStage: payload.semanticMergeStage,
-        semanticCandidateCount: payload.semanticCandidateCount,
-        semanticAdjudicatedCount: payload.semanticAdjudicatedCount,
-        semanticFallbackCount: payload.semanticFallbackCount,
-        requestId: payload.requestId,
-      })
-      return
-    }
-
-    if (payload.type === 'preview') {
-      onEvent({
-        type: 'preview',
-        data: payload.data,
-        mode,
-        jobType,
-        requestId: payload.requestId,
-      })
-      return
-    }
-
-    if (payload.type === 'result') {
-      cleanup()
-      onEvent({
-        type: 'result',
-        data: payload.data,
-        mode,
-        jobType,
-        requestId: payload.requestId,
-      })
-      return
-    }
-
-    cleanup()
-    onEvent({
-      type: 'error',
-      stage: payload.stage,
-      message: payload.message,
-      rawMessage: payload.rawMessage,
-      requestId: payload.requestId,
-      currentFileName: initialFileName,
-      mode,
-      jobType,
-    })
-  }
-
-  const handleWorkerError = (event: ErrorEvent) => {
-    cleanup()
-    disposeWorker()
-    onEvent({
-      type: 'error',
-      stage: 'building_preview',
-      message: event.message || 'Local import worker failed to start.',
-      rawMessage: event.message || undefined,
-      currentFileName: initialFileName,
-      mode,
-      jobType,
-    })
-  }
-
-  const handleWorkerMessageError = () => {
-    cleanup()
-    disposeWorker()
-    onEvent({
-      type: 'error',
-      stage: 'building_preview',
-      message: 'Local import worker returned an unreadable message.',
-      rawMessage: 'messageerror',
-      currentFileName: initialFileName,
-      mode,
-      jobType,
-    })
-  }
-
-  worker.addEventListener('message', handleMessage)
-  worker.addEventListener('error', handleWorkerError)
-  worker.addEventListener('messageerror', handleWorkerMessageError)
-  worker.postMessage({
-    ...message,
-    jobId,
-  })
-
-  return {
-    jobId,
-    mode,
-    jobType,
-    cancel: () => {
-      cleanup()
-      disposeWorker()
-    },
-  }
-}
-
 function emitBatchStatus(
   onEvent: (event: TextImportJobEvent) => void,
   mode: TextImportJobMode,
@@ -458,43 +264,21 @@ async function buildBatchPreviewSource(
     preprocessedHints: file.preprocessedHints,
     semanticHints: file.semanticHints,
   }
-  const fileMode = selectTextImportJobMode(singleRequest)
-
-  if (fileMode === 'codex_import') {
-    const response = await runCodexTextImportPreview(singleRequest, {
-      signal,
-      onStatus: (event) => {
-        emitBatchStatus(onEvent, 'codex_import', fileCount, fileIndex, file.sourceName, {
-          stage: event.stage,
-          message: event.message,
-          progress: mapBatchFileProgress(fileIndex, fileCount, mapCodexStageToProgress(event.stage)),
-          requestId: event.requestId,
-        })
-      },
-    })
-    return {
-      ...file,
-      route: fileMode,
-      response,
-    }
-  }
-
-  const built = createLocalTextImportPreview(singleRequest, {
-    preprocessHintCount: file.preprocessedHints.length,
-    onProgress: (update: LocalTextImportProgressUpdate) => {
+  const response = await runCodexTextImportPreview(singleRequest, {
+    signal,
+    onStatus: (event) => {
       emitBatchStatus(onEvent, 'codex_import', fileCount, fileIndex, file.sourceName, {
-        stage: update.stage,
-        message: update.message,
-        progress: mapBatchFileProgress(fileIndex, fileCount, update.progress),
-        semanticMergeStage: update.semanticMergeStage,
+        stage: event.stage,
+        message: event.message,
+        progress: mapBatchFileProgress(fileIndex, fileCount, mapCodexStageToProgress(event.stage)),
+        requestId: event.requestId,
       })
     },
   })
-
   return {
     ...file,
-    route: fileMode,
-    response: built.response,
+    route: 'codex_import',
+    response,
   }
 }
 
@@ -531,11 +315,9 @@ function startCodexBatchJob(
         }
 
         builtFiles.push(built)
-        const routeLabel =
-          built.route === 'local_markdown' ? 'local structured import' : 'Codex import'
         emitBatchStatus(onEvent, mode, files.length, index + 1, files[index + 1]?.sourceName ?? null, {
           stage: 'analyzing_import',
-          message: `Prepared ${file.sourceName} with ${routeLabel}.`,
+          message: `Prepared ${file.sourceName} with the skill-backed import pipeline.`,
           progress: mapBatchFileProgress(index, files.length, 100),
         })
       } catch (error) {
@@ -624,19 +406,7 @@ export function startTextImportJob(
   onEvent: (event: TextImportJobEvent) => void,
 ): TextImportJobHandle {
   const jobId = createJobId()
-  const mode = selectTextImportJobMode(request)
-
-  if (mode === 'local_markdown') {
-    return startWorkerBackedJob(
-      'single',
-      {
-        type: 'start_single',
-        jobId,
-        request,
-      },
-      onEvent,
-    )
-  }
+  const mode: TextImportJobMode = 'codex_import'
 
   const controller = new AbortController()
   let cancelled = false
@@ -717,26 +487,5 @@ export function startTextImportBatchJob(
   request: LocalTextImportBatchRequest,
   onEvent: (event: TextImportJobEvent) => void,
 ): TextImportJobHandle {
-  const requiresCodex = request.files.some((file) =>
-    selectTextImportJobMode({
-      sourceName: file.sourceName,
-      sourceType: file.sourceType,
-      rawText: file.rawText,
-      preprocessedHints: file.preprocessedHints,
-    }) === 'codex_import',
-  )
-
-  if (!requiresCodex) {
-    return startWorkerBackedJob(
-      'batch',
-      {
-        type: 'start_batch',
-        jobId: createJobId(),
-        request,
-      },
-      onEvent,
-    )
-  }
-
   return startCodexBatchJob(request, onEvent)
 }

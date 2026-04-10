@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { StorageConflictRecord } from '../domain/sync-records'
 import { StorageConflictDialog } from './StorageConflictDialog'
@@ -137,5 +138,41 @@ describe('StorageConflictDialog', () => {
         title: 'Merged title',
       },
     )
+  })
+
+  it('shows an inline error and keeps dismissal available when resolution fails', async () => {
+    const user = userEvent.setup()
+    const onResolve = vi.fn().mockRejectedValue(new Error('Conflict not found.'))
+
+    function Harness() {
+      const [conflict, setConflict] = useState<StorageConflictRecord | null>(
+        createConflict({
+          recommendedResolution: 'save_local_copy',
+          actionableResolutions: ['save_local_copy'],
+          mergedPayload: null,
+        }),
+      )
+
+      return (
+        <StorageConflictDialog
+          conflict={conflict}
+          onResolve={onResolve}
+          onDismiss={() => setConflict(null)}
+        />
+      )
+    }
+
+    render(<Harness />)
+
+    await user.click(screen.getByTestId('storage-conflict-action-save_local_copy'))
+
+    const error = await screen.findByTestId('storage-conflict-resolve-error')
+    expect(error).toHaveTextContent('云端已经找不到这条冲突')
+    expect(screen.getByTestId('storage-conflict-action-save_local_copy')).not.toBeDisabled()
+    expect(screen.getByTestId('storage-conflict-dialog')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('storage-conflict-dismiss'))
+
+    expect(screen.queryByTestId('storage-conflict-dialog')).not.toBeInTheDocument()
   })
 })

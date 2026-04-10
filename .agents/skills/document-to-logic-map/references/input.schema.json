@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "document-to-logic-map/v1-input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "spec_version",
+    "source",
+    "document_context",
+    "map_context",
+    "preprocessed_hints",
+    "options"
+  ],
+  "properties": {
+    "spec_version": {
+      "const": "document-to-logic-map/v1"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "raw_text"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["file", "paste"] },
+        "raw_text": { "type": "string" }
+      }
+    },
+    "document_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document_id",
+        "document_title",
+        "base_document_updated_at",
+        "anchor_topic_id"
+      ],
+      "properties": {
+        "document_id": { "type": "string" },
+        "document_title": { "type": "string" },
+        "base_document_updated_at": { "type": "integer" },
+        "anchor_topic_id": { "type": ["string", "null"] }
+      }
+    },
+    "map_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_topic_id", "focused_topics", "background_topic_titles"],
+      "properties": {
+        "root_topic_id": { "type": "string" },
+        "focused_topics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["topic_id", "title", "parent_topic_id", "child_topic_ids", "ai_locked"],
+            "properties": {
+              "topic_id": { "type": "string" },
+              "title": { "type": "string" },
+              "parent_topic_id": { "type": ["string", "null"] },
+              "child_topic_ids": { "type": "array", "items": { "type": "string" } },
+              "ai_locked": { "type": "boolean" },
+              "note_preview": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "background_topic_titles": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "preprocessed_hints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "text",
+          "raw",
+          "level",
+          "line_start",
+          "line_end",
+          "source_path"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "heading",
+              "paragraph",
+              "bullet_list",
+              "ordered_list",
+              "task_list",
+              "blockquote",
+              "code_block",
+              "table"
+            ]
+          },
+          "text": { "type": "string" },
+          "raw": { "type": "string" },
+          "level": { "type": "integer" },
+          "line_start": { "type": "integer" },
+          "line_end": { "type": "integer" },
+          "source_path": { "type": "array", "items": { "type": "string" } },
+          "language": { "type": ["string", "null"] },
+          "items": { "type": "array", "items": { "type": "string" } },
+          "checked": { "type": "array", "items": { "type": "boolean" } },
+          "rows": {
+            "type": "array",
+            "items": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document_type_hint", "max_total_nodes", "max_depth"],
+      "properties": {
+        "document_type_hint": {
+          "type": ["string", "null"],
+          "enum": ["analysis", "process", "plan", "notes", null]
+        },
+        "max_total_nodes": { "type": "integer" },
+        "max_depth": { "type": "integer" }
+      }
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import type {
   TextImportArchetype,
   TextImportCrossFileMergeSuggestion,
@@ -12,8 +12,6 @@ import type {
 import {
   formatTextImportArchetypeLabel,
   formatTextImportClassificationConfidence,
-  formatTextImportPresetLabel,
-  formatTextImportTemplateSlotLabel,
   resolveTextImportPlanningOptions,
   type TextImportSourcePlanningSummary,
 } from '../../../../shared/text-import-semantics'
@@ -57,7 +55,6 @@ interface TextImportDialogProps {
   previewFinishedAt: number | null
   jobMode: TextImportJobMode | null
   jobType: TextImportJobType | null
-
   fileCount: number
   completedFileCount: number
   currentFileName: string | null
@@ -78,7 +75,7 @@ interface TextImportDialogProps {
   repairDescription?: string | null
   repairDisabled?: boolean
   onClose: () => void
-  onChooseFile: () => void
+  onChooseFiles: (files: File[]) => void | Promise<void>
   onPresetChange: (value: TextImportPreset | null) => void
   onArchetypeChange?: (value: TextImportArchetype | null) => void
   onAnchorModeChange: (value: TextImportAnchorMode) => void
@@ -95,39 +92,60 @@ interface TextImportDialogProps {
   onRepair?: () => void
 }
 
-const DIALOG_STEPS = [
-  { id: 'source', label: 'Import source' },
-  { id: 'structured', label: 'Draft review' },
-  { id: 'merge', label: 'Merge review' },
+const SKILL_PHASES = [
+  { id: 'detect', label: 'Detect type' },
+  { id: 'logic', label: 'Build logic map' },
+  { id: 'attach', label: 'Attach evidence / tasks' },
+  { id: 'merge', label: 'Check merges' },
 ] as const
 
-type DialogStep = (typeof DIALOG_STEPS)[number]['id']
+const REVIEW_TABS = [
+  { id: 'draft', label: 'Draft' },
+  { id: 'merge', label: 'Merge' },
+] as const
 
-/*
-const IMPORT_PRESETS: Array<{ id: TextImportPreset; label: string; description: string }> = [
-  { id: 'preserve', label: '保真导入', description: '尽量保留原文层级和措辞。' },
-  { id: 'distill', label: '智能提炼', description: '默认推荐，抽出摘要、决策、行动项和风险。' },
-  { id: 'action_first', label: '行动项优先', description: '压缩结构，优先保留待办、决策和阻塞。' },
-]
+type SkillPhaseId = (typeof SKILL_PHASES)[number]['id']
+type ReviewTab = (typeof REVIEW_TABS)[number]['id']
 
-*/
+function normalizeDisplayArchetype(
+  archetype: TextImportArchetype | TextImportResponse['classification']['archetype'],
+): 'analysis' | 'process' | 'plan' | 'notes' {
+  switch (archetype) {
+    case 'process':
+    case 'method':
+      return 'process'
+    case 'plan':
+      return 'plan'
+    case 'notes':
+    case 'meeting':
+      return 'notes'
+    default:
+      return 'analysis'
+  }
+}
+
+function formatDocumentTypeLabel(
+  archetype: TextImportArchetype | TextImportResponse['classification']['archetype'],
+): string {
+  return formatTextImportArchetypeLabel(normalizeDisplayArchetype(archetype))
+}
 
 function formatSemanticRole(role: TextImportPreviewNode['semanticRole']): string | null {
   switch (role) {
+    case 'claim':
     case 'summary':
-      return 'Summary'
+      return 'Claim'
     case 'decision':
       return 'Decision'
+    case 'task':
     case 'action':
-      return 'Action'
+      return 'Task'
     case 'risk':
       return 'Risk'
     case 'question':
       return 'Question'
     case 'metric':
       return 'Metric'
-    case 'timeline':
-      return 'Timeline'
     case 'evidence':
       return 'Evidence'
     case 'section':
@@ -136,8 +154,15 @@ function formatSemanticRole(role: TextImportPreviewNode['semanticRole']): string
       return null
   }
 }
-function formatTemplateSlot(slot: TextImportPreviewNode['templateSlot']): string | null {
-  return formatTextImportTemplateSlotLabel(slot)
+
+function formatSourceSpans(
+  anchors: TextImportPreviewNode['sourceAnchors'] | undefined,
+): string | null {
+  if (!anchors?.length) {
+    return null
+  }
+
+  return anchors.map((anchor) => `L${anchor.lineStart}-${anchor.lineEnd}`).join(', ')
 }
 
 function formatPlanningConfidence(value: TextImportSourcePlanningSummary['confidence']): string {
@@ -152,37 +177,6 @@ function formatPlanningConfidence(value: TextImportSourcePlanningSummary['confid
   }
 }
 
-function formatRecommendedRoute(value: TextImportSourcePlanningSummary['recommendedRoute']): string {
-  return value === 'codex_import' ? 'Codex route' : 'Local route'
-}
-
-const IMPORT_PRESET_OPTIONS: Array<{
-  id: TextImportPreset | null
-  label: string
-  description: string
-}> = [
-  {
-    id: null,
-    label: 'Automatic',
-    description: 'Default. Pick the import strategy from the source structure and semantic signals.',
-  },
-  {
-    id: 'preserve',
-    label: 'Preserve structure',
-    description: 'Keep the original hierarchy and wording as much as possible.',
-  },
-  {
-    id: 'distill',
-    label: 'Smart distill',
-    description: 'Default. Distill summaries, decisions, actions, and risks into a cleaner branch.',
-  },
-  {
-    id: 'action_first',
-    label: 'Action first',
-    description: 'Compress structure and prioritize action items, decisions, and blockers.',
-  },
-]
-
 const ARCHETYPE_OPTIONS: Array<{
   id: TextImportArchetype | null
   label: string
@@ -191,90 +185,29 @@ const ARCHETYPE_OPTIONS: Array<{
   {
     id: null,
     label: 'Auto detect',
-    description: 'Use the local scorer first and only escalate when the content type is ambiguous.',
+    description: 'Let the skill detect whether the source is analysis, process, plan, or notes.',
   },
   {
-    id: 'method',
-    label: 'Method',
-    description: 'Extract goals, steps, criteria, prerequisites, and common mistakes.',
+    id: 'analysis',
+    label: 'Analysis',
+    description: 'Prefer claims, evidence, metrics, risks, and questions in source order.',
   },
   {
-    id: 'argument',
-    label: 'Argument',
-    description: 'List viewpoints first, then attach supporting evidence and data.',
+    id: 'process',
+    label: 'Process',
+    description: 'Prefer ordered sections and only extract tasks when the output is explicit.',
   },
   {
     id: 'plan',
     label: 'Plan',
-    description: 'Focus on goals, strategy, actions, owners, timelines, risks, and success metrics.',
+    description: 'Prefer decisions, risks, metrics, and explicit deliverable-oriented tasks.',
   },
   {
-    id: 'report',
-    label: 'Report',
-    description: 'Group by summary, key results, progress, metrics, blockers, and next steps.',
-  },
-  {
-    id: 'meeting',
-    label: 'Meeting',
-    description: 'Surface agenda, decisions, action items, owners, open questions, and risks.',
-  },
-  {
-    id: 'postmortem',
-    label: 'Postmortem',
-    description: 'Extract issues, causes, impacts, evidence, fixes, and preventive actions.',
-  },
-  {
-    id: 'knowledge',
-    label: 'Knowledge',
-    description: 'Organize definitions, components, mechanisms, comparisons, examples, and cautions.',
-  },
-  {
-    id: 'mixed',
-    label: 'Mixed',
-    description: 'Keep a generic summary/themes/actions structure when the content type is blended.',
+    id: 'notes',
+    label: 'Notes',
+    description: 'Prefer concise sections, decisions, open questions, and source-backed evidence.',
   },
 ]
-
-function PreviewTree({ nodes }: { nodes: TextImportPreviewNode[] }) {
-  if (nodes.length === 0) {
-    return <p className={styles.empty}>No structured preview is available yet.</p>
-  }
-
-  return (
-    <ul className={styles.treeList}>
-      {nodes.map((node) => (
-        <li key={node.id} className={styles.treeItem}>
-          <div className={styles.treeCard} data-relation={node.relation}>
-            <div className={styles.treeTitleRow}>
-              <strong>{node.title}</strong>
-              <div className={styles.treeBadgeRow}>
-                {formatSemanticRole(node.semanticRole) ? (
-                  <span className={styles.treeSemanticBadge}>{formatSemanticRole(node.semanticRole)}</span>
-                ) : null}
-                {formatTemplateSlot(node.templateSlot) ? (
-                  <span className={styles.treeBadge}>{formatTemplateSlot(node.templateSlot)}</span>
-                ) : null}
-                {node.confidence ? (
-                  <span className={styles.treeConfidenceBadge}>{node.confidence}</span>
-                ) : null}
-                <span className={styles.treeBadge}>
-                  {node.relation === 'new'
-                    ? 'New branch'
-                    : node.relation === 'merge'
-                      ? 'Semantic merge'
-                      : 'Conflict'}
-                </span>
-              </div>
-            </div>
-            {node.reason ? <p className={styles.treeReason}>{node.reason}</p> : null}
-            {node.note ? <p className={styles.treeNote}>{node.note}</p> : null}
-          </div>
-          {node.children.length > 0 ? <PreviewTree nodes={node.children} /> : null}
-        </li>
-      ))}
-    </ul>
-  )
-}
 
 interface EditablePreviewTreeProps {
   nodes: TextImportPreviewNode[]
@@ -350,11 +283,11 @@ function EditablePreviewTreeNode({
             {formatSemanticRole(node.semanticRole) ? (
               <span className={styles.treeSemanticBadge}>{formatSemanticRole(node.semanticRole)}</span>
             ) : null}
-            {formatTemplateSlot(node.templateSlot) ? (
-              <span className={styles.treeBadge}>{formatTemplateSlot(node.templateSlot)}</span>
-            ) : null}
             {node.confidence ? (
               <span className={styles.treeConfidenceBadge}>{node.confidence}</span>
+            ) : null}
+            {formatSourceSpans(node.sourceAnchors) ? (
+              <span className={styles.treeBadge}>{formatSourceSpans(node.sourceAnchors)}</span>
             ) : null}
             <span className={styles.treeBadge}>
               {node.relation === 'new'
@@ -457,16 +390,6 @@ function formatElapsed(elapsedMs: number): string {
   return minutes > 0 ? `${minutes}m ${seconds.toString().padStart(2, '0')}s` : `${totalSeconds}s`
 }
 
-function formatSourceType(sourceType: TextImportSourceType | null): string {
-  if (sourceType === 'file') {
-    return 'File'
-  }
-  if (sourceType === 'paste') {
-    return 'Pasted text'
-  }
-  return 'Unspecified'
-}
-
 function formatMergeConfidence(confidence: TextImportMergeSuggestion['confidence']): string {
   return confidence === 'high' ? 'High confidence' : 'Medium confidence'
 }
@@ -485,7 +408,40 @@ function describeSemanticStage(stage: SemanticMergeStage): string {
 }
 
 function describePipeline(mode: TextImportJobMode | null): string {
-  return mode === 'codex_import' ? 'Codex pipeline' : 'Local pipeline'
+  void mode
+  return 'Skill-backed import'
+}
+
+function countPreviewNodes(nodes: TextImportPreviewNode[]): number {
+  return nodes.reduce((total, node) => total + 1 + countPreviewNodes(node.children), 0)
+}
+
+function resolveSkillPhase(options: {
+  isApplying: boolean
+  isPreviewing: boolean
+  previewReady: boolean
+  draftConfirmed: boolean
+  semanticMergeStage: SemanticMergeStage
+  progress: number
+}): SkillPhaseId {
+  if (options.isApplying || options.draftConfirmed || options.semanticMergeStage !== 'idle') {
+    return 'merge'
+  }
+
+  if (options.previewReady) {
+    return 'attach'
+  }
+
+  if (options.isPreviewing) {
+    if (options.progress >= 60) {
+      return 'attach'
+    }
+    if (options.progress >= 25) {
+      return 'logic'
+    }
+  }
+
+  return 'detect'
 }
 
 function createPrimaryErrorSummary(error: TextImportErrorState): string {
@@ -522,10 +478,7 @@ function createErrorDiagnostics(
     typeof error.status === 'number' ? `HTTP ${error.status}` : null,
   ].filter((part): part is string => Boolean(part))
   const detailSource = error.rawMessage ?? (error.message !== summary ? error.message : null)
-  const detail =
-    detailSource && detailSource !== summary
-      ? detailSource
-      : null
+  const detail = detailSource && detailSource !== summary ? detailSource : null
 
   return {
     summary,
@@ -545,6 +498,21 @@ function ChevronIcon({ expanded }: { expanded: boolean }) {
     >
       <path d="M4 6L8 10L12 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  )
+}
+
+function EmptyState({
+  title,
+  description,
+}: {
+  title: string
+  description: string
+}) {
+  return (
+    <div className={styles.emptyState}>
+      <strong className={styles.emptyStateTitle}>{title}</strong>
+      <p className={styles.emptyStateDescription}>{description}</p>
+    </div>
   )
 }
 
@@ -571,7 +539,6 @@ export function TextImportDialog({
   previewFinishedAt,
   jobMode,
   jobType,
-
   fileCount,
   completedFileCount,
   currentFileName,
@@ -592,7 +559,7 @@ export function TextImportDialog({
   repairDescription = null,
   repairDisabled = false,
   onClose,
-  onChooseFile,
+  onChooseFiles,
   onPresetChange,
   onArchetypeChange = () => {},
   onAnchorModeChange,
@@ -611,8 +578,45 @@ export function TextImportDialog({
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [showFileDetails, setShowFileDetails] = useState(false)
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
-  const [currentStep, setCurrentStep] = useState<DialogStep>(() => (isApplying ? 'merge' : 'source'))
+  const [showDetails, setShowDetails] = useState(false)
+  const [showInternals, setShowInternals] = useState(false)
+  const [reviewTab, setReviewTab] = useState<ReviewTab>(() => (isApplying ? 'merge' : 'draft'))
   const previousPreviewingRef = useRef(isPreviewing)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleChooseFilesClick = () => {
+    const input = fileInputRef.current
+    if (!input) {
+      return
+    }
+
+    if (typeof input.showPicker === 'function') {
+      input.showPicker()
+      return
+    }
+
+    input.click()
+  }
+
+  const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ''
+
+    if (files.length === 0) {
+      return
+    }
+
+    void onChooseFiles(files)
+  }
+
+  const handleInternalsChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const nextChecked = event.target.checked
+    setShowInternals(nextChecked)
+
+    if (nextChecked) {
+      setShowDetails(true)
+    }
+  }
 
   useEffect(() => {
     if (!open || !isPreviewing || previewStartedAt === null) {
@@ -625,9 +629,11 @@ export function TextImportDialog({
 
   useEffect(() => {
     if (!open) {
-      setCurrentStep('source')
+      setReviewTab('draft')
       setShowFileDetails(false)
       setShowAdvancedSettings(false)
+      setShowDetails(false)
+      setShowInternals(false)
       previousPreviewingRef.current = isPreviewing
     }
   }, [open, isPreviewing])
@@ -638,20 +644,16 @@ export function TextImportDialog({
       return
     }
 
-    if (isPreviewing) {
-      setCurrentStep('source')
-    } else if (previousPreviewingRef.current && preview) {
-      setCurrentStep('structured')
-    } else if (!preview && !isApplying) {
-      setCurrentStep('source')
+    if (!isPreviewing && previousPreviewingRef.current && preview) {
+      setReviewTab('draft')
     }
 
     previousPreviewingRef.current = isPreviewing
-  }, [open, isPreviewing, preview, isApplying])
+  }, [open, isPreviewing, preview])
 
   useEffect(() => {
     if (open && isApplying) {
-      setCurrentStep('merge')
+      setReviewTab('merge')
     }
   }, [open, isApplying])
 
@@ -659,21 +661,18 @@ export function TextImportDialog({
     sourceType === 'file' || (sourceFiles.length > 0 && sourceFiles.every((file) => file.sourceType === 'file'))
   const showGenerateAction = !isFileImportSource
   const showSourceEditor = !isFileImportSource
-  const showPipelinePanel = Boolean(modeHint || statusText || preview?.summary || isPreviewing || isApplying)
-  const sourceSnapshotTitle = sourceFiles.length > 1 ? `${sourceFiles.length} files selected` : `${sourceFiles.length} file selected`
   const elapsedMs =
     previewStartedAt === null
       ? 0
       : (isPreviewing ? nowMs : (previewFinishedAt ?? nowMs)) - previewStartedAt
   const displayProgress = isApplying ? applyProgress : progress
-
   const previewReady = Boolean(preview)
   const mergeReviewReady = Boolean(preview && draftConfirmed)
   const statusSummary = isApplying
     ? `Progress ${displayProgress}%`
     : progressIndeterminate
-    ? `Working | Elapsed ${formatElapsed(elapsedMs)}`
-    : `Progress ${displayProgress}% | Elapsed ${formatElapsed(elapsedMs)}`
+      ? `Working | Elapsed ${formatElapsed(elapsedMs)}`
+      : `Progress ${displayProgress}% | Elapsed ${formatElapsed(elapsedMs)}`
   const errorDisplay = error ? createErrorDiagnostics(error, currentFileName) : null
   const sourceError = error?.stage === 'applying_changes' ? null : errorDisplay
   const applyError = error?.stage === 'applying_changes' ? errorDisplay : null
@@ -687,11 +686,9 @@ export function TextImportDialog({
   const showStructuredGeneratingState = isPreviewing && !hasStructuredPreview
   const showStructuredEmptyState = !isPreviewing && !hasStructuredPreview
   const showMergeGeneratingState = isPreviewing && !mergeReviewReady
-  const showMergeIdleState = !isPreviewing && !previewReady
   const showMergeBlockedState = !isPreviewing && previewReady && !mergeReviewReady
   const showMergeNoReviewNeededState = mergeReviewReady && !hasMergeReviewContent
   const classification = preview?.classification ?? null
-  const templateSummary = preview?.templateSummary ?? null
   const classificationConfidence = classification
     ? formatTextImportClassificationConfidence(classification.confidence)
     : null
@@ -723,60 +720,96 @@ export function TextImportDialog({
   ])
   const effectivePlanningSummaries =
     planningSummaries.length > 0 ? planningSummaries : draftPlanningSummary ? [draftPlanningSummary] : []
-  const hasPlanningSummary = effectivePlanningSummaries.length > 0
   const hasLowConfidencePlanning = effectivePlanningSummaries.some(
     (summary) => !summary.isManual && summary.confidence === 'low',
   )
   const isBatchPlanning = effectivePlanningSummaries.length > 1
   const primaryPlanningSummary = effectivePlanningSummaries[0] ?? null
   const diagnostics = preview?.diagnostics ?? null
-  const selectedPresetOption =
-    IMPORT_PRESET_OPTIONS.find((option) => option.id === presetOverride) ?? IMPORT_PRESET_OPTIONS[0]
   const selectedArchetypeOption =
     ARCHETYPE_OPTIONS.find((option) => option.id === archetypeOverride) ?? ARCHETYPE_OPTIONS[0]
+  const detectedDocumentType = classification
+    ? formatDocumentTypeLabel(classification.archetype)
+    : isBatchPlanning
+      ? 'Per file'
+      : primaryPlanningSummary
+        ? formatDocumentTypeLabel(primaryPlanningSummary.resolvedArchetype)
+        : 'Auto detect'
+  const detectedConfidence = classification
+    ? `${classificationConfidence ?? 'low'} (${Math.round(classification.confidence * 100)}%)`
+    : isBatchPlanning
+      ? (hasLowConfidencePlanning ? 'Mixed confidence' : 'Stable')
+      : primaryPlanningSummary
+        ? primaryPlanningSummary.isManual
+          ? 'Manual override'
+          : formatPlanningConfidence(primaryPlanningSummary.confidence)
+        : 'Pending'
+  const detectionRationale = classification?.rationale ??
+    (isBatchPlanning
+      ? 'Each file is classified independently before the batch preview is composed.'
+      : primaryPlanningSummary?.rationale ??
+        'The skill will detect the source type and build the map in source order when the preview starts.')
+  const showLowConfidenceNote = classification
+    ? classificationConfidence === 'low'
+    : Boolean(primaryPlanningSummary && !primaryPlanningSummary.isManual && primaryPlanningSummary.confidence === 'low')
+  const activePhaseId = resolveSkillPhase({
+    isApplying,
+    isPreviewing,
+    previewReady,
+    draftConfirmed,
+    semanticMergeStage,
+    progress,
+  })
+  const activePhaseLabel = SKILL_PHASES.find((phase) => phase.id === activePhaseId)?.label ?? 'Detect type'
+  const hasSourceInput = sourceFiles.length > 0 || draftText.trim().length > 0
+  const primaryStatusMessage = isApplying
+    ? statusText || 'Applying the approved import changes to the canvas.'
+    : statusText
+      ? statusText
+      : mergeReviewReady
+        ? 'Merge review is ready. Resolve conflicts and overlaps before applying the changes.'
+        : previewReady
+          ? 'The logic map is ready. Review the draft and confirm it before enabling merge review.'
+          : hasSourceInput
+            ? 'Ready to run the skill-backed import.'
+            : 'Choose files or paste text to start the skill-backed import.'
+  const sourceSummaryLabel =
+    sourceFiles.length > 1
+      ? `${sourceFiles.length} files selected`
+      : sourceFiles.length === 1
+        ? sourceFiles[0]?.sourceName ?? '1 file selected'
+        : showSourceEditor
+          ? (draftSourceName.trim() || 'Pasted text')
+          : 'No source selected'
+  const sourceSummaryMeta =
+    sourceFiles.length > 1
+      ? 'Batch import'
+      : sourceFiles.length === 1
+        ? `${sourceFiles[0]?.textLength ?? 0} chars`
+        : showSourceEditor
+          ? 'Paste import'
+          : 'Waiting for input'
+  const showStatusProgress = Boolean(isPreviewing || statusText || previewReady || isApplying)
+  const draftNodeCount = countPreviewNodes(draftTree)
+  const pendingDecisionCount =
+    (preview?.conflicts.length ?? 0) +
+    (preview?.mergeSuggestions?.length ?? 0) +
+    crossFileMergeSuggestions.length
+  const pendingWarningCount = preview?.warnings?.length ?? 0
+  const canConfirmDraft = Boolean(previewReady && hasStructuredPreview && !draftConfirmed && !isPreviewing && !isApplying)
+  const canOpenMergeTab = Boolean(draftConfirmed || isApplying)
+  const canShowDetails = Boolean(preview?.summary || modeHint || diagnostics || onRepair)
+  const showStatusSection = Boolean(hasSourceInput || isPreviewing || isApplying || previewReady || sourceError)
+  const showReviewSection = Boolean(previewReady || isApplying)
+  const statusTypeSummary = archetypeOverride
+    ? `Pinned type · ${formatDocumentTypeLabel(archetypeOverride)}`
+    : `${detectedDocumentType} · ${detectedConfidence}`
+  void onPresetChange
 
-  function canNavigateToStep(step: DialogStep): boolean {
-    if (step === 'merge' && !isApplying && !draftConfirmed) {
-      return false
-    }
-    return step !== currentStep
+  const handleConfirmDraft = () => {
+    onConfirmDraft()
+    setReviewTab('merge')
   }
-
-  function handleStepChange(step: DialogStep): void {
-    if (step === currentStep || !canNavigateToStep(step)) {
-      return
-    }
-    setCurrentStep(step)
-  }
-
-  function handleBack(): void {
-    if (currentStep === 'merge') {
-      setCurrentStep('structured')
-      return
-    }
-
-    if (currentStep === 'structured') {
-      setCurrentStep('source')
-    }
-  }
-
-  function handleNext(): void {
-    if (currentStep === 'source') {
-      setCurrentStep('structured')
-      return
-    }
-
-    if (currentStep === 'structured') {
-      onConfirmDraft()
-      setCurrentStep('merge')
-    }
-  }
-
-  const showCloseAction = currentStep === 'source'
-  const showBackAction = currentStep !== 'source'
-  const showNextAction = currentStep === 'source' || currentStep === 'structured'
-  const nextActionLabel =
-    currentStep === 'structured' && !draftConfirmed ? 'Confirm draft' : 'Next'
 
   if (!open) {
     return null
@@ -791,293 +824,123 @@ export function TextImportDialog({
         className={styles.dialog}
       >
         <div className={styles.header}>
-          <div>
+          <div className={styles.headerCopy}>
             <p className={styles.eyebrow}>Smart Import</p>
             <h2 id="text-import-title" className={styles.title}>
-              Smart import draft
+              Import with skill
             </h2>
+            <p className={styles.headerLead}>
+              Turn files or pasted text into a logic map, then review only the decisions that matter.
+            </p>
           </div>
-          <IconButton label="Close import draft" icon="close" tone="primary" size="sm" onClick={onClose} />
+          <div className={styles.headerActions}>
+            <IconButton label="Close import draft" icon="close" tone="primary" size="sm" onClick={onClose} />
+          </div>
         </div>
 
-        <nav className={styles.stepper} aria-label="Import steps">
-          {DIALOG_STEPS.map((step, index) => {
-            const isCurrent = step.id === currentStep
-
-            return (
-              <button
-                key={step.id}
-                type="button"
-                className={styles.stepButton}
-                data-current={isCurrent}
-                aria-current={isCurrent ? 'step' : undefined}
-                onClick={() => handleStepChange(step.id)}
-              >
-                <span className={styles.stepMarker}>{index + 1}</span>
-                <span className={styles.stepText}>
-                  <span className={styles.stepEyebrow}>Step {index + 1}</span>
-                  <span className={styles.stepLabel}>{step.label}</span>
-                </span>
-              </button>
-            )
-          })}
-        </nav>
-
         <div className={styles.pageViewport}>
-          {currentStep === 'source' ? (
-            <>
-              <section className={styles.inputPanel}>
-                <div className={styles.inputHeader}>
-                  <div>
-                    <h3 className={styles.sectionTitle}>Import source</h3>
-                    <p className={styles.empty}>
-                      Upload Markdown or plain text files, or paste text directly below.
-                    </p>
-                  </div>
-                  <Button tone="primary" onClick={onChooseFile} disabled={isPreviewing || isApplying} size="sm">
-                    Choose Files
-                  </Button>
-                </div>
+          <section className={styles.inputPanel} aria-label="Prepare import">
+            <div className={styles.sectionHeader}>
+              <div className={styles.headerCopy}>
+                <h3 className={styles.sectionTitle}>Source</h3>
+                <p className={styles.sectionIntro}>
+                  Keep the setup minimal. The skill handles the rest.
+                </p>
+              </div>
+              <div className={styles.prepareHeaderActions}>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  hidden
+                  multiple
+                  onChange={handleFileInputChange}
+                />
+                <Button
+                  tone="primary"
+                  onClick={handleChooseFilesClick}
+                  disabled={isPreviewing || isApplying}
+                  size="sm"
+                >
+                  Choose Files
+                </Button>
+              </div>
+            </div>
 
-                <section className={styles.anchorPanel} aria-label="Import target">
-                  <div className={styles.inputGrid}>
-                    <label className={styles.sourceField}>
-                      <span className={styles.metaLabel}>Import target</span>
-                      <select
-                        className={styles.select}
-                        value={anchorMode}
-                        onChange={(event) => onAnchorModeChange(event.target.value as TextImportAnchorMode)}
-                        disabled={isPreviewing || isApplying}
-                      >
-                        <option value="document_root">Document root: {documentRootLabel}</option>
-                        <option value="current_selection">
-                          Current selection: {currentSelectionLabel ?? 'No active topic'}
-                        </option>
-                      </select>
-                      <span className={styles.selectDescription}>
-                        {anchorMode === 'document_root'
-                          ? 'Default. Each new import starts at the document root so repeated imports stay as sibling branches.'
-                          : 'Import under the currently selected topic. This can intentionally nest the next imported branch.'}
-                      </span>
-                    </label>
-                  </div>
-                  {anchorMode === 'current_selection' ? (
-                    <p className={styles.anchorWarning}>
-                      The next import will be nested under the currently selected topic instead of the document root.
-                    </p>
-                  ) : null}
-                </section>
+            <div className={styles.toolbarRow}>
+              <label className={styles.toolbarField} aria-label="Import target">
+                <span className={styles.metaLabel}>Import target</span>
+                <select
+                  className={styles.select}
+                  value={anchorMode}
+                  onChange={(event) => onAnchorModeChange(event.target.value as TextImportAnchorMode)}
+                  disabled={isPreviewing || isApplying}
+                >
+                  <option value="document_root">Document root: {documentRootLabel}</option>
+                  <option value="current_selection">
+                    Current selection: {currentSelectionLabel ?? 'No active topic'}
+                  </option>
+                </select>
+                <span className={styles.selectDescription}>
+                  {anchorMode === 'document_root'
+                    ? 'Default. Each import starts at the document root so repeated imports stay as sibling branches.'
+                    : 'Import under the current topic when you intentionally want to nest the next branch.'}
+                </span>
+              </label>
 
-                {hasPlanningSummary ? (
-                  <section className={styles.autoSetupPanel} aria-label="Automatic import setup">
-                    <div className={styles.autoSetupHeader}>
-                      <div>
-                        <span className={styles.metaLabel}>Automatic import setup</span>
-                        <h4 className={styles.autoSetupTitle}>
-                          {isBatchPlanning ? 'Per-file automatic selection' : 'Automatic import setup'}
-                        </h4>
-                      </div>
-                      <span className={styles.autoSetupBadge}>
-                        {primaryPlanningSummary?.isManual ? 'Manual override' : 'Auto selected'}
-                      </span>
-                    </div>
+              <label className={styles.toolbarField}>
+                <span className={styles.metaLabel}>Document type</span>
+                <select
+                  className={styles.select}
+                  value={archetypeOverride ?? 'auto'}
+                  onChange={(event) =>
+                    onArchetypeChange(
+                      event.target.value === 'auto'
+                        ? null
+                        : (event.target.value as TextImportArchetype),
+                    )
+                  }
+                  disabled={isPreviewing || isApplying}
+                >
+                  {ARCHETYPE_OPTIONS.map((option) => (
+                    <option key={option.id ?? 'auto'} value={option.id ?? 'auto'}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-                    {isBatchPlanning ? (
-                      <>
-                        <div className={styles.metaGrid}>
-                          <div className={styles.metaCard}>
-                            <span className={styles.metaLabel}>Strategy</span>
-                            <strong>Per file</strong>
-                          </div>
-                          <div className={styles.metaCard}>
-                            <span className={styles.metaLabel}>Archetype</span>
-                            <strong>Per file</strong>
-                          </div>
-                          <div className={styles.metaCard}>
-                            <span className={styles.metaLabel}>Confidence</span>
-                            <strong>{hasLowConfidencePlanning ? 'Mixed confidence' : 'Stable'}</strong>
-                          </div>
-                        </div>
-                        <p className={styles.summaryText}>
-                          Each file is classified independently before building the batch preview.
-                          {hasLowConfidencePlanning
-                            ? ' Some files are low-confidence, so you can adjust the defaults in Advanced settings.'
-                            : ''}
-                        </p>
-                      </>
-                    ) : primaryPlanningSummary ? (
-                      <>
-                        <div className={styles.metaGrid}>
-                          <div className={styles.metaCard}>
-                            <span className={styles.metaLabel}>Strategy</span>
-                            <strong>{formatTextImportPresetLabel(primaryPlanningSummary.resolvedPreset)}</strong>
-                          </div>
-                          <div className={styles.metaCard}>
-                            <span className={styles.metaLabel}>Archetype</span>
-                            <strong>{formatTextImportArchetypeLabel(primaryPlanningSummary.resolvedArchetype)}</strong>
-                          </div>
-                          <div className={styles.metaCard}>
-                            <span className={styles.metaLabel}>
-                              {primaryPlanningSummary.isManual ? 'Status' : 'Confidence'}
-                            </span>
-                            <strong>
-                              {primaryPlanningSummary.isManual
-                                ? 'Manual override'
-                                : formatPlanningConfidence(primaryPlanningSummary.confidence)}
-                            </strong>
-                          </div>
-                        </div>
-                        <p className={styles.summaryText}>{primaryPlanningSummary.rationale}</p>
-                        {!primaryPlanningSummary.isManual && primaryPlanningSummary.confidence === 'low' ? (
-                          <p className={styles.autoSetupHint}>
-                            The system already chose a default setup. You can refine it in Advanced settings.
-                          </p>
-                        ) : null}
-                      </>
-                    ) : null}
+              <button
+                type="button"
+                className={styles.toolbarToggle}
+                aria-expanded={showAdvancedSettings}
+                onClick={() => setShowAdvancedSettings((value) => !value)}
+              >
+                <span>More options</span>
+                <ChevronIcon expanded={showAdvancedSettings} />
+              </button>
+            </div>
 
-                    <div className={styles.advancedPanel}>
-                      <button
-                        type="button"
-                        className={styles.advancedToggle}
-                        aria-expanded={showAdvancedSettings}
-                        onClick={() => setShowAdvancedSettings((value) => !value)}
-                      >
-                        <span>Advanced settings</span>
-                        <ChevronIcon expanded={showAdvancedSettings} />
-                      </button>
-                      {showAdvancedSettings ? (
-                        <div className={styles.advancedContent}>
-                          <div className={styles.inputGrid}>
-                            <label className={styles.sourceField}>
-                              <span className={styles.metaLabel}>Import strategy</span>
-                              <select
-                                className={styles.select}
-                                value={presetOverride ?? 'auto'}
-                                onChange={(event) =>
-                                  onPresetChange(
-                                    event.target.value === 'auto'
-                                      ? null
-                                      : (event.target.value as TextImportPreset),
-                                  )
-                                }
-                                disabled={isPreviewing || isApplying}
-                              >
-                                {IMPORT_PRESET_OPTIONS.map((option) => (
-                                  <option key={option.id ?? 'auto'} value={option.id ?? 'auto'}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                              <span className={styles.selectDescription}>
-                                {selectedPresetOption.description}
-                              </span>
-                            </label>
-                            <label className={styles.sourceField}>
-                              <span className={styles.metaLabel}>Content archetype</span>
-                              <select
-                                className={styles.select}
-                                value={archetypeOverride ?? 'auto'}
-                                onChange={(event) =>
-                                  onArchetypeChange(
-                                    event.target.value === 'auto'
-                                      ? null
-                                      : (event.target.value as TextImportArchetype),
-                                  )
-                                }
-                                disabled={isPreviewing || isApplying}
-                              >
-                                {ARCHETYPE_OPTIONS.map((option) => (
-                                  <option key={option.id ?? 'auto'} value={option.id ?? 'auto'}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                              <span className={styles.selectDescription}>
-                                {selectedArchetypeOption.description}
-                              </span>
-                            </label>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  </section>
-                ) : null}
+            {anchorMode === 'current_selection' ? (
+              <p className={styles.anchorWarning}>
+                The next import will be nested under the currently selected topic instead of the document root.
+              </p>
+            ) : null}
 
-                {showSourceEditor ? (
-                  <>
-                    <div className={styles.inputGrid}>
-                      <div className={styles.sourceField}>
-                        <span className={styles.metaLabel}>Source name</span>
-                        <Input
-                          value={draftSourceName}
-                          placeholder="Example: GTM_main.md"
-                          onChange={(event) => onDraftSourceNameChange(event.target.value)}
-                          disabled={isPreviewing || isApplying || jobType === 'batch'}
-                        />
-                      </div>
-                      <div className={styles.sourceField}>
-                        <span className={styles.metaLabel}>Source type</span>
-                        <div className={styles.sourceTypeValue}>{formatSourceType(sourceType)}</div>
-                      </div>
-                    </div>
-
-                    <TextArea
-                      className={styles.textArea}
-                      value={draftText}
-                      placeholder="Paste Markdown or plain text here and generate an import preview."
-                      onChange={(event) => onDraftTextChange(event.target.value)}
-                      disabled={isPreviewing || isApplying || jobType === 'batch'}
-                    />
-                  </>
-                ) : (
-                  <div className={styles.sourceFileBar}>
-                    <div className={styles.sourceFileRow}>
-                      <span className={styles.sourceFileCount}>{sourceSnapshotTitle}</span>
-                      <button
-                        type="button"
-                        className={styles.expandButton}
-                        onClick={() => setShowFileDetails(!showFileDetails)}
-                        aria-expanded={showFileDetails}
-                        title={showFileDetails ? 'Hide file details' : 'Show file details'}
-                      >
-                        <ChevronIcon expanded={showFileDetails} />
-                      </button>
-                    </div>
-                    {showFileDetails && (
-                      <div className={styles.fileListInline}>
-                        {sourceFiles.map((file) => {
-                          const planningSummary = effectivePlanningSummaries.find(
-                            (summary) => summary.sourceName === file.sourceName,
-                          )
-
-                          return (
-                            <div key={file.sourceName} className={styles.fileListItem}>
-                              <div className={styles.fileListCopy}>
-                                <span className={styles.fileName}>{file.sourceName}</span>
-                                {planningSummary ? (
-                                  <span className={styles.filePlanningMeta}>
-                                    {formatTextImportPresetLabel(planningSummary.resolvedPreset)}
-                                    {' · '}
-                                    {formatTextImportArchetypeLabel(planningSummary.resolvedArchetype)}
-                                    {' · '}
-                                    {formatRecommendedRoute(planningSummary.recommendedRoute)}
-                                    {' 路 '}
-                                    {planningSummary.isManual
-                                      ? 'Manual override'
-                                      : formatPlanningConfidence(planningSummary.confidence)}
-                                    {planningSummary.needsDeepPass ? ' 路 Needs deep pass' : ''}
-                                  </span>
-                                ) : null}
-                              </div>
-                              <span className={styles.fileLength}>{file.textLength} chars</span>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
+            {showSourceEditor ? (
+              <div className={styles.editorStack}>
+                <Input
+                  value={draftSourceName}
+                  placeholder="Source name"
+                  onChange={(event) => onDraftSourceNameChange(event.target.value)}
+                  disabled={isPreviewing || isApplying || jobType === 'batch'}
+                />
+                <TextArea
+                  className={styles.textArea}
+                  value={draftText}
+                  placeholder="Paste Markdown or plain text here and generate an import preview."
+                  onChange={(event) => onDraftTextChange(event.target.value)}
+                  disabled={isPreviewing || isApplying || jobType === 'batch'}
+                />
 
                 {showGenerateAction ? (
                   <div className={styles.inputActions}>
@@ -1090,193 +953,124 @@ export function TextImportDialog({
                     </Button>
                   </div>
                 ) : null}
-              </section>
-
-              {showPipelinePanel ? (
-                <section className={styles.progressPanel}>
-                  <div className={styles.progressPanelHeader}>
-                    <div>
-                      <h3 className={styles.sectionTitle}>Import progress</h3>
-                      <p className={styles.empty}>Follow the current pipeline status and review progress.</p>
-                    </div>
+              </div>
+            ) : (
+              <>
+                <div className={styles.sourceSummaryStrip}>
+                  <div className={styles.sourceSummaryCopy}>
+                    <strong className={styles.sourceSummaryTitle}>{sourceSummaryLabel}</strong>
+                    <span className={styles.sourceSummaryMeta}>{sourceSummaryMeta}</span>
                   </div>
+                  <button
+                    type="button"
+                    className={styles.inlineLinkButton}
+                    onClick={() => setShowFileDetails((value) => !value)}
+                    aria-expanded={showFileDetails}
+                    aria-label={showFileDetails ? 'Hide file details' : 'Show file details'}
+                  >
+                    {showFileDetails ? 'Hide files' : 'View files'}
+                  </button>
+                </div>
+                {showFileDetails ? (
+                  <div className={styles.fileListInline}>
+                    {sourceFiles.map((file) => {
+                      const planningSummary = effectivePlanningSummaries.find(
+                        (summary) => summary.sourceName === file.sourceName,
+                      )
 
-                  <div className={styles.statusPanel}>
-                    {modeHint ? (
-                      <div className={styles.statusHeader}>
-                        <span className={styles.statusBadge}>{describePipeline(jobMode)}</span>
-                        <p className={styles.statusHint}>{modeHint}</p>
-                      </div>
-                    ) : null}
-                    {statusText ? <p className={styles.status}>{statusText}</p> : null}
-                    {(isPreviewing || statusText) ? (
-                      <>
-                        <div
-                          className={`${styles.progressTrack} ${progressIndeterminate ? styles.progressTrackIndeterminate : ''}`}
-                          aria-hidden="true"
-                        >
-                          <div
-                            className={`${styles.progressFill} ${progressIndeterminate ? styles.progressFillIndeterminate : ''}`}
-                            style={progressIndeterminate ? undefined : { width: `${displayProgress}%` }}
-                          />
-                        </div>
-                        <div className={styles.statusRow}>
-                          <p className={styles.statusMeta}>{statusSummary}</p>
-                          {jobType === 'batch' ? (
-                            <p className={styles.statusMeta}>
-                              Files {completedFileCount}/{fileCount}
-                              {currentFileName ? ` | Current: ${currentFileName}` : ''}
-                            </p>
-                          ) : null}
-                        </div>
-                        {jobMode === 'local_markdown' ? (
-                          <div className={styles.statusDetailGrid}>
-                            <p className={styles.statusMeta}>Semantic stage: {describeSemanticStage(semanticMergeStage)}</p>
-                            {(semanticCandidateCount > 0 || semanticAdjudicatedCount > 0) ? (
-                              <p className={styles.statusMeta}>
-                                Candidates {semanticCandidateCount}/{semanticAdjudicatedCount}
-                                {semanticFallbackCount > 0 ? ` | Fallbacks ${semanticFallbackCount}` : ''}
-                              </p>
+                      return (
+                        <div key={file.sourceName} className={styles.fileListItem}>
+                          <div className={styles.fileListCopy}>
+                            <span className={styles.fileName}>{file.sourceName}</span>
+                            {planningSummary ? (
+                              <span className={styles.filePlanningMeta}>
+                                {formatDocumentTypeLabel(planningSummary.resolvedArchetype)}
+                                {' | '}
+                                {planningSummary.isManual
+                                  ? 'Manual override'
+                                  : formatPlanningConfidence(planningSummary.confidence)}
+                              </span>
                             ) : null}
                           </div>
-                        ) : null}
+                          <span className={styles.fileLength}>{file.textLength} chars</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : null}
+              </>
+            )}
 
-                      </>
-                    ) : null}
-                    {preview?.summary ? <p className={styles.summaryText}>{preview.summary}</p> : null}
-                    {onRepair ? (
-                      <div className={styles.inputActions}>
-                        <Button
-                          tone="secondary"
-                          onClick={onRepair}
-                          disabled={isPreviewing || isApplying || repairDisabled}
-                        >
-                          {repairLabel}
-                        </Button>
-                        {repairDescription ? <p className={styles.empty}>{repairDescription}</p> : null}
-                      </div>
-                    ) : null}
-                    {classification ? (
-                      <div className={styles.metaGrid}>
-                        <div className={styles.metaCard}>
-                          <span className={styles.metaLabel}>Detected archetype</span>
-                          <strong>{formatTextImportArchetypeLabel(classification.archetype)}</strong>
-                        </div>
-                        <div className={styles.metaCard}>
-                          <span className={styles.metaLabel}>Confidence</span>
-                          <strong>
-                            {classificationConfidence ?? 'low'} ({Math.round(classification.confidence * 100)}%)
-                          </strong>
-                        </div>
-                        {classification.secondaryArchetype ? (
-                          <div className={styles.metaCard}>
-                            <span className={styles.metaLabel}>Secondary signal</span>
-                            <strong>{formatTextImportArchetypeLabel(classification.secondaryArchetype)}</strong>
-                          </div>
-                        ) : null}
-                        <div className={styles.metaCard}>
-                          <span className={styles.metaLabel}>Why this template</span>
-                          <span>{classification.rationale}</span>
-                        </div>
-                      </div>
-                    ) : null}
-                    {diagnostics ? (
-                      <details className={styles.diagnosticsPanel}>
-                        <summary className={styles.diagnosticsSummary}>Debug diagnostics</summary>
-                        <div className={styles.diagnosticsBody}>
-                          <div className={styles.diagnosticGroup}>
-                            <p className={styles.diagnosticGroupTitle}>Timings</p>
-                            <ul className={styles.diagnosticList}>
-                              <li className={styles.diagnosticItem}>
-                                <p className={styles.diagnosticMessage}>
-                                  Preprocess {diagnostics.timings.preprocessMs} ms | Planning {diagnostics.timings.planningMs} ms | Parse {diagnostics.timings.parseTreeMs} ms
-                                </p>
-                              </li>
-                              <li className={styles.diagnosticItem}>
-                                <p className={styles.diagnosticMessage}>
-                                  Batch compose {diagnostics.timings.batchComposeMs} ms | Candidate {diagnostics.timings.semanticCandidateMs} ms | Adjudication {diagnostics.timings.semanticAdjudicationMs} ms
-                                </p>
-                              </li>
-                              <li className={styles.diagnosticItem}>
-                                <p className={styles.diagnosticMessage}>
-                                  Preview edit {diagnostics.timings.previewEditMs} ms | Total {diagnostics.timings.totalMs} ms
-                                </p>
-                              </li>
-                            </ul>
-                          </div>
-                          <div className={styles.diagnosticGroup}>
-                            <p className={styles.diagnosticGroupTitle}>Density</p>
-                            <ul className={styles.diagnosticList}>
-                              <li className={styles.diagnosticItem}>
-                                <p className={styles.diagnosticMessage}>
-                                  Preview nodes {diagnostics.densityStats.previewNodeCount} | Semantic nodes {diagnostics.densityStats.semanticNodeCount} | Edges {diagnostics.densityStats.semanticEdgeCount}
-                                </p>
-                              </li>
-                              <li className={styles.diagnosticItem}>
-                                <p className={styles.diagnosticMessage}>
-                                  Anchors {diagnostics.densityStats.sourceAnchorCount} | Folded notes {diagnostics.densityStats.foldedNoteCount} | Evidence nodes {diagnostics.densityStats.evidenceNodeCount} | Max depth {diagnostics.densityStats.maxDepth}
-                                </p>
-                              </li>
-                            </ul>
-                          </div>
-                          <div
-                            className={styles.diagnosticGroup}
-                            data-category={
-                              diagnostics.qualitySignals.warningCount > 0 ||
-                              diagnostics.qualitySignals.needsDeepPassCount > 0
-                                ? 'actionable'
-                                : undefined
-                            }
-                          >
-                            <p className={styles.diagnosticGroupTitle}>Quality and route</p>
-                            <ul className={styles.diagnosticList}>
-                              <li className={styles.diagnosticItem}>
-                                <p className={styles.diagnosticMessage}>
-                                  Warnings {diagnostics.qualitySignals.warningCount} | Generic titles {diagnostics.qualitySignals.genericTitleCount} | Low-confidence nodes {diagnostics.qualitySignals.lowConfidenceNodeCount}
-                                </p>
-                              </li>
-                              <li className={styles.diagnosticItem}>
-                                <p className={styles.diagnosticMessage}>
-                                  Folded evidence {diagnostics.qualitySignals.foldedEvidenceCount} | Duplicate sibling groups {diagnostics.qualitySignals.duplicateSiblingGroupCount} | Needs deep pass {diagnostics.qualitySignals.needsDeepPassCount}
-                                </p>
-                              </li>
-                              <li className={styles.diagnosticItem}>
-                                <p className={styles.diagnosticMessage}>
-                                  Artifact reuse: hints {diagnostics.artifactReuse.reusedSemanticHints ? 'yes' : 'no'}, units {diagnostics.artifactReuse.reusedSemanticUnits ? 'yes' : 'no'}, plan {diagnostics.artifactReuse.reusedPlannedStructure ? 'yes' : 'no'}
-                                </p>
-                              </li>
-                            </ul>
-                          </div>
-                          <div className={styles.diagnosticGroup}>
-                            <p className={styles.diagnosticGroupTitle}>Apply and merge</p>
-                            <ul className={styles.diagnosticList}>
-                              <li className={styles.diagnosticItem}>
-                                <p className={styles.diagnosticMessage}>
-                                  Creates {diagnostics.applyEstimate.createCount} | Updates {diagnostics.applyEstimate.updateCount} | Existing merges {diagnostics.applyEstimate.mergeCount} | Cross-file merges {diagnostics.applyEstimate.crossFileMergeCount}
-                                </p>
-                              </li>
-                              <li className={styles.diagnosticItem}>
-                                <p className={styles.diagnosticMessage}>
-                                  Adjudication candidates {diagnostics.semanticAdjudication.candidateCount} | Representatives {diagnostics.semanticAdjudication.representativeCount} | Requests {diagnostics.semanticAdjudication.requestCount} | Fallbacks {diagnostics.semanticAdjudication.fallbackCount}
-                                </p>
-                              </li>
-                              {diagnostics.lastEditAction ? (
-                                <li className={styles.diagnosticItem}>
-                                  <p className={styles.diagnosticMessage}>
-                                    Last edit action: {diagnostics.lastEditAction}
-                                    {diagnostics.dirtySubtreeIds?.length
-                                      ? ` | Dirty subtrees: ${diagnostics.dirtySubtreeIds.join(', ')}`
-                                      : ''}
-                                  </p>
-                                </li>
-                              ) : null}
-                            </ul>
-                          </div>
-                        </div>
-                      </details>
+            {showAdvancedSettings ? (
+              <div className={styles.advancedInline}>
+                <p className={styles.prepareMeta}>{selectedArchetypeOption.description}</p>
+                <label className={styles.checkboxField}>
+                  <span className={styles.checkboxRow}>
+                    <input
+                      type="checkbox"
+                      checked={showInternals}
+                      onChange={handleInternalsChange}
+                    />
+                    <span>Show import internals</span>
+                  </span>
+                </label>
+              </div>
+            ) : null}
+          </section>
+
+          {showStatusSection ? (
+            <section className={styles.statusStrip} aria-label="Skill status">
+              <div className={styles.statusMetaRow}>
+                <div className={styles.treeBadgeRow}>
+                  <span className={styles.inlineBadge}>{activePhaseLabel}</span>
+                  <span className={styles.statusInlineMeta}>{statusTypeSummary}</span>
+                </div>
+                {showLowConfidenceNote && archetypeOverride === null ? (
+                  <button
+                    type="button"
+                    className={styles.inlineLinkButton}
+                    onClick={() => setShowAdvancedSettings(true)}
+                    disabled={isPreviewing || isApplying}
+                  >
+                    Pin type
+                  </button>
+                ) : null}
+              </div>
+
+              <p className={styles.statusLead}>{primaryStatusMessage}</p>
+
+              {showStatusProgress ? (
+                <>
+                  <div
+                    className={`${styles.progressTrack} ${progressIndeterminate ? styles.progressTrackIndeterminate : ''}`}
+                    aria-hidden="true"
+                  >
+                    <div
+                      className={`${styles.progressFill} ${progressIndeterminate ? styles.progressFillIndeterminate : ''}`}
+                      style={progressIndeterminate ? undefined : { width: `${displayProgress}%` }}
+                    />
+                  </div>
+                  <div className={styles.statusRow}>
+                    <p className={styles.statusMeta}>{statusSummary}</p>
+                    {jobType === 'batch' ? (
+                      <p className={styles.statusMeta}>
+                        Files {completedFileCount}/{fileCount}
+                        {currentFileName ? ` | Current: ${currentFileName}` : ''}
+                      </p>
                     ) : null}
                   </div>
-                </section>
+                  {(semanticMergeStage !== 'idle' ||
+                    semanticCandidateCount > 0 ||
+                    semanticAdjudicatedCount > 0 ||
+                    semanticFallbackCount > 0) ? (
+                    <p className={styles.statusMeta}>
+                      Semantic stage: {describeSemanticStage(semanticMergeStage)}
+                      {(semanticCandidateCount > 0 || semanticAdjudicatedCount > 0)
+                        ? ` | Candidates ${semanticCandidateCount}/${semanticAdjudicatedCount}${semanticFallbackCount > 0 ? ` | Fallbacks ${semanticFallbackCount}` : ''}`
+                        : ''}
+                    </p>
+                  ) : null}
+                </>
               ) : null}
 
               {sourceError ? (
@@ -1286,241 +1080,304 @@ export function TextImportDialog({
                   {sourceError.detail ? <p className={styles.errorMeta}>Raw error: {sourceError.detail}</p> : null}
                 </div>
               ) : null}
-            </>
-          ) : null}
 
-          {currentStep === 'structured' ? (
-            <section className={`${styles.section} ${styles.pageSection}`}>
-              <h3 className={styles.sectionTitle}>Structure draft</h3>
-              {classification ? (
-                <div className={styles.metaGrid}>
-                  <div className={styles.metaCard}>
-                    <span className={styles.metaLabel}>Template</span>
-                    <strong>{formatTextImportArchetypeLabel(classification.archetype)}</strong>
-                  </div>
-                  <div className={styles.metaCard}>
-                    <span className={styles.metaLabel}>Confidence</span>
-                    <strong>
-                      {classificationConfidence ?? 'low'} ({Math.round(classification.confidence * 100)}%)
-                    </strong>
-                  </div>
-                  {templateSummary ? (
-                    <div className={styles.metaCard}>
-                      <span className={styles.metaLabel}>Visible slots</span>
-                      <span>
-                        {templateSummary.visibleSlots.map((slot) => formatTextImportTemplateSlotLabel(slot)).join(', ') || 'None'}
-                      </span>
+              {canShowDetails ? (
+                <details
+                  className={styles.detailsPanel}
+                  open={showDetails}
+                  onToggle={(event) => {
+                    const nextOpen = event.currentTarget.open
+                    if (nextOpen !== showDetails) {
+                      setShowDetails(nextOpen)
+                    }
+                  }}
+                >
+                  <summary className={styles.detailsSummary}>Why and details</summary>
+                  {showDetails ? (
+                    <div className={styles.detailsBody}>
+                      <p className={styles.detailsText}>
+                        <strong>Type rationale.</strong> {detectionRationale}
+                      </p>
+                      {preview?.summary ? (
+                        <p className={styles.detailsText}>
+                          <strong>Preview summary.</strong> {preview.summary}
+                        </p>
+                      ) : null}
+                      <p className={styles.detailsText}>
+                        <strong>Pipeline.</strong> {modeHint ?? describePipeline(jobMode)}
+                      </p>
+
+                      {showInternals && diagnostics ? (
+                        <>
+                          <p className={styles.detailsText}>
+                            <strong>Timings.</strong> Preprocess {diagnostics.timings.preprocessMs} ms, planning {diagnostics.timings.planningMs} ms, parse {diagnostics.timings.parseTreeMs} ms, total {diagnostics.timings.totalMs} ms.
+                          </p>
+                          <p className={styles.detailsText}>
+                            <strong>Density.</strong> {diagnostics.densityStats.previewNodeCount} preview nodes, {diagnostics.densityStats.operationCount} operations, max depth {diagnostics.densityStats.maxDepth}.
+                          </p>
+                          <p className={styles.detailsText}>
+                            <strong>Quality.</strong> {diagnostics.qualitySignals.warningCount} warnings, {diagnostics.qualitySignals.lowConfidenceNodeCount} low-confidence nodes.
+                          </p>
+                        </>
+                      ) : null}
+
+                      {showInternals && onRepair ? (
+                        <div>
+                          {repairDescription ? <p className={styles.detailsText}>{repairDescription}</p> : null}
+                          <Button
+                            tone="ghost"
+                            size="sm"
+                            onClick={onRepair}
+                            disabled={repairDisabled || isPreviewing || isApplying}
+                          >
+                            {repairLabel}
+                          </Button>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
-                  {templateSummary ? (
-                    <div className={styles.metaCard}>
-                      <span className={styles.metaLabel}>Folded slots</span>
-                      <span>
-                        {templateSummary.foldedSlots.map((slot) => formatTextImportTemplateSlotLabel(slot)).join(', ') || 'None'}
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
+                </details>
               ) : null}
-              {showStructuredGeneratingState ? (
-                <EmptyState
-                  title="Generating structure draft"
-                  description="The structure draft is still being generated. Keep this step open or switch back later to review the result."
-                />
-              ) : showStructuredEmptyState ? (
-                <EmptyState
-                  title="No structure draft yet"
-                  description="Generate a draft from Step 1 to review the organized hierarchy here."
-                />
-              ) : isPreviewing || isApplying ? (
-                <PreviewTree nodes={draftTree} />
-              ) : (
-                <EditablePreviewTree
-                  nodes={draftTree}
-                  disabled={isPreviewing || isApplying}
-                  onRenameNode={onRenamePreviewNode}
-                  onPromoteNode={onPromotePreviewNode}
-                  onDemoteNode={onDemotePreviewNode}
-                  onDeleteNode={onDeletePreviewNode}
-                />
-              )}
             </section>
           ) : null}
 
-          {currentStep === 'merge' ? (
-            <>
-              {isApplying ? (
-                <div className={styles.statusPanel}>
-                  <div className={styles.statusHeader}>
-                    <span className={styles.statusBadge}>Applying changes</span>
-                    <p className={styles.statusHint}>Applying the approved import operations to the current canvas.</p>
-                  </div>
-                  {statusText ? <p className={styles.status}>{statusText}</p> : null}
-                  <div className={styles.progressTrack} aria-hidden="true">
-                    <div className={styles.progressFill} style={{ width: `${displayProgress}%` }} />
-                  </div>
-                  <div className={styles.statusDetailGrid}>
-                    <p className={styles.statusMeta}>
-                      Applying {appliedCount}/{totalOperations || 0} operations
-                    </p>
-                    {currentApplyLabel ? <p className={styles.statusMeta}>{currentApplyLabel}</p> : null}
-                  </div>
+          {showReviewSection ? (
+            <section className={`${styles.section} ${styles.reviewShell}`} aria-label="Review">
+              <div className={styles.reviewTopBar}>
+                <div className={styles.headerCopy}>
+                  <h3 className={styles.sectionTitle}>{reviewTab === 'draft' ? 'Draft' : 'Merge review'}</h3>
+                  <p className={styles.sectionIntro}>
+                    {reviewTab === 'draft'
+                      ? 'Tighten the generated logic map before you unlock merge decisions.'
+                      : 'Only conflicts, overlaps, and warnings stay here.'}
+                  </p>
                 </div>
-              ) : null}
 
-              {applyError ? (
-                <div className={styles.errorPanel}>
-                  <p className={styles.error}>{applyError.summary}</p>
-                  {applyError.meta ? <p className={styles.errorMeta}>{applyError.meta}</p> : null}
-                  {applyError.detail ? <p className={styles.errorMeta}>Raw error: {applyError.detail}</p> : null}
+                <div className={styles.reviewTabs} role="tablist" aria-label="Review tabs">
+                  {REVIEW_TABS.map((tab) => {
+                    const disabled = tab.id === 'merge' && !canOpenMergeTab
+
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        role="tab"
+                        id={`text-import-tab-${tab.id}`}
+                        className={styles.reviewTab}
+                        data-active={reviewTab === tab.id}
+                        aria-selected={reviewTab === tab.id}
+                        aria-controls={`text-import-panel-${tab.id}`}
+                        disabled={disabled}
+                        onClick={() => {
+                          if (!disabled) {
+                            setReviewTab(tab.id)
+                          }
+                        }}
+                      >
+                        {tab.label}
+                      </button>
+                    )
+                  })}
                 </div>
-              ) : null}
+              </div>
 
-              <section className={`${styles.section} ${styles.pageSection}`}>
-                <h3 className={styles.sectionTitle}>Merge review</h3>
-                {showMergeGeneratingState ? (
-                  <EmptyState
-                    title="Generating merge review"
-                    description="Merge suggestions and conflicts will appear here once the draft is confirmed."
-                  />
-                ) : showMergeIdleState ? (
-                  <EmptyState
-                    title="No merge review content yet"
-                    description="Generate a draft from Step 1 to review merge suggestions and conflicts here."
-                  />
-                ) : showMergeBlockedState ? (
-                  <EmptyState
-                    title="Confirm the draft first"
-                    description="Review and confirm the structure draft in Step 2 before opening merge review."
-                  />
-                ) : showMergeNoReviewNeededState ? (
-                  <EmptyState
-                    title="No merge or conflict items to review"
-                    description="This preview is ready, and there are no merge suggestions, conflicts, or warnings that need attention."
-                  />
-                ) : null}
+              {reviewTab === 'draft' ? (
+                <div
+                  role="tabpanel"
+                  id="text-import-panel-draft"
+                  aria-labelledby="text-import-tab-draft"
+                  className={styles.reviewPanel}
+                >
+                  <p className={styles.reviewSummaryText}>
+                    {preview?.summary ?? 'Review the generated logic map before you unlock merge decisions.'}
+                  </p>
 
-                {preview?.mergeSuggestions?.length ? (
-                  <div className={styles.suggestionList}>
-                    {preview.mergeSuggestions.map((suggestion) => (
-                      <div key={suggestion.id} className={styles.suggestionItem}>
-                        <div className={styles.conflictHeader}>
-                          <strong>{suggestion.matchedTopicTitle}</strong>
-                          <span className={styles.conflictKind}>{formatMergeConfidence(suggestion.confidence)}</span>
+                  {showStructuredGeneratingState ? (
+                    <EmptyState
+                      title="Building logic map"
+                      description="The skill is still turning the source into an ordered map. The draft will appear here as soon as the preview is ready."
+                    />
+                  ) : showStructuredEmptyState ? (
+                    <EmptyState
+                      title="No draft yet"
+                      description="Choose files or paste text, then run the import to review a generated logic map here."
+                    />
+                  ) : (
+                    <EditablePreviewTree
+                      nodes={draftTree}
+                      disabled={isApplying}
+                      onRenameNode={onRenamePreviewNode}
+                      onPromoteNode={onPromotePreviewNode}
+                      onDemoteNode={onDemotePreviewNode}
+                      onDeleteNode={onDeletePreviewNode}
+                    />
+                  )}
+                </div>
+              ) : (
+                <div
+                  role="tabpanel"
+                  id="text-import-panel-merge"
+                  aria-labelledby="text-import-tab-merge"
+                  className={styles.reviewPanel}
+                >
+                  {isApplying ? (
+                    <div className={styles.progressPanel}>
+                      <div className={styles.progressPanelHeader}>
+                        <div className={styles.headerCopy}>
+                          <h4 className={styles.sectionTitle}>Applying changes</h4>
+                          <p className={styles.sectionIntro}>{statusText || 'Applying the approved import changes.'}</p>
                         </div>
-                        <p className={styles.conflictDescription}>
-                          {suggestion.kind ? `${suggestion.kind}: ` : ''}
-                          {suggestion.reason}
-                        </p>
+                        <span className={styles.inlineBadge}>
+                          {appliedCount}/{Math.max(totalOperations, appliedCount)}
+                        </span>
                       </div>
-                    ))}
-                  </div>
-                ) : null}
+                      <div className={styles.progressTrack} aria-hidden="true">
+                        <div className={styles.progressFill} style={{ width: `${applyProgress}%` }} />
+                      </div>
+                      <div className={styles.statusRow}>
+                        <p className={styles.statusMeta}>Applying {appliedCount}/{totalOperations} operations</p>
+                        {currentApplyLabel ? <p className={styles.statusMeta}>{currentApplyLabel}</p> : null}
+                      </div>
+                    </div>
+                  ) : null}
 
-                {crossFileMergeSuggestions.length ? (
-                  <div className={styles.warningList}>
-                    {crossFileMergeSuggestions.map((suggestion) => (
-                      <p key={suggestion.id} className={styles.warningItem}>
-                        {suggestion.sourceName} to {suggestion.matchedSourceName}: {suggestion.reason}
-                      </p>
-                    ))}
-                  </div>
-                ) : null}
+                  {applyError ? (
+                    <div className={styles.errorPanel}>
+                      <p className={styles.error}>{applyError.summary}</p>
+                      {applyError.meta ? <p className={styles.errorMeta}>{applyError.meta}</p> : null}
+                      {applyError.detail ? <p className={styles.errorMeta}>Raw error: {applyError.detail}</p> : null}
+                    </div>
+                  ) : null}
 
-                {preview?.conflicts.length ? (
-                  <div className={styles.conflictList}>
-                    {preview.conflicts.map((conflict) => {
-                      const checked = approvedConflictIds.includes(conflict.id)
-                      return (
-                        <label key={conflict.id} className={styles.conflictItem}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => onToggleConflict(conflict.id)}
-                          />
-                          <div>
-                            <div className={styles.conflictHeader}>
-                              <strong>{conflict.title}</strong>
-                              <span className={styles.conflictKind}>{conflict.kind}</span>
-                            </div>
-                            <p className={styles.conflictDescription}>{conflict.description}</p>
+                  {showMergeGeneratingState ? (
+                    <EmptyState
+                      title="Preparing merge review"
+                      description="The merge checks will appear here after the logic map is ready and the draft is confirmed."
+                    />
+                  ) : showMergeBlockedState ? (
+                    <EmptyState
+                      title="Confirm the draft first"
+                      description="Merge review stays locked until you confirm the logic map."
+                    />
+                  ) : showMergeNoReviewNeededState ? (
+                    <EmptyState
+                      title="No merge or conflict items to review"
+                      description="This import can be applied without extra merge decisions."
+                    />
+                  ) : (
+                    <>
+                      {preview?.conflicts.length ? (
+                        <div className={styles.reviewGroup}>
+                          <h4 className={styles.reviewGroupTitle}>Conflicts</h4>
+                          <div className={styles.conflictList}>
+                            {preview.conflicts.map((conflict) => {
+                              const checked = approvedConflictIds.includes(conflict.id)
+
+                              return (
+                                <label key={conflict.id} className={styles.conflictItem}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => onToggleConflict(conflict.id)}
+                                    disabled={isApplying}
+                                  />
+                                  <div>
+                                    <div className={styles.conflictHeader}>
+                                      <strong>{conflict.title}</strong>
+                                      <span className={styles.conflictKind}>{conflict.kind.replace(/_/g, ' ')}</span>
+                                    </div>
+                                    <p className={styles.conflictDescription}>{conflict.description}</p>
+                                  </div>
+                                </label>
+                              )
+                            })}
                           </div>
-                        </label>
-                      )
-                    })}
-                  </div>
-                ) : null}
+                        </div>
+                      ) : null}
 
-                {preview?.warnings?.length ? (
-                  <div className={styles.warningList}>
-                    {preview.warnings.map((warning) => (
-                      <p key={warning} className={styles.warningItem}>
-                        {warning}
-                      </p>
-                    ))}
-                  </div>
-                ) : null}
-              </section>
-            </>
+                      {preview?.mergeSuggestions?.length ? (
+                        <div className={styles.reviewGroup}>
+                          <h4 className={styles.reviewGroupTitle}>Merge suggestions</h4>
+                          <div className={styles.suggestionList}>
+                            {preview.mergeSuggestions.map((suggestion) => (
+                              <div key={suggestion.id} className={styles.suggestionItem}>
+                                <div className={styles.conflictHeader}>
+                                  <strong>{suggestion.matchedTopicTitle}</strong>
+                                  <span className={styles.conflictKind}>{formatMergeConfidence(suggestion.confidence)}</span>
+                                </div>
+                                <p className={styles.conflictDescription}>{suggestion.reason}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {crossFileMergeSuggestions.length ? (
+                        <div className={styles.reviewGroup}>
+                          <h4 className={styles.reviewGroupTitle}>Cross-file overlaps</h4>
+                          <div className={styles.suggestionList}>
+                            {crossFileMergeSuggestions.map((suggestion) => (
+                              <div key={suggestion.id} className={styles.suggestionItem}>
+                                <div className={styles.conflictHeader}>
+                                  <strong>{suggestion.matchedTitle}</strong>
+                                  <span className={styles.conflictKind}>{formatMergeConfidence(suggestion.confidence)}</span>
+                                </div>
+                                <p className={styles.conflictDescription}>
+                                  {suggestion.sourceName} overlaps with {suggestion.matchedSourceName}. {suggestion.reason}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {preview?.warnings?.length ? (
+                        <div className={styles.reviewGroup}>
+                          <h4 className={styles.reviewGroupTitle}>Warnings</h4>
+                          <ul className={styles.warningList}>
+                            {preview.warnings.map((warning, index) => (
+                              <li key={`${warning}-${index}`} className={styles.warningItem}>
+                                {warning}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className={styles.reviewFooter}>
+                <div className={styles.treeBadgeRow}>
+                  {reviewTab === 'draft' ? (
+                    <span className={styles.reviewSummaryBadge}>{draftNodeCount} nodes</span>
+                  ) : (
+                    <>
+                      <span className={styles.reviewSummaryBadge}>{pendingDecisionCount} decisions</span>
+                      <span className={styles.reviewSummaryBadge}>{pendingWarningCount} warnings</span>
+                    </>
+                  )}
+                </div>
+
+                {reviewTab === 'draft' ? (
+                  <Button tone="primary" onClick={handleConfirmDraft} disabled={!canConfirmDraft}>
+                    {draftConfirmed ? 'Draft confirmed' : 'Confirm draft'}
+                  </Button>
+                ) : (
+                  <Button
+                    tone="primary"
+                    onClick={onApply}
+                    disabled={!mergeReviewReady || isApplying || (preview?.operations.length ?? 0) === 0}
+                  >
+                    {isApplying ? 'Applying changes...' : 'Apply to canvas'}
+                  </Button>
+                )}
+              </div>
+            </section>
           ) : null}
         </div>
-
-        <div className={styles.footer}>
-          <div className={styles.footerGroup}>
-            {showCloseAction ? (
-              <Button tone="primary" onClick={onClose} disabled={isApplying}>
-                Close
-              </Button>
-            ) : null}
-            {showBackAction ? (
-              <Button tone="primary" iconStart="back" onClick={handleBack} disabled={isApplying}>
-                Back
-              </Button>
-            ) : null}
-          </div>
-          <div className={styles.footerGroup}>
-            {showNextAction ? (
-              <Button
-                tone="primary"
-                iconEnd="chevronRight"
-                onClick={handleNext}
-                disabled={
-                  isApplying ||
-                  (currentStep === 'structured' && !hasStructuredPreview) ||
-                  (currentStep === 'source' && isPreviewing)
-                }
-              >
-                {nextActionLabel}
-              </Button>
-            ) : null}
-            {currentStep === 'merge' ? (
-              <Button
-                tone="primary"
-                iconStart="document"
-                onClick={onApply}
-                disabled={!preview || !draftConfirmed || isPreviewing || isApplying}
-              >
-                {isApplying ? 'Applying...' : 'Apply to canvas'}
-              </Button>
-            ) : null}
-          </div>
-        </div>
       </SurfacePanel>
-    </div>
-  )
-}
-
-function EmptyState({
-  title,
-  description,
-}: {
-  title: string
-  description: string
-}) {
-  return (
-    <div className={styles.emptyState}>
-      <strong className={styles.emptyStateTitle}>{title}</strong>
-      <p className={styles.emptyStateDescription}>{description}</p>
     </div>
   )
 }

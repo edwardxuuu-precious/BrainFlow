@@ -1,0 +1,132 @@
+{
+  "spec_version": "document-to-logic-map/v1",
+  "document_type": "process",
+  "document_type_confidence": 0.89,
+  "document_type_rationale": "The source follows an ordered workflow with preparation, execution, and review steps.",
+  "summary": "Converted the workflow into an ordered process map and extracted only deliverable-backed tasks.",
+  "nodes": [
+    {
+      "id": "import_root",
+      "parent_id": null,
+      "order": 0,
+      "type": "section",
+      "title": "Interview workflow",
+      "note": null,
+      "semantic_role": "section",
+      "confidence": "high",
+      "source_spans": []
+    },
+    {
+      "id": "section_prepare",
+      "parent_id": "import_root",
+      "order": 0,
+      "type": "section",
+      "title": "Prepare targets",
+      "note": null,
+      "semantic_role": "section",
+      "confidence": "high",
+      "source_spans": [{ "line_start": 3, "line_end": 3 }]
+    },
+    {
+      "id": "task_prepare",
+      "parent_id": "section_prepare",
+      "order": 0,
+      "type": "task",
+      "title": "Export churned SMB list",
+      "note": "Collect a list of 15 churned SMB accounts and export it to a review sheet.",
+      "semantic_role": "task",
+      "confidence": "high",
+      "source_spans": [{ "line_start": 4, "line_end": 4 }],
+      "task": {
+        "status": "todo",
+        "output": "review sheet"
+      }
+    },
+    {
+      "id": "section_run",
+      "parent_id": "import_root",
+      "order": 1,
+      "type": "section",
+      "title": "Run interviews",
+      "note": null,
+      "semantic_role": "section",
+      "confidence": "high",
+      "source_spans": [{ "line_start": 6, "line_end": 6 }]
+    },
+    {
+      "id": "claim_run_1",
+      "parent_id": "section_run",
+      "order": 0,
+      "type": "claim",
+      "title": "Contact each target",
+      "note": "Contact each target account.",
+      "semantic_role": "claim",
+      "confidence": "medium",
+      "source_spans": [{ "line_start": 7, "line_end": 7 }]
+    },
+    {
+      "id": "claim_run_2",
+      "parent_id": "section_run",
+      "order": 1,
+      "type": "claim",
+      "title": "Ask why renewal was blocked",
+      "note": "Ask why renewal was blocked.",
+      "semantic_role": "claim",
+      "confidence": "medium",
+      "source_spans": [{ "line_start": 8, "line_end": 8 }]
+    },
+    {
+      "id": "task_run_1",
+      "parent_id": "section_run",
+      "order": 2,
+      "type": "task",
+      "title": "Record objections in log",
+      "note": "Record repeated objections in a structured interview log.",
+      "semantic_role": "task",
+      "confidence": "high",
+      "source_spans": [{ "line_start": 9, "line_end": 9 }],
+      "task": {
+        "status": "todo",
+        "output": "structured interview log"
+      }
+    },
+    {
+      "id": "section_review",
+      "parent_id": "import_root",
+      "order": 2,
+      "type": "section",
+      "title": "Review",
+      "note": null,
+      "semantic_role": "section",
+      "confidence": "high",
+      "source_spans": [{ "line_start": 11, "line_end": 11 }]
+    },
+    {
+      "id": "claim_review_1",
+      "parent_id": "section_review",
+      "order": 0,
+      "type": "claim",
+      "title": "Compare repeated objections",
+      "note": "Compare repeated objections across interviews.",
+      "semantic_role": "claim",
+      "confidence": "medium",
+      "source_spans": [{ "line_start": 12, "line_end": 12 }]
+    },
+    {
+      "id": "task_review_1",
+      "parent_id": "section_review",
+      "order": 1,
+      "type": "task",
+      "title": "Produce blocker memo",
+      "note": "Produce a summary memo with the top 3 renewal blockers.",
+      "semantic_role": "task",
+      "confidence": "high",
+      "source_spans": [{ "line_start": 13, "line_end": 13 }],
+      "task": {
+        "status": "todo",
+        "output": "summary memo"
+      }
+    }
+  ],
+  "warnings": []
+}

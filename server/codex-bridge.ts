@@ -45,7 +45,10 @@ import {
   compileTextImportNodePlans,
   deriveTextImportNodePlansFromPreviewNodes,
 } from '../shared/text-import-semantics.js'
-import { compileSemanticLayerViews } from '../shared/text-import-layering.js'
+import {
+  compileSemanticLayerViews,
+  normalizeDocumentStructureType,
+} from '../shared/text-import-layering.js'
 import {
   createCodexRunner,
   type CodexExecutionObservation,
@@ -256,6 +259,49 @@ interface RawImportPayload {
   warnings?: string[] | null
 }
 
+type DocumentToLogicMapNodeType =
+  | 'section'
+  | 'claim'
+  | 'evidence'
+  | 'task'
+  | 'decision'
+  | 'risk'
+  | 'metric'
+  | 'question'
+
+interface RawDocumentToLogicMapSpan {
+  line_start?: number | null
+  line_end?: number | null
+}
+
+interface RawDocumentToLogicMapTask {
+  status?: string | null
+  output?: string | null
+}
+
+interface RawDocumentToLogicMapNode {
+  id?: string | null
+  parent_id?: string | null
+  order?: number | null
+  type?: string | null
+  title?: string | null
+  note?: string | null
+  semantic_role?: string | null
+  confidence?: number | string | null
+  source_spans?: RawDocumentToLogicMapSpan[] | null
+  task?: RawDocumentToLogicMapTask | null
+}
+
+interface RawDocumentToLogicMapPayload {
+  spec_version?: string | null
+  document_type?: string | null
+  document_type_confidence?: number | null
+  document_type_rationale?: string | null
+  summary?: string | null
+  nodes?: RawDocumentToLogicMapNode[] | null
+  warnings?: string[] | null
+}
+
 interface RawSemanticDecision {
   candidateId?: string | null
   kind?: string | null
@@ -269,6 +315,8 @@ interface RawSemanticAdjudicationPayload {
   decisions?: RawSemanticDecision[] | null
   warnings?: string[] | null
 }
+
+type RawTextImportPayload = RawImportPayload | RawDocumentToLogicMapPayload
 
 export interface CodexChatStreamResult {
   assistantMessage: string
@@ -645,6 +693,106 @@ const SEMANTIC_ADJUDICATION_RESPONSE_SCHEMA = {
           mergedTitle: { type: ['string', 'null'] },
           mergedSummary: { type: ['string', 'null'] },
           evidence: { type: ['string', 'null'] },
+        },
+      },
+    },
+    warnings: {
+      type: ['array', 'null'],
+      items: { type: 'string' },
+    },
+  },
+} as const
+
+const DOCUMENT_TO_LOGIC_MAP_NODE_TYPES = [
+  'section',
+  'claim',
+  'evidence',
+  'task',
+  'decision',
+  'risk',
+  'metric',
+  'question',
+] as const
+
+void IMPORT_RESPONSE_SCHEMA
+
+const DOCUMENT_TO_LOGIC_MAP_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'spec_version',
+    'document_type',
+    'document_type_confidence',
+    'document_type_rationale',
+    'summary',
+    'nodes',
+    'warnings',
+  ],
+  properties: {
+    spec_version: { type: ['string', 'null'] },
+    document_type: {
+      type: ['string', 'null'],
+      enum: ['analysis', 'process', 'plan', 'notes', null],
+    },
+    document_type_confidence: { type: ['number', 'null'] },
+    document_type_rationale: { type: ['string', 'null'] },
+    summary: { type: ['string', 'null'] },
+    nodes: {
+      type: ['array', 'null'],
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'id',
+          'parent_id',
+          'order',
+          'type',
+          'title',
+          'note',
+          'semantic_role',
+          'confidence',
+          'source_spans',
+          'task',
+        ],
+        properties: {
+          id: { type: ['string', 'null'] },
+          parent_id: { type: ['string', 'null'] },
+          order: { type: ['integer', 'null'] },
+          type: {
+            type: ['string', 'null'],
+            enum: [...DOCUMENT_TO_LOGIC_MAP_NODE_TYPES, null],
+          },
+          title: { type: ['string', 'null'] },
+          note: { type: ['string', 'null'] },
+          semantic_role: {
+            type: ['string', 'null'],
+            enum: [...DOCUMENT_TO_LOGIC_MAP_NODE_TYPES, null],
+          },
+          confidence: { type: ['number', 'string', 'null'] },
+          source_spans: {
+            type: ['array', 'null'],
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['line_start', 'line_end'],
+              properties: {
+                line_start: { type: ['integer', 'null'] },
+                line_end: { type: ['integer', 'null'] },
+              },
+            },
+          },
+          task: {
+            type: ['object', 'null'],
+            additionalProperties: false,
+            required: ['status', 'output'],
+            properties: {
+              status: {
+                type: ['string', 'null'],
+                enum: ['todo', 'in_progress', 'blocked', 'done', null],
+              },
+              output: { type: ['string', 'null'] },
+            },
+          },
         },
       },
     },
@@ -1473,7 +1621,7 @@ function normalizeImportPreviewItem(value: RawImportPreviewItem): TextImportPrev
     reason: normalizeText(value.reason) ?? null,
     semanticRole:
       semanticRole &&
-      ['section', 'summary', 'decision', 'action', 'risk', 'question', 'metric', 'timeline', 'evidence'].includes(
+      ['section', 'claim', 'task', 'decision', 'risk', 'question', 'metric', 'evidence', 'summary', 'action', 'timeline'].includes(
         semanticRole,
       )
         ? (semanticRole as TextImportPreviewItem['semanticRole'])
@@ -1497,7 +1645,7 @@ function normalizeImportNodePlan(value: RawImportNodePlan): TextImportNodePlan {
     !title ||
     order === null ||
     !semanticRole ||
-    !['section', 'summary', 'decision', 'action', 'risk', 'question', 'metric', 'timeline', 'evidence'].includes(semanticRole) ||
+    !['section', 'claim', 'task', 'decision', 'risk', 'question', 'metric', 'evidence', 'summary', 'action', 'timeline'].includes(semanticRole) ||
     !confidence ||
     !['high', 'medium', 'low'].includes(confidence)
   ) {
@@ -1743,6 +1891,7 @@ function normalizeImportPayload(
         semanticNodes: normalizedSemanticNodes,
         semanticEdges: normalizedSemanticEdges,
         fallbackInsertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+        documentType: normalizeDocumentStructureType(classification.archetype),
       })
       normalizedViews = compiledViews.views
       normalizedViewProjections = compiledViews.viewProjections
@@ -1895,6 +2044,423 @@ function normalizeImportPayload(
   }
 }
 
+function fallbackDocumentTypeForRequest(
+  request: TextImportRequest,
+): TextImportClassification['archetype'] {
+  switch (request.archetype) {
+    case 'process':
+      return 'process'
+    case 'plan':
+      return 'plan'
+    case 'notes':
+      return 'notes'
+    default:
+      return 'analysis'
+  }
+}
+
+function normalizeDocumentToLogicMapDocumentType(
+  value: string | null | undefined,
+  request: TextImportRequest,
+): TextImportClassification['archetype'] {
+  switch (value) {
+    case 'analysis':
+    case 'process':
+    case 'plan':
+    case 'notes':
+      return value
+    default:
+      return fallbackDocumentTypeForRequest(request)
+  }
+}
+
+function normalizeDocumentToLogicMapConfidence(
+  value: number | string | null | undefined,
+): TextImportNodePlan['confidence'] {
+  if (value === 'high' || value === 'medium' || value === 'low') {
+    return value
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value >= 0.8) {
+      return 'high'
+    }
+    if (value >= 0.55) {
+      return 'medium'
+    }
+  }
+  return 'low'
+}
+
+function normalizeDocumentToLogicMapNodeType(
+  value: string | null | undefined,
+): DocumentToLogicMapNodeType | null {
+  switch (value) {
+    case 'section':
+    case 'claim':
+    case 'evidence':
+    case 'task':
+    case 'decision':
+    case 'risk':
+    case 'metric':
+    case 'question':
+      return value
+    default:
+      return null
+  }
+}
+
+function normalizeDocumentToLogicMapSourceAnchors(
+  spans: RawDocumentToLogicMapSpan[] | null | undefined,
+): TextImportNodePlan['sourceAnchors'] {
+  return (spans ?? [])
+    .map((span) => ({
+      lineStart:
+        typeof span.line_start === 'number' && Number.isInteger(span.line_start)
+          ? span.line_start
+          : null,
+      lineEnd:
+        typeof span.line_end === 'number' && Number.isInteger(span.line_end)
+          ? span.line_end
+          : null,
+    }))
+    .filter(
+      (anchor): anchor is { lineStart: number; lineEnd: number } =>
+        anchor.lineStart !== null && anchor.lineEnd !== null,
+    )
+}
+
+type NormalizedDocumentToLogicMapNode = {
+  id: string
+  parentId: string | null
+  order: number
+  type: DocumentToLogicMapNodeType
+  title: string
+  note: string | null
+  semanticRole: DocumentToLogicMapNodeType
+  confidence: TextImportNodePlan['confidence']
+  sourceAnchors: TextImportNodePlan['sourceAnchors']
+  task:
+    | {
+        status: 'todo' | 'in_progress' | 'blocked' | 'done'
+        output: string | null
+      }
+    | null
+}
+
+function normalizeDocumentToLogicMapNode(
+  value: RawDocumentToLogicMapNode,
+  fallbackOrder: number,
+): NormalizedDocumentToLogicMapNode {
+  const id = normalizeText(value.id)
+  const type = normalizeDocumentToLogicMapNodeType(normalizeText(value.type))
+  const semanticRole =
+    normalizeDocumentToLogicMapNodeType(normalizeText(value.semantic_role)) ?? type
+  const title = normalizeText(value.title)
+  const order =
+    typeof value.order === 'number' && Number.isInteger(value.order) ? value.order : fallbackOrder
+
+  if (!id || !type || !semanticRole || !title) {
+    throw new CodexBridgeError('request_failed', 'Codex 返回了无效的 document-to-logic-map 节点。')
+  }
+
+  const taskStatus =
+    value.task?.status === 'todo' ||
+    value.task?.status === 'in_progress' ||
+    value.task?.status === 'blocked' ||
+    value.task?.status === 'done'
+      ? value.task.status
+      : 'todo'
+
+  return {
+    id,
+    parentId: normalizeText(value.parent_id) ?? null,
+    order,
+    type,
+    title,
+    note: normalizeText(value.note) ?? null,
+    semanticRole: type,
+    confidence: normalizeDocumentToLogicMapConfidence(value.confidence),
+    sourceAnchors: normalizeDocumentToLogicMapSourceAnchors(value.source_spans),
+    task:
+      type === 'task'
+        ? {
+            status: taskStatus,
+            output: normalizeText(value.task?.output) ?? null,
+          }
+        : null,
+  }
+}
+
+function createDocumentToLogicMapSource(request: TextImportRequest): KnowledgeSource {
+  const headings = request.preprocessedHints
+    .filter((hint) => hint.kind === 'heading')
+    .map((hint) => ({
+      level: hint.level,
+      title: hint.text,
+      lineStart: hint.lineStart,
+      lineEnd: hint.lineEnd,
+      pathTitles: hint.sourcePath,
+    }))
+  const segments = request.preprocessedHints.map((hint) => ({
+    kind: hint.kind,
+    text: hint.text,
+    lineStart: hint.lineStart,
+    lineEnd: hint.lineEnd,
+    pathTitles: hint.sourcePath,
+  }))
+
+  return {
+    id: 'source_1',
+    type: request.sourceType,
+    title: request.sourceName.replace(/\.[^.]+$/, '') || 'Imported source',
+    raw_content: request.rawText,
+    metadata: {
+      sourceName: request.sourceName,
+      headingCount: headings.length,
+      headings,
+      segments,
+    },
+  }
+}
+
+function buildDocumentToLogicMapSourceRefs(
+  request: TextImportRequest,
+  sourceId: string,
+  anchors: TextImportNodePlan['sourceAnchors'],
+): KnowledgeSourceRef[] {
+  const seen = new Set<string>()
+  const refs: KnowledgeSourceRef[] = []
+
+  anchors.forEach((anchor) => {
+    const matchingHint = request.preprocessedHints.find(
+      (hint) => hint.lineStart === anchor.lineStart && hint.lineEnd === anchor.lineEnd,
+    )
+    const ref: KnowledgeSourceRef = {
+      sourceId,
+      lineStart: anchor.lineStart,
+      lineEnd: anchor.lineEnd,
+      pathTitles: matchingHint?.sourcePath ?? [],
+    }
+    const key = `${ref.sourceId}:${ref.lineStart}:${ref.lineEnd}:${ref.pathTitles.join('>')}`
+    if (seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    refs.push(ref)
+  })
+
+  return refs
+}
+
+function buildDocumentToLogicMapNodePlans(
+  nodes: NormalizedDocumentToLogicMapNode[],
+): TextImportNodePlan[] {
+  return nodes.map((node) => ({
+    id: node.id,
+    parentId: node.parentId,
+    order: node.order,
+    title: node.title,
+    note: node.note,
+    semanticRole: node.semanticRole,
+    semanticType: node.type,
+    confidence: node.confidence,
+    sourceAnchors: node.sourceAnchors,
+    groupKey: node.parentId ? null : 'root',
+    priority:
+      node.parentId === null
+        ? 'primary'
+        : node.type === 'evidence'
+          ? 'supporting'
+          : node.type === 'section' || node.type === 'claim'
+            ? 'primary'
+            : 'secondary',
+    collapsedByDefault: node.type === 'evidence',
+    templateSlot: null,
+  }))
+}
+
+function buildDocumentToLogicMapSemanticNodes(
+  request: TextImportRequest,
+  sourceId: string,
+  nodes: NormalizedDocumentToLogicMapNode[],
+): KnowledgeSemanticNode[] {
+  return nodes.map((node) => {
+    const sourceRefs = buildDocumentToLogicMapSourceRefs(request, sourceId, node.sourceAnchors)
+    return {
+      id: node.id,
+      type: node.type,
+      title: node.title,
+      summary: node.title,
+      detail: node.note ?? '',
+      source_refs: sourceRefs,
+      confidence: node.confidence,
+      task:
+        node.type === 'task'
+          ? {
+              status: node.task?.status ?? 'todo',
+              owner: null,
+              due_date: null,
+              priority: null,
+              depends_on: [],
+              output: node.task?.output ?? null,
+              source_refs: sourceRefs,
+              definition_of_done: null,
+            }
+          : null,
+    }
+  })
+}
+
+function buildDocumentToLogicMapSemanticEdges(
+  request: TextImportRequest,
+  sourceId: string,
+  nodes: NormalizedDocumentToLogicMapNode[],
+): KnowledgeSemanticEdge[] {
+  const edges: KnowledgeSemanticEdge[] = []
+  nodes.forEach((node) => {
+    if (!node.parentId) {
+      return
+    }
+    const sourceRefs = buildDocumentToLogicMapSourceRefs(request, sourceId, node.sourceAnchors)
+    edges.push({
+      from: node.id,
+      to: node.parentId,
+      type: 'belongs_to',
+      label: null,
+      source_refs: sourceRefs,
+      confidence: node.confidence,
+    })
+
+    if (node.type === 'evidence' || node.type === 'metric') {
+      edges.push({
+        from: node.id,
+        to: node.parentId,
+        type: 'supports',
+        label: null,
+        source_refs: sourceRefs,
+        confidence: node.confidence,
+      })
+    }
+  })
+
+  return edges
+}
+
+function normalizeDocumentToLogicMapPayload(
+  request: TextImportRequest,
+  rawPayload: RawDocumentToLogicMapPayload,
+): TextImportResponse {
+  const normalizedWarnings = (rawPayload.warnings ?? [])
+    .map((item) => normalizeText(item))
+    .filter((item): item is string => !!item)
+  const classification: TextImportClassification = {
+    archetype: normalizeDocumentToLogicMapDocumentType(rawPayload.document_type, request),
+    confidence:
+      typeof rawPayload.document_type_confidence === 'number' &&
+      Number.isFinite(rawPayload.document_type_confidence)
+        ? Math.max(0, Math.min(1, rawPayload.document_type_confidence))
+        : 0.6,
+    rationale:
+      normalizeText(rawPayload.document_type_rationale) ??
+      'No explicit document-type rationale was returned by document-to-logic-map.',
+    secondaryArchetype: null,
+  }
+  const nodes = (rawPayload.nodes ?? []).map((node, index) =>
+    normalizeDocumentToLogicMapNode(node, index),
+  )
+  const nodeIds = new Set<string>()
+  nodes.forEach((node) => {
+    if (nodeIds.has(node.id)) {
+      throw new CodexBridgeError(
+        'request_failed',
+        `Codex 返回了重复的 document-to-logic-map 节点 id: ${node.id}`,
+      )
+    }
+    nodeIds.add(node.id)
+  })
+  nodes.forEach((node) => {
+    if (node.parentId && !nodeIds.has(node.parentId)) {
+      throw new CodexBridgeError(
+        'request_failed',
+        `Codex 返回了缺失父节点的 document-to-logic-map 节点: ${node.id}`,
+      )
+    }
+  })
+
+  const source = createDocumentToLogicMapSource(request)
+  const nodePlans = buildDocumentToLogicMapNodePlans(nodes)
+  const compiled = compileTextImportNodePlans({
+    insertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+    nodePlans,
+  })
+  const semanticNodes = buildDocumentToLogicMapSemanticNodes(request, source.id, nodes)
+  const semanticEdges = buildDocumentToLogicMapSemanticEdges(request, source.id, nodes)
+  const bundleId = `bundle_${Math.random().toString(36).slice(2, 8)}`
+  const bundleTitle = normalizeText(rawPayload.summary) ?? source.title
+  const compiledViews = compileSemanticLayerViews({
+    bundleId,
+    bundleTitle,
+    sources: [source],
+    semanticNodes,
+    semanticEdges,
+    fallbackInsertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
+    documentType: normalizeDocumentStructureType(classification.archetype),
+  })
+  const qualityWarnings = buildTextImportQualityWarnings({
+    previewNodes: compiled.previewNodes,
+    nodeBudget: request.nodeBudget,
+  })
+
+  return {
+    summary: normalizeText(rawPayload.summary) ?? '智能导入预览已生成。',
+    baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
+    anchorTopicId: request.anchorTopicId,
+    classification,
+    templateSummary: {
+      archetype: classification.archetype,
+      visibleSlots: [],
+      foldedSlots: [],
+    },
+    bundle: {
+      id: bundleId,
+      title: bundleTitle,
+      createdAt: Date.now(),
+      anchorTopicId: request.anchorTopicId,
+      defaultViewId: compiledViews.defaultViewId,
+      activeViewId: compiledViews.activeViewId,
+      mountedRootTopicId: null,
+      sources: [source],
+      semanticNodes,
+      semanticEdges,
+      views: compiledViews.views,
+      viewProjections: compiledViews.viewProjections,
+    },
+    sources: [source],
+    semanticNodes,
+    semanticEdges,
+    views: compiledViews.views,
+    viewProjections: compiledViews.viewProjections,
+    defaultViewId: compiledViews.defaultViewId,
+    activeViewId: compiledViews.activeViewId,
+    nodePlans,
+    previewNodes: compiled.previewNodes,
+    operations: compiled.operations,
+    conflicts: [],
+    warnings: [...new Set([...normalizedWarnings, ...qualityWarnings])],
+  }
+}
+
+function normalizeTextImportPayload(
+  request: TextImportRequest,
+  rawPayload: RawTextImportPayload,
+): TextImportResponse {
+  if ('nodes' in rawPayload || 'document_type' in rawPayload) {
+    return normalizeDocumentToLogicMapPayload(request, rawPayload as RawDocumentToLogicMapPayload)
+  }
+
+  return normalizeImportPayload(request, rawPayload as RawImportPayload)
+}
+
 function parsePlanPayload(rawText: string | null | undefined): RawPlanPayload {
   if (!rawText) {
     throw new CodexBridgeError('request_failed', 'Codex 返回了空响应。')
@@ -1923,12 +2489,12 @@ function parseSyncConflictAnalysisPayload(
   return parsed
 }
 
-function parseImportPayload(rawText: string | null | undefined): RawImportPayload {
+function parseImportPayload(rawText: string | null | undefined): RawTextImportPayload {
   if (!rawText) {
     throw new CodexBridgeError('request_failed', 'Codex 返回了空的导入预览结果。')
   }
 
-  const parsed = JSON.parse(rawText) as RawImportPayload
+  const parsed = JSON.parse(rawText) as RawTextImportPayload
   if (typeof parsed !== 'object' || parsed === null) {
     throw new CodexBridgeError('request_failed', 'Codex 返回了无效的导入预览结构。')
   }
@@ -2026,6 +2592,23 @@ function summarizeLogText(value: string | undefined, maxLength = 160): string | 
   }
 
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}…` : normalized
+}
+
+function buildImportWaitingStatusMessage(
+  mode: 'primary' | 'repair',
+  elapsedSinceLastEventMs?: number,
+): string {
+  const baseMessage =
+    mode === 'primary'
+      ? 'Codex 正在分析全文与整张脑图…'
+      : 'Codex 正在修正导入结构…'
+
+  if (!elapsedSinceLastEventMs || elapsedSinceLastEventMs <= 0) {
+    return baseMessage
+  }
+
+  const elapsedSeconds = Math.max(1, Math.round(elapsedSinceLastEventMs / 1000))
+  return `${baseMessage} 已等待 ${elapsedSeconds}s，仍在运行。`
 }
 
 function normalizeBridgeError(error: unknown): CodexBridgeError {
@@ -2518,48 +3101,78 @@ function buildTextImportPromptContext(request: TextImportRequest): BuiltTextImpo
     .slice(0, 8)
     .map((topic) => topic.title)
     .filter((title) => title.trim().length > 0)
+  const documentTypeHint =
+    request.archetype === 'analysis' ||
+    request.archetype === 'process' ||
+    request.archetype === 'plan' ||
+    request.archetype === 'notes'
+      ? request.archetype
+      : null
 
   const promptContext = {
-    documentId: request.documentId,
-    documentTitle: request.documentTitle,
-    baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
-    anchorTopicId: request.anchorTopicId,
-    importIntent: request.intent,
-    archetype: request.archetype ?? null,
-    archetypeMode: request.archetypeMode ?? 'auto',
-    contentProfile: request.contentProfile ?? null,
-    nodeBudget: request.nodeBudget ?? null,
+    spec_version: 'document-to-logic-map/v1',
     source: {
-      sourceName: request.sourceName,
-      sourceType: request.sourceType,
-      rawText: request.rawText,
-      rawTextLength: request.rawText.length,
-      preprocessedHintCount: hintSummary.totalCount,
-      preprocessedHintSummary: hintSummary,
-      semanticHintCount: semanticHintSummary.totalCount,
-      semanticHintSummary,
+      name: request.sourceName,
+      type: request.sourceType,
+      raw_text: request.rawText,
     },
-    focus: request.context.focus,
-    mapSummary: {
-      rootTopicId: request.context.rootTopicId,
-      topicCount: request.context.topicCount,
-      focusedTopicCount: focusedTopics.length,
-      compactTopicCount: compactTopics.length,
-      focusedNotePreviewCount,
-      compactNotePreviewCount,
-      structuredHintCount: hintSummary.structuredHintCount,
-      semanticHintCount: semanticHintSummary.totalCount,
+    document_context: {
+      document_id: request.documentId,
+      document_title: request.documentTitle,
+      base_document_updated_at: request.baseDocumentUpdatedAt,
+      anchor_topic_id: request.anchorTopicId,
     },
-    anchorTopic: anchorTopic
-      ? buildFocusedImportTopic(anchorTopic, {
-          includeNotePreview:
-            anchorTopic.aiLocked ||
-            anchorTopic.topicId === request.context.focus.activeTopicId ||
-            selectedTopicIds.has(anchorTopic.topicId),
-        })
-      : null,
-    focusedTopics,
-    backgroundTopicTitles,
+    map_context: {
+      root_topic_id: request.context.rootTopicId,
+      focused_topics: focusedTopics,
+      background_topic_titles: backgroundTopicTitles,
+    },
+    preprocessed_hints: request.preprocessedHints.map((hint) => ({
+      id: hint.id,
+      kind: hint.kind,
+      text: hint.text,
+      raw: hint.raw,
+      level: hint.level,
+      line_start: hint.lineStart,
+      line_end: hint.lineEnd,
+      source_path: hint.sourcePath,
+      language: hint.language ?? null,
+      items: hint.items ?? null,
+      checked: hint.checked ?? null,
+      rows: hint.rows ?? null,
+    })),
+    options: {
+      document_type_hint: documentTypeHint,
+      max_total_nodes: request.nodeBudget?.maxTotalNodes ?? null,
+      max_depth: request.nodeBudget?.maxDepth ?? null,
+    },
+    brainflow_context: {
+      import_intent: request.intent,
+      archetype_mode: request.archetypeMode ?? 'auto',
+      content_profile: request.contentProfile ?? null,
+      preprocessed_hint_count: hintSummary.totalCount,
+      preprocessed_hint_summary: hintSummary,
+      semantic_hint_count: semanticHintSummary.totalCount,
+      semantic_hint_summary: semanticHintSummary,
+      focus: request.context.focus,
+      map_summary: {
+        topic_count: request.context.topicCount,
+        focused_topic_count: focusedTopics.length,
+        compact_topic_count: compactTopics.length,
+        focused_note_preview_count: focusedNotePreviewCount,
+        compact_note_preview_count: compactNotePreviewCount,
+        structured_hint_count: hintSummary.structuredHintCount,
+        semantic_hint_count: semanticHintSummary.totalCount,
+      },
+      anchor_topic: anchorTopic
+        ? buildFocusedImportTopic(anchorTopic, {
+            includeNotePreview:
+              anchorTopic.aiLocked ||
+              anchorTopic.topicId === request.context.focus.activeTopicId ||
+              selectedTopicIds.has(anchorTopic.topicId),
+          })
+        : null,
+    },
   }
 
   const promptContextText = JSON.stringify(promptContext, null, 2)
@@ -2611,6 +3224,47 @@ function buildTextImportPrompt(
     promptContextText,
   ].join('\n')
 }
+
+function buildDocumentToLogicMapPrompt(
+  prompt: LoadedSystemPrompt,
+  promptContextText: string,
+  mode: 'primary' | 'repair' = 'primary',
+): string {
+  return [
+    prompt.fullPrompt,
+    '',
+    'Use the repo skill `document-to-logic-map` for this import.',
+    '',
+    'Import goal:',
+    '- Return valid JSON only.',
+    '- Follow the `document-to-logic-map/v1` input and output contracts exactly.',
+    '- First classify the source as analysis, process, plan, or notes.',
+    '- Normalize headings into wrapper, semantic, or archival headings before you build the spine.',
+    '- Treat wrapper headings such as 说明, 备注, 对话记录, 用户, 助手, 文件格式, 本文说明, 当前对话整理, 对话整理, Markdown 记录, Turn n · User, and Turn n · Assistant as archival unless they clearly carry the thesis.',
+    '- Wrapper headings must not become the first two visible levels of the logic map. Preserve them for archive handling instead.',
+    '- For conversation-export documents, derive the spine from the user core question, the assistant main conclusion, and the assistant decomposition sections.',
+    '- Choose the root from the highest-information semantic unit, such as the core question, thesis, main decision, or main job-to-be-done. Do not default the root to the file title.',
+    '- Build the main spine in original source order instead of forcing a preset template.',
+    '- Only use these node types: section, claim, evidence, task, decision, risk, metric, question.',
+    '- `semantic_role` must equal `type` for every node.',
+    '- Attach evidence and metrics to the nearest supporting claim, or the nearest section if no claim exists yet.',
+    '- Create task nodes only when the text contains both a concrete action and a concrete output.',
+    '- Do not invent placeholder parent nodes such as steps, use cases, criteria, data, evidence, or sub-arguments unless the source explicitly has that heading.',
+    '- Do not let wrapper headings, archive branches, or source-outline nodes become the visible logic spine.',
+    '- When the document type is analysis, preserve breadth at level 1. If you extract 4-8 peer sections, keep all of them visible instead of collapsing the document to one branch.',
+    '- For analysis documents, each first-order section may expose 1-3 representative children: a claim, a metric/evidence/question, and a task only when both action and deliverable are explicit.',
+    '- Keep titles short and move source detail into `note`.',
+    '- Preserve source-grounded spans and confidence for every node.',
+    mode === 'repair'
+      ? '- This is a repair attempt because the previous output was not schema-compatible or structurally weak. Tighten the tree, remove duplicates, and keep the source order intact.'
+      : '- Prefer a complete, stable logic tree on the first attempt.',
+    '',
+    'Skill input JSON:',
+    promptContextText,
+  ].join('\n')
+}
+
+void buildTextImportPrompt
 
 function buildTextImportSemanticAdjudicationPrompt(
   request: TextImportSemanticAdjudicationRequest,
@@ -3039,16 +3693,22 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
           currentStage = waitingStage
           emitImportStatus(
             waitingStage,
-            mode === 'primary'
-              ? 'Codex 正在分析全文与整张脑图…'
-              : 'Codex 正在修正导入结构…',
+            buildImportWaitingStatusMessage(mode),
           )
 
           const rawText = await runner.execute(
-            buildTextImportPrompt(loadedPrompt, promptContext.promptContextText, mode),
-            IMPORT_RESPONSE_SCHEMA,
+            buildDocumentToLogicMapPrompt(loadedPrompt, promptContext.promptContextText, mode),
+            DOCUMENT_TO_LOGIC_MAP_RESPONSE_SCHEMA,
             {
               onObservation: (event: CodexExecutionObservation) => {
+                if (event.phase === 'heartbeat' && currentStage === waitingStage) {
+                  emitImportStatus(
+                    waitingStage,
+                    buildImportWaitingStatusMessage(mode, event.elapsedSinceLastEventMs),
+                    event.elapsedSinceLastEventMs,
+                  )
+                }
+
                 logInfo(
                   formatImportLog(requestId, {
                     event: 'runner',
@@ -3078,7 +3738,7 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
               : '正在解析结构修正结果…',
           )
 
-          const normalized = normalizeImportPayload(request, parseImportPayload(rawText))
+          const normalized = normalizeTextImportPayload(request, parseImportPayload(rawText))
 
           logInfo(
             formatImportLog(requestId, {

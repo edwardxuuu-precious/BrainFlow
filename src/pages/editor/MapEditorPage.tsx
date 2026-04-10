@@ -7,7 +7,6 @@
   useNodesState,
 } from '@xyflow/react'
 import {
-  type ChangeEvent,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   useCallback,
@@ -252,7 +251,6 @@ function collectSubtreeIds(document: MindMapDocument, topicId: string) {
 export function MapEditorPage({ service = documentService }: MapEditorPageProps) {
   const navigate = useNavigate()
   const { documentId } = useParams()
-  const textImportInputRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const reactFlowRef = useRef<ReactFlowInstance<MindMapFlowNode> | null>(null)
   const initializedViewportRef = useRef<string | null>(null)
@@ -1249,10 +1247,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     textImportOpen()
   }
 
-  const handleTextImportFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? [])
-    event.target.value = ''
-
+  const handleTextImportFilesSelected = async (files: File[]) => {
     if (files.length === 0 || !document) {
       return
     }
@@ -1731,13 +1726,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         </div>
 
         <ToolbarGroup className={styles.topbarRight}>
-            <input
-              ref={textImportInputRef}
-              type="file"
-              hidden
-              multiple
-              onChange={(event) => void handleTextImportFileSelected(event)}
-            />
           <button
             type="button"
             className={styles.iconButton}
@@ -1966,7 +1954,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
           }
           repairDisabled={!textImportRepairAvailability.canRepair}
           onClose={textImportClose}
-          onChooseFile={() => textImportInputRef.current?.click()}
+          onChooseFiles={(files) => void handleTextImportFilesSelected(files)}
           onPresetChange={(value) => void handleChangeTextImportPreset(value)}
           onArchetypeChange={(value) => void handleChangeTextImportArchetype(value)}
           onAnchorModeChange={textImportSetAnchorMode}

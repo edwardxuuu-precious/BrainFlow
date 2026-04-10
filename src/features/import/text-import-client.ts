@@ -240,11 +240,15 @@ export async function streamCodexTextImportPreview(
   let buffer = ''
   let lastRequestId: string | undefined
   let lastStage: TextImportRunStage | undefined
+  let receivedTerminalEvent = false
 
   const applyEventContext = (event: TextImportStreamEvent): void => {
     lastRequestId = event.requestId ?? lastRequestId
     if ('stage' in event && typeof event.stage === 'string') {
       lastStage = event.stage
+    }
+    if (event.type === 'result' || event.type === 'error') {
+      receivedTerminalEvent = true
     }
   }
 
@@ -294,5 +298,15 @@ export async function streamCodexTextImportPreview(
     })
     applyEventContext(event)
     onEvent(event)
+  }
+
+  if (!receivedTerminalEvent) {
+    throw createRequestError(IMPORT_STREAM_INTERRUPTED_MESSAGE, {
+      code: 'request_failed',
+      kind: 'bridge_unavailable',
+      rawMessage: 'Stream ended before a result or error event was emitted.',
+      requestId: lastRequestId,
+      stage: lastStage,
+    })
   }
 }

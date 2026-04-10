@@ -1,0 +1,109 @@
+{
+  "spec_version": "document-to-logic-map/v1",
+  "document_type": "analysis",
+  "document_type_confidence": 0.91,
+  "document_type_rationale": "The source is organized around a central claim with supporting evidence, risks, questions, and metrics.",
+  "summary": "Converted the analysis into an ordered logic map with one main claim and attached support.",
+  "nodes": [
+    {
+      "id": "import_root",
+      "parent_id": null,
+      "order": 0,
+      "type": "section",
+      "title": "Pricing pressure",
+      "note": null,
+      "semantic_role": "section",
+      "confidence": "high",
+      "source_spans": []
+    },
+    {
+      "id": "claim_1",
+      "parent_id": "import_root",
+      "order": 0,
+      "type": "claim",
+      "title": "SMB churn tied to value gap",
+      "note": "SMB churn is rising because price sensitivity increased faster than perceived product value.",
+      "semantic_role": "claim",
+      "confidence": "high",
+      "source_spans": [{ "line_start": 4, "line_end": 4 }]
+    },
+    {
+      "id": "evidence_1",
+      "parent_id": "claim_1",
+      "order": 0,
+      "type": "evidence",
+      "title": "SMB churn rose to 7.1%",
+      "note": "In the last 2 quarters, churn in the SMB segment rose from 4.8% to 7.1%.",
+      "semantic_role": "evidence",
+      "confidence": "high",
+      "source_spans": [{ "line_start": 7, "line_end": 7 }]
+    },
+    {
+      "id": "evidence_2",
+      "parent_id": "claim_1",
+      "order": 1,
+      "type": "evidence",
+      "title": "Renewal objection repeated",
+      "note": "Win-loss interviews repeatedly mention \"hard to justify renewal\".",
+      "semantic_role": "evidence",
+      "confidence": "medium",
+      "source_spans": [{ "line_start": 8, "line_end": 8 }]
+    },
+    {
+      "id": "evidence_3",
+      "parent_id": "claim_1",
+      "order": 2,
+      "type": "evidence",
+      "title": "Lower-tier bundling increased",
+      "note": "Competitors now bundle reporting features in lower tiers.",
+      "semantic_role": "evidence",
+      "confidence": "medium",
+      "source_spans": [{ "line_start": 9, "line_end": 9 }]
+    },
+    {
+      "id": "risk_1",
+      "parent_id": "import_root",
+      "order": 1,
+      "type": "risk",
+      "title": "Cause may be overstated",
+      "note": "We may over-attribute churn to price and ignore onboarding issues.",
+      "semantic_role": "risk",
+      "confidence": "medium",
+      "source_spans": [{ "line_start": 12, "line_end": 12 }]
+    },
+    {
+      "id": "question_1",
+      "parent_id": "import_root",
+      "order": 2,
+      "type": "question",
+      "title": "Which churned accounts lacked adoption",
+      "note": "Which churned accounts had low feature adoption before cancellation?",
+      "semantic_role": "question",
+      "confidence": "high",
+      "source_spans": [{ "line_start": 15, "line_end": 15 }]
+    },
+    {
+      "id": "metric_1",
+      "parent_id": "claim_1",
+      "order": 3,
+      "type": "metric",
+      "title": "Renewal rate by segment",
+      "note": "Renewal rate by segment.",
+      "semantic_role": "metric",
+      "confidence": "medium",
+      "source_spans": [{ "line_start": 18, "line_end": 18 }]
+    },
+    {
+      "id": "metric_2",
+      "parent_id": "claim_1",
+      "order": 4,
+      "type": "metric",
+      "title": "Feature adoption before churn",
+      "note": "Feature adoption rate before churn.",
+      "semantic_role": "metric",
+      "confidence": "medium",
+      "source_spans": [{ "line_start": 19, "line_end": 19 }]
+    }
+  ],
+  "warnings": []
+}

@@ -7,7 +7,7 @@ import type {
 } from '../../../../shared/sync-contract'
 import type { AiConversation } from '../../../../shared/ai-contract'
 import { computeContentHash } from '../core/content-hash'
-import { SyncApiClient, CloudSyncConflictError } from '../cloud/sync-api'
+import { SyncApiClient, CloudSyncConflictError, SyncApiError } from '../cloud/sync-api'
 import { cloudSyncIdb } from '../local/cloud-sync-idb'
 import { readLegacyWorkspaceSnapshot } from '../local/legacy-reader'
 import type {
@@ -52,6 +52,10 @@ function createDeviceId(): string {
 
 function createOpId(): string {
   return `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function createLocalCopyId(sourceId: string): string {
+  return `${sourceId}_copy_${Math.random().toString(36).slice(2, 7)}`
 }
 
 function readJsonStorage<T>(key: string): T | null {
@@ -400,6 +404,7 @@ export class CloudSyncOrchestrator {
   }
 
   async triggerSync(_reason: string): Promise<void> {
+    void _reason
     if (this.syncInFlight || !this.status.isOnline) {
       return
     }
@@ -510,6 +515,10 @@ export class CloudSyncOrchestrator {
     if (!conflict) {
       return
     }
+    if (resolution === 'save_local_copy' && !conflict.cloudRecord) {
+      await this.saveLocalCopyForStaleConflict(conflict)
+      return
+    }
     const request: SyncResolveConflictRequest<unknown> = {
       conflictId,
       workspaceId: conflict.workspaceId,
@@ -517,7 +526,27 @@ export class CloudSyncOrchestrator {
       resolution,
       mergedPayload,
     }
-    const response = await this.api.resolveConflict(request)
+    const response = await this.api.resolveConflict(request).catch(async (error) => {
+      if (error instanceof SyncApiError && error.status === 404 && resolution === 'save_local_copy') {
+        await this.saveLocalCopyForStaleConflict(conflict)
+        return null
+      }
+
+      if (error instanceof SyncApiError && error.status === 404) {
+        const state = (await cloudSyncIdb.getSyncState(conflict.workspaceId)) ?? createDefaultSyncState(conflict.workspaceId)
+        const remainingConflicts = await cloudSyncIdb.listConflictsByWorkspace(conflict.workspaceId)
+        await cloudSyncIdb.saveSyncState({
+          ...state,
+          hasConflicts: remainingConflicts.length > 0,
+          lastError: error.message,
+        })
+        await this.refreshStatus()
+      }
+      throw error
+    })
+    if (!response) {
+      return
+    }
     await this.applyAuthoritativeRecord(response.resolvedRecord)
     if (response.extraCreatedRecord) {
       await this.applyAuthoritativeRecord(response.extraCreatedRecord)
@@ -534,6 +563,102 @@ export class CloudSyncOrchestrator {
       lastPushAt: Date.now(),
     })
     writeTimestampStorage(CLOUD_SYNCED_AT_KEY, Date.now())
+    await this.refreshStatus()
+  }
+
+  private async saveLocalCopyForStaleConflict(conflict: StorageConflictRecord): Promise<void> {
+    if (!conflict.localRecord) {
+      throw new SyncApiError(404, 'Conflict not found.', { message: 'Conflict not found.' })
+    }
+
+    const copyId = createLocalCopyId(conflict.localRecord.id)
+    const updatedAt = Date.now()
+
+    if (conflict.entityType === 'document') {
+      const source = conflict.localRecord as SyncedDocumentRecord
+      const payload: SyncedDocumentRecord['payload'] = {
+        ...source.payload,
+        id: copyId,
+        updatedAt,
+      }
+      const copyRecord: SyncedDocumentRecord = {
+        ...source,
+        id: copyId,
+        deviceId: this.requireDeviceId(),
+        version: 0,
+        baseVersion: null,
+        contentHash: await computeContentHash(payload),
+        updatedAt,
+        deletedAt: null,
+        syncStatus: 'local_saved_pending_sync',
+        payload,
+      }
+      await cloudSyncIdb.saveDocument(copyRecord)
+      await this.upsertPendingOp({
+        opId: createOpId(),
+        workspaceId: copyRecord.workspaceId,
+        deviceId: copyRecord.deviceId,
+        entityType: 'document',
+        entityId: copyRecord.id,
+        action: 'upsert',
+        baseVersion: null,
+        payload: copyRecord.payload,
+        contentHash: copyRecord.contentHash,
+        clientUpdatedAt: updatedAt,
+        status: 'pending',
+        attemptCount: 0,
+        lastError: null,
+        createdAt: updatedAt,
+      })
+    } else {
+      const source = conflict.localRecord as SyncedConversationRecord
+      const payload: SyncedConversationRecord['payload'] = {
+        ...source.payload,
+        id: copyId,
+        sessionId: copyId,
+        updatedAt,
+      }
+      const copyRecord: SyncedConversationRecord = {
+        ...source,
+        id: copyId,
+        deviceId: this.requireDeviceId(),
+        version: 0,
+        baseVersion: null,
+        contentHash: await computeContentHash(payload),
+        updatedAt,
+        deletedAt: null,
+        syncStatus: 'local_saved_pending_sync',
+        payload,
+      }
+      await cloudSyncIdb.saveConversation(copyRecord)
+      await this.upsertPendingOp({
+        opId: createOpId(),
+        workspaceId: copyRecord.workspaceId,
+        deviceId: copyRecord.deviceId,
+        entityType: 'conversation',
+        entityId: copyRecord.id,
+        action: 'upsert',
+        baseVersion: null,
+        payload: copyRecord.payload,
+        contentHash: copyRecord.contentHash,
+        clientUpdatedAt: updatedAt,
+        status: 'pending',
+        attemptCount: 0,
+        lastError: null,
+        createdAt: updatedAt,
+      })
+    }
+
+    await cloudSyncIdb.deleteConflictsByEntity(conflict.workspaceId, conflict.entityType, conflict.entityId)
+    await cloudSyncIdb.deletePendingOpsByEntity(conflict.workspaceId, conflict.entityType, conflict.entityId)
+    const state = (await cloudSyncIdb.getSyncState(conflict.workspaceId)) ?? createDefaultSyncState(conflict.workspaceId)
+    const remainingConflicts = await cloudSyncIdb.listConflictsByWorkspace(conflict.workspaceId)
+    await cloudSyncIdb.saveSyncState({
+      ...state,
+      hasConflicts: remainingConflicts.length > 0,
+      lastError: null,
+    })
+    writeTimestampStorage(LOCAL_SAVED_AT_KEY, updatedAt)
     await this.refreshStatus()
   }
 
@@ -600,6 +725,17 @@ export class CloudSyncOrchestrator {
             },
           ],
         })
+        if (response.requiresBootstrap) {
+          const state = (await cloudSyncIdb.getSyncState(workspaceId)) ?? createDefaultSyncState(workspaceId)
+          await cloudSyncIdb.saveSyncState({
+            ...state,
+            bootstrapCompletedAt: null,
+            lastPulledCursor: 0,
+            lastError: null,
+          })
+          await this.bootstrapCurrentCache(workspaceId)
+          return
+        }
         for (const applied of response.applied) {
           await this.applyAuthoritativeRecord(applied.authoritativeRecord)
           await cloudSyncIdb.deletePendingOp(applied.opId)

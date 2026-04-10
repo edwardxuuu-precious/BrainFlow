@@ -4,6 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createCodexRunner } from './codex-runner.js'
 
 describe('createCodexRunner', () => {
+  const workspaceRoot = 'C:\\repo\\BrainFlow'
+  const expectedSkillConfigOverride =
+    'skills.config=[{path="C:/repo/BrainFlow/.agents/skills/document-to-logic-map",enabled=true}]'
+
   afterEach(() => {
     vi.useRealTimers()
   })
@@ -230,7 +234,14 @@ describe('createCodexRunner', () => {
     const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
     const writeFile = vi.fn().mockResolvedValue(undefined)
     const rm = vi.fn().mockResolvedValue(undefined)
-    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, writeFile, rm })
+    const runner = createCodexRunner({
+      runCommand,
+      runStreamingCommand,
+      mkdtemp,
+      writeFile,
+      rm,
+      workspaceRoot,
+    })
 
     const result = await runner.execute('prompt text', { type: 'object' })
 
@@ -243,6 +254,10 @@ describe('createCodexRunner', () => {
         'read-only',
         '--json',
         '--ephemeral',
+        '--cd',
+        workspaceRoot,
+        '-c',
+        expectedSkillConfigOverride,
         '--skip-git-repo-check',
         '-',
       ]),
@@ -300,7 +315,14 @@ describe('createCodexRunner', () => {
     const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
     const writeFile = vi.fn().mockResolvedValue(undefined)
     const rm = vi.fn().mockResolvedValue(undefined)
-    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, writeFile, rm })
+    const runner = createCodexRunner({
+      runCommand,
+      runStreamingCommand,
+      mkdtemp,
+      writeFile,
+      rm,
+      workspaceRoot,
+    })
     const onObservation = vi.fn()
 
     await runner.execute('prompt text', { type: 'object' }, { onObservation })
@@ -516,6 +538,7 @@ describe('createCodexRunner', () => {
       runStreamingCommand,
       mkdtemp,
       rm,
+      workspaceRoot,
       platform: 'win32',
       env: {
         APPDATA: 'C:\\Users\\edwar\\AppData\\Roaming',
@@ -527,7 +550,17 @@ describe('createCodexRunner', () => {
 
     expect(runStreamingCommand).toHaveBeenCalledWith(
       fallbackCommand,
-      expect.arrayContaining(['exec', '--sandbox', 'read-only', '--json', '-']),
+      expect.arrayContaining([
+        'exec',
+        '--sandbox',
+        'read-only',
+        '--json',
+        '--cd',
+        workspaceRoot,
+        '-c',
+        expectedSkillConfigOverride,
+        '-',
+      ]),
       expect.objectContaining({
         cwd: 'C:\\temp\\brainflow-codex-test',
         inputText: 'prompt text',
@@ -576,7 +609,14 @@ describe('createCodexRunner', () => {
     const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
     const writeFile = vi.fn().mockResolvedValue(undefined)
     const rm = vi.fn().mockResolvedValue(undefined)
-    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, writeFile, rm })
+    const runner = createCodexRunner({
+      runCommand,
+      runStreamingCommand,
+      mkdtemp,
+      writeFile,
+      rm,
+      workspaceRoot,
+    })
     const onEvent = vi.fn()
 
     const result = await runner.executeMessage('prompt text', { onEvent })
@@ -628,7 +668,14 @@ describe('createCodexRunner', () => {
     const mkdtemp = vi.fn().mockResolvedValue('C:\\temp\\brainflow-codex-test')
     const writeFile = vi.fn().mockResolvedValue(undefined)
     const rm = vi.fn().mockResolvedValue(undefined)
-    const runner = createCodexRunner({ runCommand, runStreamingCommand, mkdtemp, writeFile, rm })
+    const runner = createCodexRunner({
+      runCommand,
+      runStreamingCommand,
+      mkdtemp,
+      writeFile,
+      rm,
+      workspaceRoot,
+    })
 
     await expect(runner.execute('prompt text', { type: 'object' })).rejects.toMatchObject({
       issue: expect.objectContaining({

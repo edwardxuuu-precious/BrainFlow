@@ -421,13 +421,25 @@ describe('createCodexBridge', () => {
       warnings: [],
     })
     expect(execute.mock.calls[0][0]).toContain(
-      'Prefer semantic planning first. Output nodePlans when possible',
+      'Use the repo skill `document-to-logic-map` for this import.',
     )
     expect(execute.mock.calls[0][0]).toContain(
-      '"semanticHintCount": 0',
+      '"spec_version": "document-to-logic-map/v1"',
     )
     expect(execute.mock.calls[0][0]).toContain(
-      'Avoid generic titles, sibling explosions, and dumping long raw notes into leaf nodes.',
+      '"semantic_hint_count": 0',
+    )
+    expect(execute.mock.calls[0][0]).toContain(
+      '- Keep titles short and move source detail into `note`.',
+    )
+    expect(execute.mock.calls[0][0]).toContain(
+      '- Normalize headings into wrapper, semantic, or archival headings before you build the spine.',
+    )
+    expect(execute.mock.calls[0][0]).toContain(
+      '- Choose the root from the highest-information semantic unit, such as the core question, thesis, main decision, or main job-to-be-done. Do not default the root to the file title.',
+    )
+    expect(execute.mock.calls[0][0]).toContain(
+      '- When the document type is analysis, preserve breadth at level 1. If you extract 4-8 peer sections, keep all of them visible instead of collapsing the document to one branch.',
     )
   })
 
@@ -522,7 +534,11 @@ describe('createCodexBridge', () => {
     const result = await bridge.previewTextImport(baseImportRequest)
 
     expect(result.bundle).not.toBeNull()
-    expect(result.views.map((view) => view.type)).toEqual(['thinking_view'])
+    expect(result.views.map((view) => view.type)).toEqual([
+      'thinking_view',
+      'execution_view',
+      'archive_view',
+    ])
     expect(result.previewNodes[0]).toMatchObject({
       title: '第一波应该先打谁',
     })
@@ -917,6 +933,58 @@ describe('createCodexBridge', () => {
     expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('event="attempt_completed"'))
   })
 
+  it('emits waiting heartbeat status updates during long import attempts', async () => {
+    const execute = vi.fn().mockImplementation(async (_prompt, _schema, options) => {
+      options?.onObservation?.({
+        phase: 'heartbeat',
+        kind: 'structured',
+        timestampMs: 140,
+        promptLength: 120,
+        elapsedSinceLastEventMs: 5_000,
+        hadJsonEvent: false,
+      })
+
+      return JSON.stringify({
+        summary: 'preview',
+        previewNodes: [
+          {
+            id: 'preview_1',
+            parentId: null,
+            order: 0,
+            title: 'Plan',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+          },
+        ],
+        operations: [],
+        conflicts: [],
+        warnings: [],
+      })
+    })
+
+    const onStatus = vi.fn()
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockResolvedValue(readyStatus),
+        execute,
+        executeMessage: vi.fn(),
+      },
+      promptStore: createPromptStore(),
+    })
+
+    await bridge.previewTextImport(baseImportRequest, { onStatus })
+
+    expect(onStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'waiting_codex_primary',
+        message: 'Codex 正在分析全文与整张脑图… 已等待 5s，仍在运行。',
+        durationMs: 5_000,
+      }),
+    )
+  })
+
   it('builds a compact import context for markdown requests', async () => {
     const denseRequest: TextImportRequest = {
       ...baseImportRequest,
@@ -1006,15 +1074,15 @@ describe('createCodexBridge', () => {
     await bridge.previewTextImport(denseRequest)
 
     const prompt = execute.mock.calls[0]?.[0] as string
-    expect(prompt).toContain('"focusedTopicCount": 3')
-    expect(prompt).toContain('"compactTopicCount": 1')
-    expect(prompt).toContain('"focusedNotePreviewCount": 2')
-    expect(prompt).toContain('"compactNotePreviewCount": 1')
-    expect(prompt).toContain('"structuredHintCount": 1')
-    expect(prompt).toContain('"preprocessedHintSummary"')
-    expect(prompt).toContain('"backgroundTopicTitles": [')
-    expect(prompt).not.toContain('"compactTopics": [')
-    expect(prompt).not.toContain('"preprocessedHints": [')
+    expect(prompt).toContain('"focused_topic_count": 3')
+    expect(prompt).toContain('"compact_topic_count": 1')
+    expect(prompt).toContain('"focused_note_preview_count": 2')
+    expect(prompt).toContain('"compact_note_preview_count": 1')
+    expect(prompt).toContain('"structured_hint_count": 1')
+    expect(prompt).toContain('"preprocessed_hint_summary"')
+    expect(prompt).toContain('"background_topic_titles": [')
+    expect(prompt).toContain('"focused_topics": [')
+    expect(prompt).toContain('"preprocessed_hints": [')
     expect(prompt).toContain('"notePreview": "Detailed note kept in full"')
     expect(prompt).toContain('"notePreview": "Another full note"')
     expect(prompt).toContain('"Background topic"')

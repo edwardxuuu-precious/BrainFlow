@@ -4,8 +4,12 @@ import { createMindMapDocument } from '../documents/document-factory'
 import {
   getLegacyGtmRepairAvailability,
   repairKnowledgeImportBundle,
+  syncTextImportResponseActiveProjection,
 } from './knowledge-import'
 import GTM_MAIN_FIXTURE from './__fixtures__/GTM_main.md?raw'
+import { createLocalTextImportPreview } from './local-text-import-core'
+import { buildAiContext } from '../ai/ai-context'
+import { preprocessTextToImportHints } from './text-import-preprocess'
 
 function createLegacyTopic(id: string, parentId: string, title: string) {
   return {
@@ -210,7 +214,52 @@ describe('knowledge-import', () => {
       result?.document.knowledgeImports.bundle_gtm.viewProjections[
         result.document.knowledgeImports.bundle_gtm.activeViewId
       ]?.previewNodes.find((node) => node.parentId === null)?.title,
-    ).toBe('Import: GTM_main')
+    ).toBe('证据问题：我们手上有什么渠道')
+  })
+
+  it('keeps the same semantic spine when rehydrating a local conversation-export response', () => {
+    const document = createMindMapDocument('Conversation import')
+    const rawText = [
+      '# Markdown 记录',
+      '',
+      '## Turn 1 · User',
+      'Should we lead with SMB or agencies?',
+      '',
+      '## Turn 1 · Assistant',
+      '### 结论',
+      'Start with SMB accounts.',
+      '',
+      '### 拆解',
+      '#### 需求强度',
+      'SMB teams feel the problem weekly.',
+      '#### 触达效率',
+      'Founder outreach reaches SMB buyers quickly.',
+      '#### 下一步',
+      '- Create a 20-account SMB prospect list.',
+    ].join('\n')
+    const response = createLocalTextImportPreview({
+      documentId: document.id,
+      documentTitle: document.title,
+      baseDocumentUpdatedAt: document.updatedAt,
+      context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
+      anchorTopicId: document.rootTopicId,
+      sourceName: 'conversation_export.md',
+      sourceType: 'file',
+      intent: 'distill_structure',
+      rawText,
+      preprocessedHints: preprocessTextToImportHints(rawText),
+      semanticHints: [],
+    }).response
+
+    const activeViewId = response.activeViewId ?? response.defaultViewId
+    expect(activeViewId).not.toBeNull()
+    const projection = response.viewProjections[activeViewId!]
+    const synced = syncTextImportResponseActiveProjection(response, projection)
+
+    expect(synced.previewNodes[0]?.title).toBe(response.previewNodes[0]?.title)
+    expect(synced.previewNodes.some((node) => node.title === 'Markdown 记录')).toBe(false)
+    expect(synced.previewNodes.some((node) => node.title === 'Turn 1 · User')).toBe(false)
+    expect(synced.previewNodes.some((node) => node.title === 'Turn 1 · Assistant')).toBe(false)
   })
 
   it('refuses repair when the legacy bundle no longer has rebuildable source content', () => {

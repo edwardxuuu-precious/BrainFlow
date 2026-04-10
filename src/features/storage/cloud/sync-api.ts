@@ -14,14 +14,25 @@ import type {
   WorkspaceRestoreResponse,
 } from '../../../../shared/sync-contract'
 
+export class SyncApiError extends Error {
+  readonly status: number
+  readonly payload: unknown
+
+  constructor(status: number, message: string, payload: unknown) {
+    super(message)
+    this.status = status
+    this.payload = payload
+  }
+}
+
 async function parseJson<T>(response: Response): Promise<T> {
-  const payload = (await response.json()) as T | { message?: string }
+  const payload = await response.json().catch(() => null) as T | { message?: string } | null
   if (!response.ok) {
-    throw new Error(
+    const message =
       typeof payload === 'object' && payload && 'message' in payload && payload.message
         ? String(payload.message)
-        : `HTTP ${response.status}`,
-    )
+        : `HTTP ${response.status}`
+    throw new SyncApiError(response.status, message, payload)
   }
   return payload as T
 }

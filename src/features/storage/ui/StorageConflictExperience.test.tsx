@@ -312,8 +312,12 @@ describe('Storage conflict experience', () => {
       expect(calls.analyze).toBe(1)
     })
 
-    const persistedConflict = await modules.cloudSyncIdb.getConflict(fixture.conflict.id)
     expect(calls.analyze).toBe(1)
+    let persistedConflict = await modules.cloudSyncIdb.getConflict(fixture.conflict.id)
+    await waitFor(async () => {
+      persistedConflict = await modules.cloudSyncIdb.getConflict(fixture.conflict.id)
+      expect(persistedConflict?.analysisStatus).toBe('ready')
+    })
     expect(persistedConflict?.analysisStatus).toBe('ready')
     expect(persistedConflict?.recommendedResolution).toBe('merged_payload')
 

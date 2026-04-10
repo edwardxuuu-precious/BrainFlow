@@ -11,6 +11,8 @@ import type {
 import {
   compileSemanticLayerViews,
   deriveSemanticGraphFromPreviewNodes,
+  inferDocumentStructureTypeFromSemanticGraph,
+  normalizeDocumentStructureType,
   PRIMARY_KNOWLEDGE_VIEW_TYPE,
 } from '../../../shared/text-import-layering'
 import {
@@ -139,6 +141,15 @@ function createLegacyPrimaryProjection(bundle: KnowledgeImportBundle): Knowledge
   }
 }
 
+function resolveBundleDocumentType(bundle: KnowledgeImportBundle) {
+  return inferDocumentStructureTypeFromSemanticGraph({
+    bundleTitle: bundle.title,
+    sourceTitles: bundle.sources.map((source) => source.title),
+    semanticNodes: bundle.semanticNodes,
+    semanticEdges: bundle.semanticEdges,
+  })
+}
+
 function compilePrimaryBundleViews(
   bundle: KnowledgeImportBundle,
   fallbackInsertionParentTopicId: string,
@@ -156,6 +167,7 @@ function compilePrimaryBundleViews(
       semanticNodes: bundle.semanticNodes,
       semanticEdges: bundle.semanticEdges,
       fallbackInsertionParentTopicId,
+      documentType: resolveBundleDocumentType(bundle),
     })
   }
 
@@ -380,7 +392,7 @@ function serializeProjectionFromMountedSubtree(
       reason: null,
       semanticRole:
         previousNode?.semanticRole ??
-        (topic.childIds.length > 0 ? 'section' : inferSemanticTypeFromTopic(topic) === 'task' ? 'action' : 'summary'),
+        (topic.childIds.length > 0 ? 'section' : inferSemanticTypeFromTopic(topic) === 'task' ? 'task' : 'claim'),
       semanticType: previousNode?.semanticType ?? inferSemanticTypeFromTopic(topic),
       confidence: previousNode?.confidence ?? 'medium',
       sourceAnchors: cloneSourceAnchors(previousNode?.sourceAnchors),
@@ -417,6 +429,7 @@ function hydrateBundleFromSemanticGraph(
   semanticNodes: KnowledgeImportBundle['semanticNodes'],
   semanticEdges: KnowledgeImportBundle['semanticEdges'],
   fallbackInsertionParentTopicId: string,
+  documentType?: ReturnType<typeof normalizeDocumentStructureType>,
 ): KnowledgeImportBundle {
   const compiled = compileSemanticLayerViews({
     bundleId: bundle.id,
@@ -425,6 +438,14 @@ function hydrateBundleFromSemanticGraph(
     semanticNodes,
     semanticEdges,
     fallbackInsertionParentTopicId,
+    documentType:
+      documentType ??
+      inferDocumentStructureTypeFromSemanticGraph({
+        bundleTitle: bundle.title,
+        sourceTitles: bundle.sources.map((source) => source.title),
+        semanticNodes,
+        semanticEdges,
+      }),
   })
 
   return {
@@ -464,6 +485,7 @@ export function syncTextImportResponseActiveProjection(
     semanticGraph.semanticNodes,
     semanticGraph.semanticEdges,
     fallbackInsertionParentTopicId,
+    normalizeDocumentStructureType(response.classification.archetype),
   )
   const primaryProjection = hydratedBundle.viewProjections[hydratedBundle.activeViewId]
 
@@ -510,6 +532,7 @@ export function syncActiveKnowledgeViewProjection(document: MindMapDocument): Mi
     semanticGraph.semanticNodes,
     semanticGraph.semanticEdges,
     bundle.anchorTopicId ?? nextDocument.rootTopicId,
+    resolveBundleDocumentType(bundle),
   )
   nextDocument.workspace.activeKnowledgeViewId = PRIMARY_KNOWLEDGE_VIEW_TYPE
   return nextDocument
@@ -663,6 +686,7 @@ function buildBundleFromResponse(response: TextImportResponse): KnowledgeImportB
     bundle.semanticNodes,
     bundle.semanticEdges,
     response.anchorTopicId ?? bundle.anchorTopicId ?? 'topic_root',
+    normalizeDocumentStructureType(response.classification.archetype),
   )
 }
 

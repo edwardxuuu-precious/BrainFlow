@@ -197,6 +197,47 @@ describe('text-import-client transport handling', () => {
     )
   })
 
+  it('maps premature EOF without a terminal event to an interrupted stream error', async () => {
+    const encoder = new TextEncoder()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({
+                done: false,
+                value: encoder.encode(
+                  `${JSON.stringify({
+                    type: 'status',
+                    stage: 'waiting_codex_primary',
+                    message: 'Codex is analyzing the full import context.',
+                    requestId: 'import_stream_3',
+                  })}\n`,
+                ),
+              })
+              .mockResolvedValueOnce({
+                done: true,
+                value: undefined,
+              }),
+          }),
+        },
+      }),
+    )
+
+    await expect(streamCodexTextImportPreview(createRequest(), () => {})).rejects.toMatchObject({
+      code: 'request_failed',
+      kind: 'bridge_unavailable',
+      stage: 'waiting_codex_primary',
+      requestId: 'import_stream_3',
+      message:
+        'The import preview stream was interrupted before completion. Retry after the local Codex bridge finishes the current request.',
+      rawMessage: 'Stream ended before a result or error event was emitted.',
+    })
+  })
+
   it('maps a truncated NDJSON tail to a structured internal error', async () => {
     const encoder = new TextEncoder()
     vi.stubGlobal(

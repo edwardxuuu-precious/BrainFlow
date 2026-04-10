@@ -8,184 +8,125 @@ import { TextImportDialog } from './TextImportDialog'
 
 const draftTree = [
   {
-    id: 'preview_1',
+    id: 'preview_root',
     parentId: null,
     order: 0,
-    title: 'Step 1',
-    note: 'Launch the campaign',
+    title: 'Launch rollout',
+    note: 'Confirm the launch structure before merge review begins.',
     relation: 'new' as const,
     matchedTopicId: null,
-    reason: 'New branch',
-    children: [],
+    reason: 'Generated from the source order.',
+    semanticRole: 'section' as const,
+    confidence: 'high' as const,
+    sourceAnchors: [{ lineStart: 1, lineEnd: 4 }],
+    children: [
+      {
+        id: 'preview_claim',
+        parentId: 'preview_root',
+        order: 0,
+        title: 'Channel priority',
+        note: 'Email and partner channels should be sequenced first.',
+        relation: 'merge' as const,
+        matchedTopicId: 'topic_existing',
+        reason: 'High overlap with an existing branch.',
+        semanticRole: 'claim' as const,
+        confidence: 'medium' as const,
+        sourceAnchors: [{ lineStart: 5, lineEnd: 8 }],
+        children: [],
+      },
+    ],
   },
 ]
-const previewTree = draftTree
 
-function createPreview(
-  overrides: Partial<TextImportResponse> = {},
-): TextImportResponse {
-  const {
-    bundle = null,
-    sources = [],
-    semanticNodes = [],
-    semanticEdges = [],
-    views = [],
-    viewProjections = {},
-    defaultViewId = null,
-    activeViewId = null,
-    ...rest
-  } = overrides
-
+function createPreview(overrides: Partial<TextImportResponse> = {}): TextImportResponse {
   return {
-    summary: 'Preview ready for review.',
+    summary: 'Preview ready. Review the generated logic map before merge.',
     baseDocumentUpdatedAt: 1,
     anchorTopicId: 'root',
     classification: {
-      archetype: 'method',
-      confidence: 0.82,
-      rationale: 'Ordered steps and criteria strongly indicate a method.',
-      secondaryArchetype: 'plan',
+      archetype: 'process',
+      confidence: 0.42,
+      rationale: 'Ordered procedural signals dominate the source.',
+      secondaryArchetype: 'analysis',
     },
     templateSummary: {
-      archetype: 'method',
-      visibleSlots: ['steps', 'pitfalls'],
-      foldedSlots: ['goal', 'criteria'],
+      archetype: 'process',
+      visibleSlots: [],
+      foldedSlots: [],
     },
-    nodePlans: [
+    bundle: null,
+    sources: [],
+    semanticNodes: [],
+    semanticEdges: [],
+    views: [],
+    viewProjections: {},
+    defaultViewId: null,
+    activeViewId: null,
+    nodePlans: [],
+    previewNodes: [],
+    operations: [
       {
-        id: 'preview_root',
-        parentId: null,
-        order: 0,
-        title: 'Import: GTM main',
-        note: null,
-        semanticRole: 'section',
-        confidence: 'high',
-        sourceAnchors: [],
-        groupKey: 'root',
-        priority: 'primary',
-        collapsedByDefault: false,
-        templateSlot: null,
+        id: 'op_1',
+        type: 'create_child',
+        parent: 'topic:root',
+        title: 'Launch rollout',
+        risk: 'low',
+        resultRef: 'preview_root',
       },
       {
-        id: 'preview_1',
-        parentId: 'preview_root',
-        order: 0,
-        title: 'Step 1',
-        note: 'Launch the campaign',
-        semanticRole: 'action',
-        confidence: 'high',
-        sourceAnchors: [],
-        groupKey: 'steps',
-        priority: 'primary',
-        collapsedByDefault: false,
-        templateSlot: 'steps',
-      },
-    ],
-    previewNodes: [
-      {
-        id: 'preview_root',
-        parentId: null,
-        order: 0,
-        title: 'Import: GTM main',
-        note: null,
-        relation: 'new',
-        matchedTopicId: null,
-        reason: null,
-      },
-      {
-        id: 'preview_1',
-        parentId: 'preview_root',
-        order: 0,
-        title: 'Step 1',
-        note: 'Launch the campaign',
-        relation: 'new',
-        matchedTopicId: null,
-        reason: 'New branch',
-        semanticRole: 'action',
-        confidence: 'high',
-        templateSlot: 'steps',
+        id: 'op_2',
+        type: 'update_topic',
+        target: 'topic:existing',
+        title: 'Channel priority',
+        risk: 'high',
+        conflictId: 'conflict_1',
       },
     ],
     conflicts: [
       {
         id: 'conflict_1',
-        title: 'Rename Step 1',
-        description: 'Renaming an existing node needs approval.',
+        title: 'Approve rename',
+        description: 'Renaming the existing branch requires approval.',
         kind: 'rename',
         operationIds: ['op_2'],
-        targetTopicIds: ['topic_1'],
+        targetTopicIds: ['topic:existing'],
       },
     ],
-    operations: [
-      { id: 'op_1', type: 'create_child', parent: 'topic:root', title: 'Import: GTM main', risk: 'low', resultRef: 'preview_root' },
-      { id: 'op_2', type: 'update_topic', target: 'topic:topic_1', title: 'Step 1', risk: 'high' },
-    ],
-    bundle,
-    sources,
-    semanticNodes,
-    semanticEdges,
-    views,
-    viewProjections,
-    defaultViewId,
-    activeViewId,
     mergeSuggestions: [
       {
         id: 'merge_1',
-        previewNodeId: 'preview_1',
+        previewNodeId: 'preview_claim',
         matchedTopicId: 'topic_existing',
-        matchedTopicTitle: 'Existing Step 1',
+        matchedTopicTitle: 'Existing rollout channel',
         kind: 'same_topic',
         confidence: 'high',
-        reason: 'Titles and note summaries strongly overlap.',
+        reason: 'The titles and note summaries strongly overlap.',
       },
     ],
     warnings: ['One warning remains.'],
-    ...rest,
+    ...overrides,
   }
 }
-
-const preview = createPreview()
-
-const previewWithoutReviewItems = createPreview({
-  summary: 'Preview ready without merge review items.',
-  conflicts: [],
-  operations: [{ id: 'op_1', type: 'create_child', parent: 'topic:root', title: 'Import: GTM main', risk: 'low', resultRef: 'preview_root' }],
-  mergeSuggestions: [],
-  warnings: [],
-})
-const crossFileMergeSuggestions = [
-  {
-    id: 'cross_1',
-    previewNodeId: 'preview_1',
-    sourceName: 'GTM_step1.md',
-    matchedPreviewNodeId: 'preview_existing',
-    matchedSourceName: 'GTM_main.md',
-    matchedTitle: 'Existing Step 1',
-    kind: 'same_topic' as const,
-    confidence: 'high' as const,
-    reason: 'The imported node matches a branch from another file.',
-  },
-]
 
 function createPlanningSummary(
   overrides: Partial<TextImportSourcePlanningSummary> = {},
 ): TextImportSourcePlanningSummary {
   return {
-    sourceName: 'GTM_main.md',
+    sourceName: 'Launch.md',
     sourceType: 'file',
     resolvedPreset: 'distill',
-    resolvedArchetype: 'method',
+    resolvedArchetype: 'process',
     confidence: 'high',
     presetConfidence: 'high',
     archetypeConfidence: 'high',
-    structureScore: 0.84,
-    structureConfidence: 0.88,
-    recommendedRoute: 'local_markdown',
+    structureScore: 0.82,
+    structureConfidence: 0.86,
+    recommendedRoute: 'codex_import',
     isShallowPass: false,
     needsDeepPass: false,
-    rationale: 'Distill is the safest default. Ordered steps and criteria strongly indicate a method.',
-    presetRationale: 'Distill is the safest default.',
-    archetypeRationale: 'Ordered steps and criteria strongly indicate a method.',
+    rationale: 'The source reads like a procedure with explicit action ordering.',
+    presetRationale: 'Skill-backed distillation is the safest default.',
+    archetypeRationale: 'Ordered steps and checks indicate a process document.',
     isManual: false,
     ...overrides,
   }
@@ -196,18 +137,18 @@ function createProps(
 ): ComponentProps<typeof TextImportDialog> {
   const props: ComponentProps<typeof TextImportDialog> = {
     open: true,
-    sourceName: 'GTM_main.md',
+    sourceName: 'Launch.md',
     sourceType: 'file',
-    sourceFiles: [{ sourceName: 'GTM_main.md', sourceType: 'file', textLength: 1200 }],
+    sourceFiles: [{ sourceName: 'Launch.md', sourceType: 'file', textLength: 1200 }],
     rawText: '',
-    draftSourceName: 'GTM_main.md',
+    draftSourceName: 'Launch.md',
     draftText: '',
     preprocessedHints: [],
     preview: null,
     draftTree: [],
     previewTree: [],
     draftConfirmed: false,
-    planningSummaries: [],
+    planningSummaries: [createPlanningSummary()],
     crossFileMergeSuggestions: [],
     approvedConflictIds: [],
     statusText: '',
@@ -223,7 +164,7 @@ function createProps(
     jobType: 'single',
     fileCount: 1,
     completedFileCount: 0,
-    currentFileName: 'GTM_main.md',
+    currentFileName: 'Launch.md',
     semanticMergeStage: 'idle',
     semanticCandidateCount: 0,
     semanticAdjudicatedCount: 0,
@@ -238,7 +179,7 @@ function createProps(
     documentRootLabel: 'Central topic',
     currentSelectionLabel: 'Selected branch',
     onClose: () => {},
-    onChooseFile: () => {},
+    onChooseFiles: () => {},
     onPresetChange: () => {},
     onArchetypeChange: () => {},
     onAnchorModeChange: () => {},
@@ -259,10 +200,7 @@ function createProps(
     return props
   }
 
-  return {
-    ...props,
-    planningSummaries: props.sourceFiles.length > 0 ? [createPlanningSummary()] : [],
-  }
+  return props
 }
 
 describe('TextImportDialog', () => {
@@ -270,49 +208,96 @@ describe('TextImportDialog', () => {
     vi.useRealTimers()
   })
 
-  it('starts on the import source step and keeps later review pages separate', () => {
+  it('renders a simplified single-column workspace instead of the old wizard', () => {
     render(<TextImportDialog {...createProps()} />)
 
-    expect(screen.getByRole('heading', { name: 'Import source' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Structure draft' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Merge review' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Source' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Prepare import' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Skill status' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Review' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'More options' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument()
   })
 
-  it('shows progress, elapsed time and batch metadata while importing', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-04-05T11:30:00Z'))
+  it('shows a compact skill status summary and keeps rationale behind details', async () => {
+    const user = userEvent.setup()
 
     render(
       <TextImportDialog
         {...createProps({
-          sourceName: '2 files',
-          sourceFiles: [
-            { sourceName: 'GTM_main.md', sourceType: 'file', textLength: 1200 },
-            { sourceName: 'GTM_step1.md', sourceType: 'file', textLength: 800 },
-          ],
-          statusText: 'Parsing GTM_step1.md...',
-          progress: 42,
-          modeHint: 'This import uses the local Markdown batch pipeline.',
-          isPreviewing: true,
-          previewStartedAt: Date.now() - 12_000,
-          jobMode: 'local_markdown',
-          jobType: 'batch',
-          fileCount: 5,
-          completedFileCount: 2,
-          currentFileName: 'GTM_step1.md',
-          semanticMergeStage: 'candidate_generation',
-          semanticCandidateCount: 24,
-          semanticAdjudicatedCount: 12,
-          semanticFallbackCount: 3,
+          preview: createPreview(),
+          draftTree,
+          previewTree: draftTree,
         })}
       />,
     )
 
-    expect(screen.getByRole('heading', { name: 'Import progress' })).toBeInTheDocument()
+    const skillStatus = screen.getByRole('region', { name: 'Skill status' })
+
+    expect(within(skillStatus).getByText('Attach evidence / tasks')).toBeInTheDocument()
+    expect(within(skillStatus).getByText('Process · low (42%)')).toBeInTheDocument()
+    expect(within(skillStatus).getByRole('button', { name: 'Pin type' })).toBeInTheDocument()
+    expect(within(skillStatus).queryByText('Ordered procedural signals dominate the source.')).not.toBeInTheDocument()
+
+    await user.click(within(skillStatus).getByText('Why and details'))
+
+    expect(within(skillStatus).getByText('Ordered procedural signals dominate the source.')).toBeInTheDocument()
+  })
+
+  it('opens more options from the low-confidence warning', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <TextImportDialog
+        {...createProps({
+          planningSummaries: [createPlanningSummary({ confidence: 'low', archetypeConfidence: 'low' })],
+        })}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Pin type' }))
+
+    expect(screen.getByRole('button', { name: 'More options' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('checkbox', { name: /Show import internals/i })).toBeInTheDocument()
+  })
+
+  it('shows progress, elapsed time and batch metadata while previewing', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-09T10:00:00Z'))
+
+    render(
+      <TextImportDialog
+        {...createProps({
+          sourceFiles: [
+            { sourceName: 'Launch.md', sourceType: 'file', textLength: 1200 },
+            { sourceName: 'Ops.md', sourceType: 'file', textLength: 800 },
+          ],
+          planningSummaries: [
+            createPlanningSummary(),
+            createPlanningSummary({ sourceName: 'Ops.md', confidence: 'medium' }),
+          ],
+          statusText: 'Codex is building the logic map...',
+          progress: 42,
+          isPreviewing: true,
+          previewStartedAt: Date.now() - 12_000,
+          jobType: 'batch',
+          fileCount: 5,
+          completedFileCount: 2,
+          currentFileName: 'Ops.md',
+          semanticMergeStage: 'candidate_generation',
+          semanticCandidateCount: 9,
+          semanticAdjudicatedCount: 4,
+          semanticFallbackCount: 2,
+        })}
+      />,
+    )
+
+    expect(screen.getByText('Codex is building the logic map...')).toBeInTheDocument()
     expect(screen.getByText('Progress 42% | Elapsed 12s')).toBeInTheDocument()
-    expect(screen.getByText('Files 2/5 | Current: GTM_step1.md')).toBeInTheDocument()
-    expect(screen.getByText('Semantic stage: Generating semantic candidates')).toBeInTheDocument()
-    expect(screen.getByText('Candidates 24/12 | Fallbacks 3')).toBeInTheDocument()
+    expect(screen.getByText('Files 2/5 | Current: Ops.md')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Semantic stage: Generating semantic candidates \| Candidates 9\/4 \| Fallbacks 2/),
+    ).toBeInTheDocument()
 
     act(() => {
       vi.advanceTimersByTime(2_000)
@@ -321,440 +306,118 @@ describe('TextImportDialog', () => {
     expect(screen.getByText('Progress 42% | Elapsed 14s')).toBeInTheDocument()
   })
 
-  it('shows the active pipeline badge based on the job mode', () => {
-    render(
-      <TextImportDialog
-        {...createProps({
-          statusText: 'Preparing the Codex import pipeline...',
-          modeHint: 'Using the Codex import pipeline for Markdown analysis.',
-          jobMode: 'codex_import',
-        })}
-      />,
-    )
-
-    expect(screen.getByText('Codex pipeline')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Import progress' })).toBeInTheDocument()
-  })
-
-  it('shows automatic setup by default without rendering the old option wall', () => {
-    render(<TextImportDialog {...createProps()} />)
-
-    expect(screen.getByRole('heading', { name: 'Import source' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Automatic import setup' })).toBeInTheDocument()
-    expect(screen.getByText('Smart distill')).toBeInTheDocument()
-    expect(screen.getByText('Method')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Advanced settings' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Argument/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Preserve structure/i })).not.toBeInTheDocument()
-  })
-
-  it('lets users override the automatic setup from advanced settings', async () => {
-    const user = userEvent.setup()
-    const onPresetChange = vi.fn()
-    const onArchetypeChange = vi.fn()
-
-    render(
-      <TextImportDialog
-        {...createProps({
-          onPresetChange,
-          archetypeOverride: null,
-          onArchetypeChange,
-        })}
-      />,
-    )
-
-    await user.click(screen.getByRole('button', { name: 'Advanced settings' }))
-    const comboboxes = screen.getAllByRole('combobox')
-    const presetSelect = comboboxes[1]
-    const archetypeSelect = comboboxes[2]
-    await user.selectOptions(presetSelect, 'preserve')
-    await user.selectOptions(archetypeSelect, 'argument')
-
-    expect(onPresetChange).toHaveBeenCalledWith('preserve')
-    expect(onArchetypeChange).toHaveBeenCalledWith('argument')
-  })
-
-  it('defaults the import target to the document root and warns when nesting under the current selection', async () => {
-    const user = userEvent.setup()
-    const onAnchorModeChange = vi.fn()
-
-    render(
-      <TextImportDialog
-        {...createProps({
-          onAnchorModeChange,
-        })}
-      />,
-    )
-
-    const anchorSelect = within(screen.getByRole('region', { name: 'Import target' })).getByRole('combobox')
-    expect(anchorSelect).toHaveValue('document_root')
-    expect(
-      screen.getByText(
-        'Default. Each new import starts at the document root so repeated imports stay as sibling branches.',
-      ),
-    ).toBeInTheDocument()
-    expect(screen.queryByText(/will be nested under the currently selected topic/i)).not.toBeInTheDocument()
-
-    await user.selectOptions(anchorSelect, 'current_selection')
-
-    expect(onAnchorModeChange).toHaveBeenCalledWith('current_selection')
-  })
-
-  it('shows the nesting warning when the current selection anchor is active', () => {
-    render(
-      <TextImportDialog
-        {...createProps({
-          anchorMode: 'current_selection',
-          currentSelectionLabel: 'Imported branch',
-        })}
-      />,
-    )
-
-    const anchorSelect = within(screen.getByRole('region', { name: 'Import target' })).getByRole('combobox')
-    expect(anchorSelect).toHaveValue('current_selection')
-    expect(
-      screen.getByText(
-        'Import under the currently selected topic. This can intentionally nest the next imported branch.',
-      ),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        'The next import will be nested under the currently selected topic instead of the document root.',
-      ),
-    ).toBeInTheDocument()
-  })
-
-  it('shows a low-confidence hint without blocking the source step', () => {
-    render(
-      <TextImportDialog
-        {...createProps({
-          planningSummaries: [
-            createPlanningSummary({
-              confidence: 'low',
-              presetConfidence: 'medium',
-              archetypeConfidence: 'low',
-            }),
-          ],
-        })}
-      />,
-    )
-
-    expect(
-      screen.getByText('The system already chose a default setup. You can refine it in Advanced settings.'),
-    ).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument()
-  })
-
-  it('auto-advances to the structure draft when generation completes', async () => {
-    const { rerender } = render(
-      <TextImportDialog
-        {...createProps({
-          isPreviewing: true,
-          previewStartedAt: Date.now() - 4_000,
-          statusText: 'Generating preview...',
-        })}
-      />,
-    )
-
-    expect(screen.getByRole('heading', { name: 'Import source' })).toBeInTheDocument()
-
-    rerender(
-      <TextImportDialog
-        {...createProps({
-          preview,
-          draftTree,
-          previewTree,
-          crossFileMergeSuggestions,
-          approvedConflictIds: ['conflict_1'],
-          previewFinishedAt: Date.now(),
-        })}
-      />,
-    )
-
-    expect(await screen.findByRole('heading', { name: 'Structure draft' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Merge review' })).not.toBeInTheDocument()
-  })
-
-  it('lets users switch to the draft review step before a preview exists', async () => {
-    const user = userEvent.setup()
-
-    render(<TextImportDialog {...createProps()} />)
-
-    await user.click(screen.getByRole('button', { name: /Draft review/ }))
-
-    expect(screen.getByRole('heading', { name: 'Structure draft' })).toBeInTheDocument()
-    expect(screen.getByText('No structure draft yet')).toBeInTheDocument()
-  })
-
-  it('only shows the source card when there is no progress content yet', () => {
-    render(<TextImportDialog {...createProps()} />)
-
-    expect(screen.getByRole('heading', { name: 'Import source' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Import progress' })).not.toBeInTheDocument()
-  })
-
-  it('expands selected file details inline inside the source card', async () => {
+  it('keeps batch file details collapsed by default and expands them on demand', async () => {
     const user = userEvent.setup()
 
     render(
       <TextImportDialog
         {...createProps({
           sourceFiles: [
-            { sourceName: 'GTM_main.md', sourceType: 'file', textLength: 1200 },
-            { sourceName: 'GTM_step1.md', sourceType: 'file', textLength: 800 },
+            { sourceName: 'Launch.md', sourceType: 'file', textLength: 1200 },
+            { sourceName: 'Ops.md', sourceType: 'file', textLength: 800 },
           ],
-          statusText: 'Codex is analyzing the full import context...',
-          progress: 56,
-          progressIndeterminate: true,
-          modeHint: 'Using the Codex import pipeline for Markdown analysis.',
-          isPreviewing: true,
-          previewStartedAt: Date.now() - 8_000,
+          planningSummaries: [
+            createPlanningSummary(),
+            createPlanningSummary({ sourceName: 'Ops.md', confidence: 'medium' }),
+          ],
         })}
       />,
     )
 
+    expect(screen.queryByText('Ops.md')).not.toBeInTheDocument()
+
     await user.click(screen.getByRole('button', { name: 'Show file details' }))
 
-    expect(screen.getByText('GTM_main.md')).toBeInTheDocument()
-    expect(screen.getByText('GTM_step1.md')).toBeInTheDocument()
+    expect(screen.getByText('Launch.md')).toBeInTheDocument()
+    expect(screen.getByText('Ops.md')).toBeInTheDocument()
   })
 
-  it('keeps merge review gated until the draft is confirmed', async () => {
-    const user = userEvent.setup()
+  it('keeps merge review disabled until the draft is confirmed', () => {
+    render(
+      <TextImportDialog
+        {...createProps({
+          preview: createPreview(),
+          draftTree,
+          previewTree: draftTree,
+        })}
+      />,
+    )
 
-    render(<TextImportDialog {...createProps()} />)
-
-    await user.click(screen.getByRole('button', { name: /Merge review/ }))
-
-    expect(screen.getByRole('heading', { name: 'Import source' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Merge review' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Review' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Draft' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Merge' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Confirm draft' })).toBeInTheDocument()
   })
 
-  it('shows the generating state on the draft step while preview generation is in progress', async () => {
+  it('switches to merge review after the draft is confirmed and shows merge decisions', async () => {
     const user = userEvent.setup()
+    const onToggleConflict = vi.fn()
+    const onApply = vi.fn()
 
     render(
       <TextImportDialog
         {...createProps({
-          isPreviewing: true,
-          previewStartedAt: Date.now() - 4_000,
-          statusText: 'Generating preview...',
+          preview: createPreview(),
+          draftTree,
+          previewTree: draftTree,
+          draftConfirmed: true,
+          onToggleConflict,
+          onApply,
+          crossFileMergeSuggestions: [
+            {
+              id: 'cross_1',
+              previewNodeId: 'preview_claim',
+              sourceName: 'Ops.md',
+              matchedPreviewNodeId: 'preview_existing',
+              matchedSourceName: 'Launch.md',
+              matchedTitle: 'Existing rollout channel',
+              kind: 'same_topic',
+              confidence: 'medium',
+              reason: 'This branch overlaps with another imported file.',
+            },
+          ],
         })}
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: /Draft review/ }))
-    expect(screen.getByText('Generating structure draft')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'Merge' }))
+
+    expect(screen.getByText('Conflicts')).toBeInTheDocument()
+    expect(screen.getByText('Merge suggestions')).toBeInTheDocument()
+    expect(screen.getByText('Cross-file overlaps')).toBeInTheDocument()
+    expect(screen.getByText('Warnings')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('checkbox'))
+    expect(onToggleConflict).toHaveBeenCalledWith('conflict_1')
+
+    await user.click(screen.getByRole('button', { name: 'Apply to canvas' }))
+    expect(onApply).toHaveBeenCalledTimes(1)
   })
 
-  it('confirms the draft before opening merge review', async () => {
+  it('shows the blocked merge state when the component switches tabs before the parent confirms the draft', async () => {
     const user = userEvent.setup()
     const onConfirmDraft = vi.fn()
 
     render(
       <TextImportDialog
         {...createProps({
-          preview,
+          preview: createPreview(),
           draftTree,
-          previewTree,
+          previewTree: draftTree,
           onConfirmDraft,
         })}
       />,
     )
 
-    await user.click(screen.getByRole('button', { name: 'Next' }))
-    expect(screen.getByRole('heading', { name: 'Structure draft' })).toBeInTheDocument()
-    expect(screen.getByText('Launch the campaign')).toBeInTheDocument()
-
     await user.click(screen.getByRole('button', { name: 'Confirm draft' }))
-    expect(onConfirmDraft).toHaveBeenCalled()
-    expect(screen.getByRole('heading', { name: 'Merge review' })).toBeInTheDocument()
+
+    expect(onConfirmDraft).toHaveBeenCalledTimes(1)
     expect(screen.getByText('Confirm the draft first')).toBeInTheDocument()
   })
 
-  it('shows merge review content after the draft is confirmed', async () => {
-    const user = userEvent.setup()
-
-    render(
-      <TextImportDialog
-        {...createProps({
-          preview,
-          draftTree,
-          previewTree,
-          draftConfirmed: true,
-          crossFileMergeSuggestions,
-          approvedConflictIds: ['conflict_1'],
-        })}
-      />,
-    )
-
-    await user.click(screen.getByRole('button', { name: 'Next' }))
-    expect(screen.getByRole('heading', { name: 'Structure draft' })).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'Next' }))
-    expect(screen.getByRole('heading', { name: 'Merge review' })).toBeInTheDocument()
-    expect(screen.getByText('Existing Step 1')).toBeInTheDocument()
-    expect(screen.getByText('One warning remains.')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'Back' }))
-    expect(screen.getByRole('heading', { name: 'Structure draft' })).toBeInTheDocument()
-  })
-
-  it('shows a no-review-needed state when the preview has no merge items', async () => {
-    const user = userEvent.setup()
-
-    render(
-      <TextImportDialog
-        {...createProps({
-          preview: previewWithoutReviewItems,
-          draftTree,
-          previewTree,
-          draftConfirmed: true,
-        })}
-      />,
-    )
-
-    await user.click(screen.getByRole('button', { name: /Merge review/ }))
-
-    expect(screen.getByText('No merge or conflict items to review')).toBeInTheDocument()
-  })
-
-  it('resets back to the import source step when reopened', async () => {
-    const user = userEvent.setup()
-    const props = createProps({
-      preview,
-      draftTree,
-      previewTree,
-      draftConfirmed: true,
-      crossFileMergeSuggestions,
-      approvedConflictIds: ['conflict_1'],
-    })
-
-    const { rerender } = render(<TextImportDialog {...props} />)
-
-    await user.click(screen.getByRole('button', { name: 'Next' }))
-    expect(screen.getByRole('heading', { name: 'Structure draft' })).toBeInTheDocument()
-
-    rerender(<TextImportDialog {...props} open={false} />)
-    rerender(<TextImportDialog {...props} open />)
-
-    expect(screen.getByRole('heading', { name: 'Import source' })).toBeInTheDocument()
-  })
-
-  it('shows apply progress on the merge review step and preserves it when navigating away and back', async () => {
-    const user = userEvent.setup()
-
-    render(
-      <TextImportDialog
-        {...createProps({
-          preview,
-          draftTree,
-          previewTree,
-          draftConfirmed: true,
-          crossFileMergeSuggestions,
-          isApplying: true,
-          statusText: 'Applying 3/10 operations...',
-          applyProgress: 30,
-          appliedCount: 3,
-          totalOperations: 10,
-          currentApplyLabel: 'Merging Step 1',
-        })}
-      />,
-    )
-
-    expect(screen.getByRole('heading', { name: 'Merge review' })).toBeInTheDocument()
-    expect(screen.getByText('Applying 3/10 operations...')).toBeInTheDocument()
-    expect(screen.getByText('Applying 3/10 operations')).toBeInTheDocument()
-    expect(screen.getByText('Merging Step 1')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: /Draft review/ }))
-    expect(screen.getByRole('heading', { name: 'Structure draft' })).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: /Merge review/ }))
-    expect(screen.getByText('Applying 3/10 operations...')).toBeInTheDocument()
-  })
-
-  it('shows the upload action in the empty paste state', () => {
-    render(
-      <TextImportDialog
-        {...createProps({
-          sourceName: null,
-          sourceType: null,
-          sourceFiles: [],
-          draftSourceName: 'Pasted text',
-          draftText: '',
-          rawText: '',
-          jobMode: null,
-        })}
-      />,
-    )
-
-    expect(screen.getByRole('button', { name: 'Choose Files' })).toBeInTheDocument()
-  })
-
-  it('keeps the upload action visible after files are selected', () => {
-    render(<TextImportDialog {...createProps()} />)
-
-    expect(screen.getByRole('button', { name: 'Choose Files' })).toBeInTheDocument()
-    expect(screen.getByText('1 file selected')).toBeInTheDocument()
-  })
-
-  it('renders structured diagnostics for preview errors on the source step', () => {
-    render(
-      <TextImportDialog
-        {...createProps({
-          error: {
-            message: 'The import preview timed out while waiting for the local Codex bridge. Retry after the bridge finishes the current request.',
-            rawMessage: 'stderr: model output was truncated',
-            code: 'request_failed',
-            kind: 'bridge_unavailable',
-            status: 504,
-            stage: 'waiting_codex_primary',
-            requestId: 'import_123',
-          },
-          currentFileName: 'GTM_step1.md',
-        })}
-      />,
-    )
-
-    expect(screen.getByText('The local Codex bridge is unavailable.')).toBeInTheDocument()
-    expect(
-      screen.getByText('Request import_123 | Stage waiting_codex_primary | File GTM_step1.md | HTTP 504'),
-    ).toBeInTheDocument()
-    expect(screen.getByText('Raw error: stderr: model output was truncated')).toBeInTheDocument()
-  })
-
-  it('hides manual preview actions for uploaded files', () => {
-    render(<TextImportDialog {...createProps({ rawText: '# Goals', draftText: '# Goals' })} />)
-
-    expect(screen.queryByRole('button', { name: 'Generate draft' })).not.toBeInTheDocument()
-  })
-
-  it('shows the repair action when a legacy import can be rebuilt', async () => {
+  it('reveals diagnostics and repair tools only after internals are enabled', async () => {
     const user = userEvent.setup()
     const onRepair = vi.fn()
-
-    render(
-      <TextImportDialog
-        {...createProps({
-          preview,
-          repairLabel: '修复当前导入',
-          repairDescription: '检测到旧版 GTM 模板导入。',
-          onRepair,
-        })}
-      />,
-    )
-
-    expect(screen.getByRole('button', { name: '修复当前导入' })).toBeInTheDocument()
-    expect(screen.getByText('检测到旧版 GTM 模板导入。')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: '修复当前导入' }))
-
-    expect(onRepair).toHaveBeenCalledTimes(1)
-  })
-
-  it('renders debug diagnostics when preview diagnostics are present', async () => {
-    const user = userEvent.setup()
 
     render(
       <TextImportDialog
@@ -765,22 +428,22 @@ describe('TextImportDialog', () => {
                 preprocessMs: 3,
                 planningMs: 4,
                 parseTreeMs: 5,
-                batchComposeMs: 0,
+                batchComposeMs: 1,
                 semanticCandidateMs: 2,
                 semanticAdjudicationMs: 7,
                 previewEditMs: 1,
                 applyMs: 0,
-                totalMs: 22,
+                totalMs: 23,
               },
               densityStats: {
                 previewNodeCount: 2,
                 semanticNodeCount: 2,
                 semanticEdgeCount: 1,
                 operationCount: 2,
-                sourceAnchorCount: 1,
+                sourceAnchorCount: 2,
                 foldedNoteCount: 1,
-                evidenceNodeCount: 0,
-                maxDepth: 1,
+                evidenceNodeCount: 1,
+                maxDepth: 2,
               },
               artifactReuse: {
                 contentKey: 'content',
@@ -792,11 +455,11 @@ describe('TextImportDialog', () => {
               qualitySignals: {
                 warningCount: 1,
                 genericTitleCount: 0,
-                lowConfidenceNodeCount: 0,
+                lowConfidenceNodeCount: 1,
                 foldedEvidenceCount: 0,
                 duplicateSiblingGroupCount: 0,
                 shallowSourceCount: 0,
-                needsDeepPassCount: 1,
+                needsDeepPassCount: 0,
               },
               applyEstimate: {
                 createCount: 1,
@@ -812,18 +475,74 @@ describe('TextImportDialog', () => {
                 adjudicatedCount: 2,
                 fallbackCount: 0,
               },
-              dirtySubtreeIds: ['preview_1'],
+              dirtySubtreeIds: ['preview_claim'],
               lastEditAction: 'rename',
             },
           }),
+          draftTree,
+          previewTree: draftTree,
+          onRepair,
+          repairDescription: 'A legacy import structure can be rebuilt into the new skill format.',
         })}
       />,
     )
 
-    await user.click(screen.getByText('Debug diagnostics'))
+    expect(screen.queryByText(/Timings\./)).not.toBeInTheDocument()
 
-    expect(screen.getByText(/Preprocess 3 ms \| Planning 4 ms \| Parse 5 ms/)).toBeInTheDocument()
-    expect(screen.getByText(/Artifact reuse: hints yes, units yes, plan yes/)).toBeInTheDocument()
-    expect(screen.getByText(/Last edit action: rename \| Dirty subtrees: preview_1/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'More options' }))
+    await user.click(screen.getByRole('checkbox', { name: /Show import internals/i }))
+
+    expect(screen.getByText(/Timings\./)).toBeInTheDocument()
+    expect(screen.getByText(/Density\./)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Repair current import' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Repair current import' }))
+    expect(onRepair).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows applying progress inside the merge tab', () => {
+    render(
+      <TextImportDialog
+        {...createProps({
+          preview: createPreview(),
+          draftTree,
+          previewTree: draftTree,
+          draftConfirmed: true,
+          isApplying: true,
+          statusText: 'Applying 3/10 operations...',
+          applyProgress: 30,
+          appliedCount: 3,
+          totalOperations: 10,
+          currentApplyLabel: 'Merging rollout branch',
+        })}
+      />,
+    )
+
+    const mergePanel = screen.getByRole('tabpanel', { name: 'Merge' })
+
+    expect(screen.getByRole('tab', { name: 'Merge' })).toHaveAttribute('aria-selected', 'true')
+    expect(within(mergePanel).getByText('Applying changes')).toBeInTheDocument()
+    expect(within(mergePanel).getByText('Applying 3/10 operations...')).toBeInTheDocument()
+    expect(within(mergePanel).getByText('Merging rollout branch')).toBeInTheDocument()
+  })
+
+  it('passes selected files through the dialog-owned file input', async () => {
+    const user = userEvent.setup()
+    const onChooseFiles = vi.fn()
+    const { container } = render(
+      <TextImportDialog
+        {...createProps({
+          onChooseFiles,
+        })}
+      />,
+    )
+
+    const input = container.querySelector('input[type="file"]')
+    expect(input).not.toBeNull()
+
+    const file = new File(['# Sample'], 'sample.md', { type: 'text/markdown' })
+    await user.upload(input as HTMLInputElement, file)
+
+    expect(onChooseFiles).toHaveBeenCalledWith([file])
   })
 })

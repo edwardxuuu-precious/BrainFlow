@@ -10,9 +10,11 @@ import type {
   TextImportRequest,
   TextImportResponse,
 } from '../shared/ai-contract.js'
-import type { SyncAnalyzeConflictRequest } from '../shared/sync-contract.js'
+import type { SyncAnalyzeConflictRequest, SyncResolveConflictRequest } from '../shared/sync-contract.js'
 import { createApp } from './app.js'
 import { CodexBridgeError } from './codex-bridge.js'
+import type { SyncRepository } from './repos/sync-repository.js'
+import { SyncService } from './services/sync-service.js'
 
 const status: CodexStatus = {
   cliInstalled: true,
@@ -531,5 +533,71 @@ describe('codex app', () => {
       analysisNote: null,
     })
     expect(bridge.analyzeSyncConflict).toHaveBeenCalledWith(baseAnalyzeConflictRequest)
+  })
+
+  it('returns 404 when a sync conflict resolution target is missing', async () => {
+    const repository = {
+      initialize: vi.fn().mockResolvedValue(undefined),
+      resolveConflict: vi.fn().mockRejectedValue(new Error('Conflict not found.')),
+    } as unknown as SyncRepository<unknown>
+    const syncService = new SyncService(repository, 50)
+    const app = createApp({ bridge: createBridge(), syncService })
+    const request: SyncResolveConflictRequest<unknown> = {
+      conflictId: 'conflict_missing',
+      workspaceId: 'workspace_1',
+      deviceId: 'device_1',
+      resolution: 'save_local_copy',
+    }
+
+    const response = await app.request('/api/sync/resolve-conflict', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    })
+
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ message: 'Conflict not found.' })
+  })
+
+  it('asks the client to bootstrap when pushing to a workspace that no longer exists', async () => {
+    const repository = {
+      initialize: vi.fn().mockResolvedValue(undefined),
+      applyMutation: vi.fn().mockRejectedValue(new Error('Workspace not found.')),
+    } as unknown as SyncRepository<unknown>
+    const syncService = new SyncService(repository, 50)
+    const app = createApp({ bridge: createBridge(), syncService })
+
+    const response = await app.request('/api/sync/push', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        workspaceId: 'workspace_missing',
+        deviceId: 'device_1',
+        ops: [
+          {
+            opId: 'op_1',
+            entityType: 'document',
+            entityId: 'doc_1',
+            action: 'upsert',
+            baseVersion: null,
+            payload: { id: 'doc_1', title: 'Recovered' },
+            contentHash: 'hash_doc_1',
+            clientUpdatedAt: 1,
+          },
+        ],
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      applied: [],
+      cursor: 0,
+      serverTime: expect.any(Number),
+      requiresBootstrap: true,
+    })
   })
 })

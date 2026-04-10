@@ -18,7 +18,7 @@ import {
 import { resolveAuthContext } from './auth/context.js'
 import { readSyncServerConfig } from './sync-config.js'
 import { createSyncRepository } from './repos/create-sync-repository.js'
-import { SyncConflictError, SyncService } from './services/sync-service.js'
+import { SyncApiError, SyncConflictError, SyncService } from './services/sync-service.js'
 import type {
   SyncAnalyzeConflictRequest,
   SyncBootstrapRequest,
@@ -418,6 +418,9 @@ export function createApp(options?: CreateAppOptions) {
       } catch (error) {
         if (error instanceof SyncConflictError) {
           return c.json(error.payload, 409)
+        }
+        if (error instanceof SyncApiError) {
+          return c.json({ message: error.message }, error.status as 400 | 404 | 500)
         }
         const message = error instanceof Error ? error.message : 'Request failed.'
         return c.json({ message }, 500)

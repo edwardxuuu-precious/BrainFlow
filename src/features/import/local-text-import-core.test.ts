@@ -36,7 +36,11 @@ describe('local-text-import-core', () => {
       sourceName: 'launch_notes.md',
       headingCount: 1,
     })
-    expect(built.response.views.map((view) => view.type)).toEqual(['thinking_view'])
+    expect(built.response.views.map((view) => view.type)).toEqual([
+      'thinking_view',
+      'execution_view',
+      'archive_view',
+    ])
     expect(built.response.activeViewId).toBe(built.response.defaultViewId)
     expect(built.response.previewNodes.length).toBeGreaterThan(0)
   })
@@ -133,7 +137,11 @@ describe('local-text-import-core', () => {
     expect(mainFileRoot?.parentId).toBeNull()
     expect(stepOneFileRoot?.parentId).toBe(mainFileRoot?.id)
     expect(stepOneOneFileRoot?.parentId).toBe(stepOneFileRoot?.id)
-    expect(built.response.views.map((view) => view.type)).toEqual(['thinking_view'])
+    expect(built.response.views.map((view) => view.type)).toEqual([
+      'thinking_view',
+      'execution_view',
+      'archive_view',
+    ])
     expect(built.response.crossFileMergeSuggestions).toEqual([])
   })
 
@@ -160,7 +168,8 @@ describe('local-text-import-core', () => {
       return counts
     }, {})
 
-    expect(root?.title).toBe('Import: GTM_main')
+    expect(root?.title).toBe('证据问题：我们手上有什么渠道')
+    expect(root?.title).not.toBe('Import: GTM_main')
     expect(['analysis', 'process', 'plan', 'notes']).toContain(built.response.classification.archetype)
     expect(built.response.diagnostics?.densityStats.sourceAnchorCount).toBeGreaterThan(0)
     expect(built.response.diagnostics?.densityStats.evidenceNodeCount).toBeLessThan(
@@ -181,6 +190,60 @@ describe('local-text-import-core', () => {
       headings: expect.any(Array),
       segments: expect.any(Array),
     })
+  })
+
+  it('keeps conversation-export wrapper headings out of the local thinking spine', () => {
+    const document = createMindMapDocument('Import doc')
+    const rawText = [
+      '# Markdown 记录',
+      '',
+      '## Turn 1 · User',
+      'Should we target agencies or SMB first?',
+      '',
+      '## Turn 1 · Assistant',
+      '### 结论',
+      'SMB should be the first segment.',
+      '',
+      '### 拆解',
+      '#### 痛点强度',
+      'SMB teams report repeated urgency.',
+      '#### 触达效率',
+      'Founder-led sales can reach SMB accounts quickly.',
+      '#### 下一步',
+      '- Create a target-account list for 20 SMB design partners.',
+    ].join('\n')
+
+    const built = createLocalTextImportPreview({
+      documentId: document.id,
+      documentTitle: document.title,
+      baseDocumentUpdatedAt: document.updatedAt,
+      context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
+      anchorTopicId: document.rootTopicId,
+      sourceName: 'conversation_export.md',
+      sourceType: 'file',
+      intent: 'distill_structure',
+      rawText,
+      preprocessedHints: preprocessTextToImportHints(rawText),
+      semanticHints: [],
+    })
+
+    expect(built.response.views.map((view) => view.type)).toEqual([
+      'thinking_view',
+      'execution_view',
+      'archive_view',
+    ])
+    expect(built.response.previewNodes[0]?.title).not.toBe('Markdown 记录')
+    expect(built.response.previewNodes[0]?.title).not.toBe('Turn 1 · User')
+    expect(built.response.previewNodes[0]?.title).not.toBe('Turn 1 · Assistant')
+    expect(
+      built.response.previewNodes.some(
+        (node) => node.title === 'Markdown 记录' || node.title === 'Turn 1 · User',
+      ),
+    ).toBe(false)
+    const archiveView = built.response.bundle?.views.find((view) => view.type === 'archive_view')
+    const archiveNodes =
+      archiveView ? built.response.bundle?.viewProjections[archiveView.id]?.previewNodes ?? [] : []
+    expect(archiveNodes.some((node) => node.title === 'Markdown 记录')).toBe(true)
   })
 
   it('classifies method-like text and keeps slot-aware thinking nodes', () => {
@@ -350,7 +413,11 @@ describe('local-text-import-core', () => {
     })
 
     expect(built.response.batch?.files?.every((file) => file.classification)).toBe(true)
-    expect(built.response.bundle?.views.map((view) => view.type)).toEqual(['thinking_view'])
+    expect(built.response.bundle?.views.map((view) => view.type)).toEqual([
+      'thinking_view',
+      'execution_view',
+      'archive_view',
+    ])
   })
 
   it('captures diagnostics and artifact reuse when prepared artifacts are reused', () => {

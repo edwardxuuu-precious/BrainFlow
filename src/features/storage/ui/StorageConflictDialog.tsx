@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Button, SurfacePanel } from '../../../components/ui'
 import type { SyncConflictResolution } from '../../../../shared/sync-contract'
 import type { StorageConflictRecord } from '../domain/sync-records'
@@ -103,11 +104,27 @@ function orderResolutions(
   return [recommended, ...resolutions.filter((item) => item !== recommended)]
 }
 
+function describeResolveError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '冲突处理失败，请稍后重试。'
+  if (message === 'Conflict not found.') {
+    return '云端已经找不到这条冲突，当前未自动清理本地冲突或另存副本。你可以稍后处理，或刷新同步状态后再试。'
+  }
+  return message
+}
+
 export function StorageConflictDialog({
   conflict,
   onResolve,
   onDismiss,
 }: StorageConflictDialogProps) {
+  const [resolvingResolution, setResolvingResolution] = useState<SyncConflictResolution | null>(null)
+  const [resolveError, setResolveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setResolveError(null)
+    setResolvingResolution(null)
+  }, [conflict?.id])
+
   if (!conflict) {
     return null
   }
@@ -122,6 +139,22 @@ export function StorageConflictDialog({
       ? conflict.actionableResolutions
       : getFallbackResolutions(conflict)
   const orderedResolutions = orderResolutions(conflict.recommendedResolution, actionableResolutions)
+  const isResolving = resolvingResolution !== null
+
+  const handleResolve = async (
+    resolution: SyncConflictResolution,
+    mergedPayload?: unknown,
+  ): Promise<void> => {
+    setResolveError(null)
+    setResolvingResolution(resolution)
+    try {
+      await onResolve(conflict.id, resolution, mergedPayload)
+    } catch (error) {
+      setResolveError(describeResolveError(error))
+    } finally {
+      setResolvingResolution(null)
+    }
+  }
 
   return (
     <div className={styles.overlay} data-testid="storage-conflict-dialog" onClick={onDismiss}>
@@ -221,6 +254,18 @@ export function StorageConflictDialog({
           )}
         </section>
 
+        {resolveError ? (
+          <div className={styles.errorPanel} role="alert" data-testid="storage-conflict-resolve-error">
+            <div>
+              <strong className={styles.errorTitle}>处理冲突失败</strong>
+              <p className={styles.errorText}>{resolveError}</p>
+            </div>
+            <Button tone="secondary" onClick={() => setResolveError(null)}>
+              重新选择处理方式
+            </Button>
+          </div>
+        ) : null}
+
         <div className={styles.actions} data-testid="storage-conflict-actions">
           {isAnalyzing ? (
             <Button tone="primary" disabled>
@@ -237,16 +282,15 @@ export function StorageConflictDialog({
                   key={resolution}
                   tone={isPrimary ? 'primary' : 'secondary'}
                   data-testid={`storage-conflict-action-${resolution}`}
-                  disabled={disabled}
+                  disabled={disabled || isResolving}
                   onClick={() =>
-                    void onResolve(
-                      conflict.id,
+                    void handleResolve(
                       resolution,
                       requiresMergedPayload ? conflict.mergedPayload ?? undefined : undefined,
                     )
                   }
                 >
-                  {describeResolution(resolution)}
+                  {resolvingResolution === resolution ? '正在处理...' : describeResolution(resolution)}
                 </Button>
               )
             })

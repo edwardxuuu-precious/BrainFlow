@@ -198,24 +198,25 @@ describe('text-import-job', () => {
     vi.unstubAllGlobals()
   })
 
-  it('routes structured markdown files to the local import pipeline', () => {
+  it('routes structured markdown files through the skill-backed Codex pipeline', () => {
     const request = createRequest({
       sourceName: 'structured.md',
       rawText: '# Goals\n\n## Next\n\n- Launch',
       preprocessedHints: [],
     })
+    vi.mocked(streamCodexTextImportPreview).mockResolvedValue(undefined)
 
     const handle = startTextImportJob(request, () => {})
 
-    expect(handle.mode).toBe('local_markdown')
-    expect(WorkerStub.instances).toHaveLength(1)
-    expect(WorkerStub.instances[0]?.postMessage).toHaveBeenCalledWith(
+    expect(handle.mode).toBe('codex_import')
+    expect(WorkerStub.instances).toHaveLength(0)
+    expect(vi.mocked(streamCodexTextImportPreview)).toHaveBeenCalledWith(
+      request,
+      expect.any(Function),
       expect.objectContaining({
-        type: 'start_single',
-        request,
+        signal: expect.any(AbortSignal),
       }),
     )
-    expect(vi.mocked(streamCodexTextImportPreview)).not.toHaveBeenCalled()
 
     handle.cancel()
   })
@@ -298,7 +299,7 @@ describe('text-import-job', () => {
     )
   })
 
-  it('keeps pasted text on the local pipeline', () => {
+  it('keeps pasted text on the skill-backed Codex pipeline', () => {
     const request = createRequest({
       sourceName: 'Pasted text',
       sourceType: 'paste',
@@ -338,23 +339,24 @@ describe('text-import-job', () => {
         },
       ],
     })
+    vi.mocked(streamCodexTextImportPreview).mockResolvedValue(undefined)
 
     const handle = startTextImportJob(request, () => {})
 
-    expect(handle.mode).toBe('local_markdown')
-    expect(WorkerStub.instances).toHaveLength(1)
-    expect(WorkerStub.instances[0]?.postMessage).toHaveBeenCalledWith(
+    expect(handle.mode).toBe('codex_import')
+    expect(WorkerStub.instances).toHaveLength(0)
+    expect(vi.mocked(streamCodexTextImportPreview)).toHaveBeenCalledWith(
+      request,
+      expect.any(Function),
       expect.objectContaining({
-        type: 'start_single',
-        request,
+        signal: expect.any(AbortSignal),
       }),
     )
-    expect(vi.mocked(streamCodexTextImportPreview)).not.toHaveBeenCalled()
 
     handle.cancel()
   })
 
-  it('routes structured markdown-only batches to the local worker', () => {
+  it('routes structured markdown-only batches through the skill-backed Codex pipeline', async () => {
     const baseRequest = createRequest()
     const request = {
       documentId: baseRequest.documentId,
@@ -367,23 +369,34 @@ describe('text-import-job', () => {
         createBatchFile({ sourceName: 'GTM_step1.md', rawText: '# Step 1\n\n- Align' }),
       ],
     }
+    vi.mocked(streamCodexTextImportPreview).mockImplementation(async (_request, onEvent) => {
+      onEvent({
+        type: 'result',
+        data: createPreviewResponse('Import: file', 'Structured branch'),
+      })
+    })
 
-    const handle = startTextImportBatchJob(request, () => {})
+    const resultEvent = await new Promise<TextImportJobEvent>((resolve, reject) => {
+      const handle = startTextImportBatchJob(request, (event) => {
+        if (event.type === 'result') {
+          resolve(event)
+        }
+        if (event.type === 'error') {
+          reject(new Error(event.message))
+        }
+      })
 
-    expect(handle.mode).toBe('local_markdown')
-    expect(WorkerStub.instances).toHaveLength(1)
-    expect(WorkerStub.instances[0]?.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'start_batch',
-        request,
-      }),
-    )
-    expect(vi.mocked(streamCodexTextImportPreview)).not.toHaveBeenCalled()
+      expect(handle.mode).toBe('codex_import')
+    })
 
-    handle.cancel()
+    expect(WorkerStub.instances).toHaveLength(0)
+    expect(
+      vi.mocked(streamCodexTextImportPreview).mock.calls.map(([singleRequest]) => singleRequest.sourceName),
+    ).toEqual(['GTM_main.md', 'GTM_step1.md'])
+    expect(resultEvent.mode).toBe('codex_import')
   })
 
-  it('builds mixed batch previews by streaming only weakly structured files through Codex', async () => {
+  it('builds mixed batch previews by streaming every file through the shared Codex import path', async () => {
     const baseRequest = createRequest()
     const request = {
       documentId: baseRequest.documentId,
@@ -435,7 +448,7 @@ describe('text-import-job', () => {
 
     expect(
       vi.mocked(streamCodexTextImportPreview).mock.calls.map(([singleRequest]) => singleRequest.sourceName),
-    ).toEqual(['GTM_step1.md'])
+    ).toEqual(['GTM_main.md', 'GTM_step1.md'])
     expect(resultEvent.mode).toBe('codex_import')
     expect(resultEvent.data.batch).toEqual(
       expect.objectContaining({
@@ -448,7 +461,15 @@ describe('text-import-job', () => {
         ],
       }),
     )
-    expect(resultEvent.data.crossFileMergeSuggestions).toEqual([])
+    expect(resultEvent.data.crossFileMergeSuggestions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceName: 'GTM_main.md',
+          matchedSourceName: 'GTM_step1.md',
+          kind: 'partial_overlap',
+        }),
+      ]),
+    )
   })
 
   it('fails fast on batch markdown errors and includes the failing file name', async () => {
