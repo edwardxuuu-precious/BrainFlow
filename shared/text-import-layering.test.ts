@@ -737,7 +737,7 @@ describe('text-import-layering', () => {
     ).toEqual(['先按处境切分', '再统一四维评分'])
     expect(
       thinkingProjection.previewNodes.filter((node) => node.parentId === 'module_context').map((node) => node.title),
-    ).toEqual(['核心判断', '判断依据', '潜在动作'])
+    ).toEqual(['判断依据', '潜在动作'])
     expect(
       thinkingProjection.previewNodes.filter((node) => node.parentId === 'module_context_basis').map((node) => node.id),
     ).toEqual(['basis_context_trigger', 'basis_context_job'])
@@ -758,7 +758,7 @@ describe('text-import-layering', () => {
     ).toBe(true)
   })
 
-  it('hides empty judgment basis and action groups from the thinking projection', () => {
+  it('hides empty judgment groups from the thinking projection', () => {
     const semanticNodes: KnowledgeSemanticNode[] = [
       {
         id: 'root_context',
@@ -853,7 +853,90 @@ describe('text-import-layering', () => {
     expect(
       thinkingProjection.previewNodes.filter((node) => node.parentId === 'module_research').map((node) => node.id),
     ).toEqual(['module_research_core'])
+    expect(thinkingProjection.previewNodes.some((node) => node.id === 'module_research_core')).toBe(true)
     expect(thinkingProjection.previewNodes.some((node) => node.id === 'module_research_basis')).toBe(false)
     expect(thinkingProjection.previewNodes.some((node) => node.id === 'module_research_actions')).toBe(false)
+  })
+
+  it('omits shell judgment modules from the thinking projection', () => {
+    const semanticNodes: KnowledgeSemanticNode[] = [
+      {
+        id: 'root_context',
+        type: 'question',
+        title: 'What should we validate first?',
+        summary: 'What should we validate first?',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'root_context',
+        task: null,
+      },
+      {
+        id: 'module_shell',
+        type: 'section',
+        title: 'Check whether urgency is real',
+        summary: 'Check whether urgency is real',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'judgment_module',
+        task: null,
+      },
+      {
+        id: 'module_shell_core',
+        type: 'section',
+        title: '鏍稿績鍒ゆ柇',
+        summary: '鏍稿績鍒ゆ柇',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'core_judgment_group',
+        source_module_id: 'module_shell',
+        task: null,
+      },
+      {
+        id: 'module_shell_basis',
+        type: 'section',
+        title: '鍒ゆ柇渚濇嵁',
+        summary: '鍒ゆ柇渚濇嵁',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'judgment_basis_group',
+        source_module_id: 'module_shell',
+        task: null,
+      },
+      {
+        id: 'module_shell_actions',
+        type: 'section',
+        title: '娼滃湪鍔ㄤ綔',
+        summary: '娼滃湪鍔ㄤ綔',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'potential_action_group',
+        source_module_id: 'module_shell',
+        task: null,
+      },
+    ]
+    const semanticEdges: KnowledgeSemanticEdge[] = [
+      { from: 'module_shell', to: 'root_context', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'module_shell_core', to: 'module_shell', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'module_shell_basis', to: 'module_shell', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'module_shell_actions', to: 'module_shell', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+    ]
+
+    const compiled = compileSemanticLayerViews({
+      bundleId: 'bundle_shell_v2',
+      bundleTitle: 'Research',
+      sources: [createSource('Research')],
+      semanticNodes,
+      semanticEdges,
+      fallbackInsertionParentTopicId: 'topic_root',
+      documentType: 'analysis',
+    })
+    const thinkingProjection = compiled.viewProjections[compiled.activeViewId]
+
+    expect(thinkingProjection.previewNodes.map((node) => node.id)).toEqual(['root_context'])
   })
 })

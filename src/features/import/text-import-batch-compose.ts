@@ -711,6 +711,21 @@ function collectModuleRepairCandidates(
   return deduped
 }
 
+function isGenericBatchGroupLabel(text: string | null | undefined): boolean {
+  const key = normalizeTextForMatch(text ?? '')
+  if (!key) {
+    return false
+  }
+  return (
+    key === normalizeTextForMatch('core judgment') ||
+    key === normalizeTextForMatch('judgment basis') ||
+    key === normalizeTextForMatch('potential action') ||
+    key === normalizeTextForMatch('\u6838\u5fc3\u5224\u65ad') ||
+    key === normalizeTextForMatch('\u5224\u65ad\u4f9d\u636e') ||
+    key === normalizeTextForMatch('\u6f5c\u5728\u52a8\u4f5c')
+  )
+}
+
 function inferBatchActionOutput(text: string): string | null {
   const hasOutputHint =
     /\b(?:list|checklist|table|sheet|guide|brief|report|summary|definition|matrix|scorecard|template|plan|transcript|notes?|writeup|memo)\b/i.test(text) ||
@@ -721,45 +736,44 @@ function inferBatchActionOutput(text: string): string | null {
   return text.trim()
 }
 
-function buildBatchFallbackGroupNote(role: 'basis' | 'action', candidates: string[]): string | null {
-  const first = candidates[0]?.trim()
-  if (!first) {
-    return null
-  }
-  return role === 'basis'
-    ? `Pending basis detail from merged sources: ${first.slice(0, 160)}`
-    : `Pending action detail from merged sources: ${first.slice(0, 160)}`
-}
-
 function repairMergedJudgmentGroups(
   canonicalFileRoot: TextImportPreviewNode,
   topicHintTexts: string[],
-): { autoFilledCount: number; keptGroupNoteCount: number; warnings: string[] } {
+): { autoFilledCount: number; omittedGroupCount: number; omittedModuleCount: number; warnings: string[] } {
   const canonicalRoot = selectSemanticRoot(canonicalFileRoot)
   const warnings: string[] = []
   let autoFilledCount = 0
-  let keptGroupNoteCount = 0
+  let omittedGroupCount = 0
+  let omittedModuleCount = 0
 
   const modules = canonicalRoot.children.filter((child) => child.structureRole === 'judgment_module')
   modules.forEach((moduleNode) => {
+    if (!canonicalRoot.children.includes(moduleNode)) {
+      return
+    }
     const basisGroup = moduleNode.children.find((child) => child.structureRole === 'judgment_basis_group') ?? null
     const actionGroup = moduleNode.children.find((child) => child.structureRole === 'potential_action_group') ?? null
     const candidates = collectModuleRepairCandidates(moduleNode, basisGroup, actionGroup, topicHintTexts)
 
+    const removeGroup = (groupNode: TextImportPreviewNode, role: 'core' | 'basis' | 'action') => {
+      moduleNode.children = moduleNode.children.filter((child) => child !== groupNode)
+      moduleNode.children.forEach((child, index) => {
+        child.order = index
+      })
+      omittedGroupCount += 1
+      warnings.push(
+        `[omitted-group] Judgment group "${groupNode.title}" in module "${moduleNode.title}" has no extractable ${role} candidates; omitted unsupported group.`,
+      )
+    }
+
     const ensureGroupChildren = (groupNode: TextImportPreviewNode | null, role: 'basis' | 'action') => {
-      if (!groupNode || groupNode.children.length > 0) {
+      if (!groupNode || groupNode.children.length > 0 || !moduleNode.children.includes(groupNode)) {
         return
       }
 
       const selection = selectBatchRepairCandidates(candidates, role, role === 'basis' ? 6 : 5)
       if (selection.items.length === 0) {
-        if (!groupNode.note?.trim()) {
-          groupNode.note = buildBatchFallbackGroupNote(role, candidates)
-        }
-        keptGroupNoteCount += 1
-        warnings.push(
-          `[kept-group-note] Judgment group "${groupNode.title}" in module "${moduleNode.title}" has no extractable ${role} candidates; kept group note.`,
-        )
+        removeGroup(groupNode, role)
         return
       }
 
@@ -804,11 +818,39 @@ function repairMergedJudgmentGroups(
       )
     }
 
+    const coreGroup = moduleNode.children.find((child) => child.structureRole === 'core_judgment_group') ?? null
+    if (coreGroup && coreGroup.children.length === 0) {
+      removeGroup(coreGroup, 'core')
+    }
     ensureGroupChildren(basisGroup, 'basis')
     ensureGroupChildren(actionGroup, 'action')
+
+    const hasConcreteDescendants = (node: TextImportPreviewNode): boolean =>
+      node.children.some((child) => {
+        if (
+          child.structureRole === 'judgment_module' ||
+          child.structureRole === 'core_judgment_group' ||
+          child.structureRole === 'judgment_basis_group' ||
+          child.structureRole === 'potential_action_group'
+        ) {
+          return hasConcreteDescendants(child)
+        }
+        return true
+      })
+
+    if (!hasConcreteDescendants(moduleNode)) {
+      canonicalRoot.children = canonicalRoot.children.filter((child) => child !== moduleNode)
+      canonicalRoot.children.forEach((child, index) => {
+        child.order = index
+      })
+      omittedModuleCount += 1
+      warnings.push(
+        `[omitted-shell-module] Judgment module "${moduleNode.title}" has no concrete descendants after merge repair; omitted shell module.`,
+      )
+    }
   })
 
-  return { autoFilledCount, keptGroupNoteCount, warnings }
+  return { autoFilledCount, omittedGroupCount, omittedModuleCount, warnings }
 }
 
 function buildHintTextsByCanonicalTopic(

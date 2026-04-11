@@ -2542,23 +2542,36 @@ export function buildTextImportQualityWarnings(options: {
   )
 
   if (hasJudgmentTreeNodes) {
+    const hasConcreteJudgmentDescendants = (nodeId: string): boolean =>
+      (childrenByParent.get(nodeId) ?? []).some((child) => {
+        if (
+          child.structureRole === 'judgment_module' ||
+          child.structureRole === 'core_judgment_group' ||
+          child.structureRole === 'judgment_basis_group' ||
+          child.structureRole === 'potential_action_group'
+        ) {
+          return hasConcreteJudgmentDescendants(child.id)
+        }
+        return true
+      })
     options.previewNodes
       .filter((node) => node.structureRole === 'judgment_module')
       .forEach((moduleNode) => {
+        if (!hasConcreteJudgmentDescendants(moduleNode.id)) {
+          warnings.add(
+            `Judgment module "${moduleNode.title}" has no concrete descendants and should be omitted instead of staying as a visible shell.`,
+          )
+          return
+        }
         const groupChildren = childrenByParent.get(moduleNode.id) ?? []
         const coreGroup = groupChildren.find((child) => child.structureRole === 'core_judgment_group') ?? null
-        const basisGroup =
-          groupChildren.find((child) => child.structureRole === 'judgment_basis_group') ?? null
-        const actionGroup =
-          groupChildren.find((child) => child.structureRole === 'potential_action_group') ?? null
-
-        if (!coreGroup || (childCountById.get(coreGroup.id) ?? 0) === 0) {
+        if (coreGroup && (childCountById.get(coreGroup.id) ?? 0) === 0) {
           warnings.add(`Judgment module "${moduleNode.title}" is missing a concrete 核心判断 child.`)
         }
-        if (!basisGroup || (childCountById.get(basisGroup.id) ?? 0) === 0) {
+        if (false) {
           warnings.add(`Judgment module "${moduleNode.title}" is missing concrete 判断依据 items.`)
         }
-        if (!actionGroup || (childCountById.get(actionGroup.id) ?? 0) === 0) {
+        if (false) {
           warnings.add(`Judgment module "${moduleNode.title}" is missing concrete 潜在动作 items.`)
         }
       })
@@ -2566,17 +2579,17 @@ export function buildTextImportQualityWarnings(options: {
     options.previewNodes
       .filter(
         (node) =>
-          node.structureRole === 'judgment_basis_group' || node.structureRole === 'potential_action_group',
+          node.structureRole === 'core_judgment_group' ||
+          node.structureRole === 'judgment_basis_group' ||
+          node.structureRole === 'potential_action_group',
       )
       .forEach((groupNode) => {
         if ((childCountById.get(groupNode.id) ?? 0) > 0) {
           return
         }
-        if ((groupNode.note?.length ?? 0) > 120) {
-          warnings.add(
-            `Judgment group "${groupNode.title}" still carries multiple basis/action details in note instead of grandchildren.`,
-          )
-        }
+        warnings.add(
+          `Judgment group "${groupNode.title}" has no concrete descendants and should be omitted instead of staying as a visible shell.`,
+        )
       })
   }
 

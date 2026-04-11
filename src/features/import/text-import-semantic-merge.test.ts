@@ -686,4 +686,207 @@ describe('text-import-semantic-merge', () => {
     expect(stepFile?.canonicalTopicId).toBe(mainFile?.canonicalTopicId)
     expect(stepFile?.sameAsTopicId).toBe(mainFile?.canonicalTopicId)
   })
+
+  it('omits merged empty judgment groups when no candidates can be extracted', () => {
+    const document = createMindMapDocument('Import doc')
+    const batchRequest: LocalTextImportBatchRequest = {
+      documentId: document.id,
+      documentTitle: document.title,
+      baseDocumentUpdatedAt: document.updatedAt,
+      context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
+      anchorTopicId: document.rootTopicId,
+      batchTitle: 'Import batch: Sparse GTM',
+      files: [
+        {
+          sourceName: 'GTM_main.md',
+          sourceType: 'file',
+          rawText: '# GTM main',
+          preprocessedHints: [],
+          semanticHints: [],
+          intent: 'distill_structure',
+        },
+        {
+          sourceName: 'GTM_step1.md',
+          sourceType: 'file',
+          rawText: '# GTM step1',
+          preprocessedHints: [],
+          semanticHints: [],
+          intent: 'distill_structure',
+        },
+      ],
+    }
+    const sources: BatchTextImportPreviewSource[] = [
+      {
+        ...batchRequest.files[0],
+        route: 'codex_import',
+        response: createBatchSourceResponse([
+          {
+            id: 'root_main_sparse',
+            parentId: null,
+            order: 0,
+            title: 'Who should GTM target first?',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'section',
+            semanticType: 'question',
+            structureRole: 'root_context',
+            confidence: 'high',
+          },
+          {
+            id: 'module_main_sparse',
+            parentId: 'root_main_sparse',
+            order: 0,
+            title: 'Urgency gate',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'claim',
+            semanticType: 'claim',
+            structureRole: 'judgment_module',
+            confidence: 'high',
+          },
+          {
+            id: 'core_group_main_sparse',
+            parentId: 'module_main_sparse',
+            order: 0,
+            title: 'Core judgment',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'claim',
+            semanticType: 'claim',
+            structureRole: 'core_judgment_group',
+            confidence: 'high',
+          },
+          {
+            id: 'basis_group_main_sparse',
+            parentId: 'module_main_sparse',
+            order: 1,
+            title: 'Judgment basis',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'evidence',
+            semanticType: 'evidence',
+            structureRole: 'judgment_basis_group',
+            confidence: 'high',
+          },
+          {
+            id: 'action_group_main_sparse',
+            parentId: 'module_main_sparse',
+            order: 2,
+            title: 'Potential action',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'task',
+            semanticType: 'task',
+            structureRole: 'potential_action_group',
+            confidence: 'high',
+          },
+        ]),
+      },
+      {
+        ...batchRequest.files[1],
+        route: 'codex_import',
+        response: createBatchSourceResponse([
+          {
+            id: 'root_step_sparse',
+            parentId: null,
+            order: 0,
+            title: 'Who should GTM target first?',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'section',
+            semanticType: 'question',
+            structureRole: 'root_context',
+            confidence: 'high',
+          },
+          {
+            id: 'module_step_sparse',
+            parentId: 'root_step_sparse',
+            order: 0,
+            title: 'Urgency gate',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'claim',
+            semanticType: 'claim',
+            structureRole: 'judgment_module',
+            confidence: 'high',
+          },
+          {
+            id: 'core_group_step_sparse',
+            parentId: 'module_step_sparse',
+            order: 0,
+            title: 'Core judgment',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'claim',
+            semanticType: 'claim',
+            structureRole: 'core_judgment_group',
+            confidence: 'high',
+          },
+          {
+            id: 'basis_group_step_sparse',
+            parentId: 'module_step_sparse',
+            order: 1,
+            title: 'Judgment basis',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'evidence',
+            semanticType: 'evidence',
+            structureRole: 'judgment_basis_group',
+            confidence: 'high',
+          },
+          {
+            id: 'action_group_step_sparse',
+            parentId: 'module_step_sparse',
+            order: 2,
+            title: 'Potential action',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'task',
+            semanticType: 'task',
+            structureRole: 'potential_action_group',
+            confidence: 'high',
+          },
+        ]),
+      },
+    ]
+
+    const composed = composeTextImportBatchPreview(batchRequest, sources)
+    const rootNodes = composed.previewNodes.filter((node) => node.parentId === null)
+    const sparseModule = composed.previewNodes.find(
+      (node) => node.structureRole === 'judgment_module' && node.title === 'Urgency gate',
+    )
+    const sparseBasisGroup = composed.previewNodes.find(
+      (node) => node.parentId === sparseModule?.id && node.structureRole === 'judgment_basis_group',
+    )
+    const sparseActionGroup = composed.previewNodes.find(
+      (node) => node.parentId === sparseModule?.id && node.structureRole === 'potential_action_group',
+    )
+
+    expect(rootNodes).toHaveLength(1)
+    expect(sparseModule).toBeUndefined()
+    expect(sparseBasisGroup).toBeUndefined()
+    expect(sparseActionGroup).toBeUndefined()
+    expect((composed.warnings ?? []).some((warning) => warning.includes('[omitted-group]'))).toBe(true)
+    expect((composed.warnings ?? []).some((warning) => warning.includes('[omitted-shell-module]'))).toBe(true)
+  })
 })

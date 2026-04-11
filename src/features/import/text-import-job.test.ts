@@ -506,11 +506,15 @@ describe('text-import-job', () => {
     expect(thinkingRoots).toHaveLength(1)
     expect(thinkingRoots[0]?.title).toBe('GTM_main')
     const emptyJudgmentGroups = resultEvent.data.previewNodes.filter((node: TextImportResponse['previewNodes'][number]) => {
-      if (node.structureRole !== 'judgment_basis_group' && node.structureRole !== 'potential_action_group') {
+      if (
+        node.structureRole !== 'core_judgment_group' &&
+        node.structureRole !== 'judgment_basis_group' &&
+        node.structureRole !== 'potential_action_group'
+      ) {
         return false
       }
       const hasChildren = resultEvent.data.previewNodes.some((child: TextImportResponse['previewNodes'][number]) => child.parentId === node.id)
-      return !hasChildren && !(node.note?.trim())
+      return !hasChildren
     })
     expect(emptyJudgmentGroups).toHaveLength(0)
   })

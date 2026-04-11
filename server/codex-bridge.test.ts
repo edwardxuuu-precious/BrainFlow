@@ -441,6 +441,12 @@ describe('createCodexBridge', () => {
       '- Rewrite the visible thinking structure into a judgment tree around the core question instead of preserving the source outline.',
     )
     expect(execute.mock.calls[0][0]).toContain(
+      '- Do not jump from source text directly to the visible tree. First understand the document semantically, then distill a sparse internal semantic-card inventory, then emit visible nodes.',
+    )
+    expect(execute.mock.calls[0][0]).toContain(
+      '- Use sparse emission. If a semantic role is unsupported, omit it. Do not fabricate placeholder sub-branches for completeness.',
+    )
+    expect(execute.mock.calls[0][0]).toContain(
       '- Choose the root from the highest-information semantic unit, such as the core question, thesis, main decision, or main job-to-be-done. The root may keep light source context in note, but do not default it to the file title.',
     )
     expect(execute.mock.calls[0][0]).toContain(
@@ -944,7 +950,7 @@ describe('createCodexBridge', () => {
     ])
   })
 
-  it('keeps abstract reminders out of repaired task nodes and keeps a fallback group note when actions stay empty', async () => {
+  it('keeps abstract reminders out of repaired task nodes and omits unsupported action groups when actions stay empty', async () => {
     const request: TextImportRequest = {
       ...baseImportRequest,
       sourceName: 'research_notes.md',
@@ -1087,22 +1093,157 @@ describe('createCodexBridge', () => {
     const result = await bridge.previewTextImport(request)
 
     expect(result.previewNodes.filter((node) => node.parentId === 'module_adoption_actions')).toEqual([])
-    expect(
-      result.previewNodes.find((node) => node.id === 'module_adoption_actions')?.note?.length ?? 0,
-    ).toBeGreaterThan(0)
+    expect(result.previewNodes.some((node) => node.id === 'module_adoption_actions')).toBe(false)
     expect(
       result.semanticNodes.some(
         (node) => node.source_module_id === 'module_adoption' && node.type === 'task',
       ),
     ).toBe(false)
     expect(
-      result.warnings.some((warning) =>
-        warning.includes('[kept-group-note] Judgment group "潜在动作" in module "First verify whether adoption language is understood"'),
+      (result.warnings ?? []).some(
+        (warning) =>
+          warning.includes('[omitted-group] Judgment group') &&
+          warning.includes('First verify whether adoption language is understood'),
       ),
     ).toBe(true)
-    expect(result.warnings).toContain(
-      'Judgment module "First verify whether adoption language is understood" is missing concrete 潜在动作 items.',
+  })
+
+  it('omits unsupported judgment groups and shell modules when no anchors or extractable candidates exist', async () => {
+    const request: TextImportRequest = {
+      ...baseImportRequest,
+      sourceName: 'sparse-plan.txt',
+      preprocessedHints: [],
+      semanticHints: [],
+    }
+    const execute = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        spec_version: 'document-to-logic-map/v2',
+        document_type: 'analysis',
+        document_type_confidence: 0.82,
+        document_type_rationale: 'Sparse judgment skeleton with no extractable detail.',
+        summary: 'Sparse preview',
+        nodes: [
+          {
+            id: 'root_context',
+            parent_id: null,
+            order: 0,
+            type: 'question',
+            title: 'Who should we target first in GTM?',
+            note: null,
+            semantic_role: 'question',
+            confidence: 'high',
+            source_spans: [],
+            structure_role: 'root_context',
+            locked: false,
+            source_module_id: null,
+            proposed_reorder: null,
+            proposed_reparent: null,
+            task: null,
+          },
+          {
+            id: 'module_sparse',
+            parent_id: 'root_context',
+            order: 0,
+            type: 'section',
+            title: 'Check whether demand urgency is real',
+            note: null,
+            semantic_role: 'section',
+            confidence: 'high',
+            source_spans: [],
+            structure_role: 'judgment_module',
+            locked: false,
+            source_module_id: null,
+            proposed_reorder: null,
+            proposed_reparent: null,
+            task: null,
+          },
+          {
+            id: 'module_sparse_core',
+            parent_id: 'module_sparse',
+            order: 0,
+            type: 'section',
+            title: 'Core judgment',
+            note: null,
+            semantic_role: 'section',
+            confidence: 'high',
+            source_spans: [],
+            structure_role: 'core_judgment_group',
+            locked: false,
+            source_module_id: 'module_sparse',
+            proposed_reorder: null,
+            proposed_reparent: null,
+            task: null,
+          },
+          {
+            id: 'module_sparse_basis',
+            parent_id: 'module_sparse',
+            order: 1,
+            type: 'section',
+            title: 'Judgment basis',
+            note: null,
+            semantic_role: 'section',
+            confidence: 'high',
+            source_spans: [],
+            structure_role: 'judgment_basis_group',
+            locked: false,
+            source_module_id: 'module_sparse',
+            proposed_reorder: null,
+            proposed_reparent: null,
+            task: null,
+          },
+          {
+            id: 'module_sparse_actions',
+            parent_id: 'module_sparse',
+            order: 2,
+            type: 'section',
+            title: 'Potential action',
+            note: null,
+            semantic_role: 'section',
+            confidence: 'high',
+            source_spans: [],
+            structure_role: 'potential_action_group',
+            locked: false,
+            source_module_id: 'module_sparse',
+            proposed_reorder: null,
+            proposed_reparent: null,
+            task: null,
+          },
+        ],
+        warnings: [],
+      }),
     )
+
+    const bridge = createCodexBridge({
+      runner: {
+        getStatus: vi.fn().mockResolvedValue(readyStatus),
+        execute,
+        executeMessage: vi.fn(),
+      },
+      promptStore: createPromptStore(),
+    })
+
+    const result = await bridge.previewTextImport(request)
+
+    expect(result.previewNodes.some((node) => node.id === 'module_sparse')).toBe(false)
+    expect(result.previewNodes.some((node) => node.id === 'module_sparse_basis')).toBe(false)
+    expect(result.previewNodes.some((node) => node.id === 'module_sparse_actions')).toBe(false)
+    expect(
+      (result.warnings ?? []).some((warning) =>
+        warning.includes('[omitted-group] Judgment group "Judgment basis" in module "Check whether demand urgency is real"'),
+      ),
+    ).toBe(true)
+    expect(
+      (result.warnings ?? []).some((warning) =>
+        warning.includes('[omitted-group] Judgment group "Potential action" in module "Check whether demand urgency is real"'),
+      ),
+    ).toBe(true)
+    expect(
+      (result.warnings ?? []).some((warning) =>
+        warning.includes(
+          '[omitted-shell-module] Judgment module "Check whether demand urgency is real" has no concrete descendants after repair; omitted shell module.',
+        ),
+      ),
+    ).toBe(true)
   })
 
   it('strips formatting fields from imported structural operations', async () => {

@@ -2486,48 +2486,104 @@ function documentToLogicMapRepairAnchorsOverlap(
   return anchors.some((anchor) => lineStart <= anchor.lineEnd && lineEnd >= anchor.lineStart)
 }
 
+function collectDocumentToLogicMapRepairContextKeywords(
+  values: Array<string | null | undefined>,
+): string[] {
+  const keywords: string[] = []
+  const seen = new Set<string>()
+  values.forEach((value) => {
+    const text = normalizeDocumentToLogicMapRepairText(value)
+    if (!text) {
+      return
+    }
+    const englishTokens = text.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []
+    const cjkTokens = text.match(/[\u4e00-\u9fff]{2,}/g) ?? []
+    ;[...englishTokens, ...cjkTokens].forEach((token) => {
+      const normalized = normalizeDocumentToLogicMapRepairKey(token)
+      if (!normalized || seen.has(normalized)) {
+        return
+      }
+      seen.add(normalized)
+      keywords.push(token)
+    })
+  })
+  return keywords.slice(0, 24)
+}
+
+function documentToLogicMapRepairTextMatchesKeywords(text: string, keywords: string[]): boolean {
+  if (keywords.length === 0) {
+    return true
+  }
+  const lower = text.toLowerCase()
+  return keywords.some((keyword) => lower.includes(keyword.toLowerCase()))
+}
+
 function collectDocumentToLogicMapRepairCandidatesFromHints(
   request: TextImportRequest,
   anchors: TextImportNodePlan['sourceAnchors'],
   fallbackConfidence: TextImportNodePlan['confidence'],
+  contextTexts: Array<string | null | undefined> = [],
 ): DocumentToLogicMapRepairCandidate[] {
-  if (anchors.length === 0) {
-    return []
-  }
-
+  const scopedByAnchors = anchors.length > 0
+  const contextKeywords = collectDocumentToLogicMapRepairContextKeywords(contextTexts)
   const candidates: DocumentToLogicMapRepairCandidate[] = []
+  const fallbackCandidates: DocumentToLogicMapRepairCandidate[] = []
+  const pushCandidate = (
+    text: string,
+    sourceAnchors: TextImportNodePlan['sourceAnchors'],
+    confidence: TextImportNodePlan['confidence'],
+  ) => {
+    const normalized = normalizeDocumentToLogicMapRepairText(text)
+    if (!normalized) {
+      return
+    }
+    const candidate: DocumentToLogicMapRepairCandidate = {
+      text: normalized,
+      sourceAnchors,
+      confidence,
+    }
+    if (!scopedByAnchors && contextKeywords.length > 0) {
+      if (documentToLogicMapRepairTextMatchesKeywords(normalized, contextKeywords)) {
+        candidates.push(candidate)
+      } else {
+        fallbackCandidates.push(candidate)
+      }
+      return
+    }
+    candidates.push(candidate)
+  }
 
   request.preprocessedHints
     .filter((hint) => hint.kind !== 'heading')
-    .filter((hint) => documentToLogicMapRepairAnchorsOverlap(anchors, hint.lineStart, hint.lineEnd))
+    .filter((hint) =>
+      scopedByAnchors ? documentToLogicMapRepairAnchorsOverlap(anchors, hint.lineStart, hint.lineEnd) : true,
+    )
     .forEach((hint) => {
       const texts = hint.items?.length ? hint.items : splitDocumentToLogicMapRepairText(hint.text)
       texts.forEach((text) => {
-        const normalized = normalizeDocumentToLogicMapRepairText(text)
-        if (!normalized) {
-          return
-        }
-        candidates.push({
-          text: normalized,
-          sourceAnchors: [{ lineStart: hint.lineStart, lineEnd: hint.lineEnd }],
-          confidence: fallbackConfidence,
-        })
+        pushCandidate(
+          text,
+          [{ lineStart: hint.lineStart, lineEnd: hint.lineEnd }],
+          fallbackConfidence,
+        )
       })
     })
 
   request.semanticHints
-    .filter((hint) => documentToLogicMapRepairAnchorsOverlap(anchors, hint.lineStart, hint.lineEnd))
+    .filter((hint) =>
+      scopedByAnchors ? documentToLogicMapRepairAnchorsOverlap(anchors, hint.lineStart, hint.lineEnd) : true,
+    )
     .forEach((hint) => {
-      const normalized = normalizeDocumentToLogicMapRepairText(hint.text)
-      if (!normalized) {
-        return
-      }
-      candidates.push({
-        text: normalized,
-        sourceAnchors: [{ lineStart: hint.lineStart, lineEnd: hint.lineEnd }],
-        confidence: hint.confidence,
-      })
+      pushCandidate(
+        hint.text,
+        [{ lineStart: hint.lineStart, lineEnd: hint.lineEnd }],
+        hint.confidence,
+      )
     })
+
+  if (!scopedByAnchors && candidates.length === 0 && fallbackCandidates.length > 0) {
+    candidates.push(...fallbackCandidates.slice(0, 24))
+  }
 
   return candidates
 }
@@ -2747,21 +2803,21 @@ function selectDocumentToLogicMapRepairCandidates(
   }
 }
 
-function buildDocumentToLogicMapGroupFallbackNote(options: {
-  role: DocumentToLogicMapRepairCandidateRole
-  groupNode: NormalizedDocumentToLogicMapNode
-  moduleNode: NormalizedDocumentToLogicMapNode | null
-  candidates: DocumentToLogicMapRepairCandidate[]
-}): string | null {
-  const fallback =
-    options.candidates[0]?.text ??
-    normalizeDocumentToLogicMapRepairText(options.moduleNode?.note) ??
-    normalizeDocumentToLogicMapRepairText(options.groupNode.note)
-  if (!fallback) {
-    return null
+function isDocumentToLogicMapGenericGroupLabel(text: string | null | undefined): boolean {
+  const normalized = normalizeDocumentToLogicMapRepairKey(normalizeDocumentToLogicMapRepairText(text) ?? '')
+  if (!normalized) {
+    return false
   }
-  const prefix = options.role === 'basis' ? 'Pending basis detail from source: ' : 'Pending action detail from source: '
-  return `${prefix}${buildDocumentToLogicMapRepairTitle(fallback)}`
+  return (
+    normalized === 'corejudgment' ||
+    normalized === 'judgmentbasis' ||
+    normalized === 'potentialaction' ||
+    normalized === 'basis' ||
+    normalized === 'action' ||
+    normalized === normalizeDocumentToLogicMapRepairKey('\u6838\u5fc3\u5224\u65ad') ||
+    normalized === normalizeDocumentToLogicMapRepairKey('\u5224\u65ad\u4f9d\u636e') ||
+    normalized === normalizeDocumentToLogicMapRepairKey('\u6f5c\u5728\u52a8\u4f5c')
+  )
 }
 
 function collectDocumentToLogicMapRepairCandidates(options: {
@@ -2788,6 +2844,7 @@ function collectDocumentToLogicMapRepairCandidates(options: {
   }
 
   const coreGroup = options.moduleChildren.find((child) => child.structureRole === 'core_judgment_group') ?? null
+  const coreChildren = coreGroup ? options.childrenByParent.get(coreGroup.id) ?? [] : []
   if (coreGroup) {
     appendDocumentToLogicMapRepairCandidatesFromText(
       candidates,
@@ -2795,7 +2852,6 @@ function collectDocumentToLogicMapRepairCandidates(options: {
       coreGroup.sourceAnchors,
       coreGroup.confidence,
     )
-    const coreChildren = options.childrenByParent.get(coreGroup.id) ?? []
     coreChildren.forEach((coreChild) => {
       appendDocumentToLogicMapRepairCandidatesFromText(
         candidates,
@@ -2821,6 +2877,15 @@ function collectDocumentToLogicMapRepairCandidates(options: {
     options.request,
     sourceAnchors,
     options.moduleNode?.confidence ?? options.groupNode.confidence,
+    [
+      options.groupNode.title,
+      options.groupNode.note,
+      options.moduleNode?.title ?? null,
+      options.moduleNode?.note ?? null,
+      coreGroup?.title ?? null,
+      coreGroup?.note ?? null,
+      ...coreChildren.flatMap((child) => [child.title, child.note]),
+    ],
   )
 
   return dedupeDocumentToLogicMapRepairCandidates([...candidates, ...fromHints])
@@ -2873,6 +2938,41 @@ function repairDocumentToLogicMapJudgmentTree(
     rebuildChildrenByParent()
   }
 
+  const removeSubtree = (nodeId: string) => {
+    const idsToRemove = new Set<string>()
+    const stack = [nodeId]
+    while (stack.length > 0) {
+      const currentId = stack.pop()
+      if (!currentId || idsToRemove.has(currentId)) {
+        continue
+      }
+      idsToRemove.add(currentId)
+      ;(childrenByParent.get(currentId) ?? []).forEach((child) => stack.push(child.id))
+    }
+    for (let index = repaired.length - 1; index >= 0; index -= 1) {
+      const node = repaired[index]
+      if (!idsToRemove.has(node.id)) {
+        continue
+      }
+      repaired.splice(index, 1)
+      nodesById.delete(node.id)
+    }
+    rebuildChildrenByParent()
+  }
+
+  const hasConcreteJudgmentDescendants = (nodeId: string): boolean =>
+    (childrenByParent.get(nodeId) ?? []).some((child) => {
+      if (
+        child.structureRole === 'judgment_module' ||
+        child.structureRole === 'core_judgment_group' ||
+        child.structureRole === 'judgment_basis_group' ||
+        child.structureRole === 'potential_action_group'
+      ) {
+        return hasConcreteJudgmentDescendants(child.id)
+      }
+      return true
+    })
+
   const repairWarnings = new Set<string>()
   const groups = repaired.filter(
     (node) =>
@@ -2882,6 +2982,9 @@ function repairDocumentToLogicMapJudgmentTree(
   )
 
   groups.forEach((groupNode) => {
+    if (!nodesById.has(groupNode.id)) {
+      return
+    }
     if ((childrenByParent.get(groupNode.id)?.length ?? 0) > 0) {
       return
     }
@@ -2892,7 +2995,11 @@ function repairDocumentToLogicMapJudgmentTree(
 
     if (groupNode.structureRole === 'core_judgment_group') {
       const candidateText = normalizeDocumentToLogicMapRepairText(groupNode.note)
-      if (!candidateText) {
+      if (!candidateText || isDocumentToLogicMapGenericGroupLabel(candidateText)) {
+        removeSubtree(groupNode.id)
+        repairWarnings.add(
+          `[omitted-group] Judgment group "${groupNode.title}" in module "${moduleNode?.title ?? 'unknown module'}" has no concrete core judgment; omitted group.`,
+        )
         return
       }
 
@@ -2931,16 +3038,9 @@ function repairDocumentToLogicMapJudgmentTree(
       const basisCandidates = basisSelection.candidates
 
       if (basisCandidates.length === 0) {
-        if (!normalizeDocumentToLogicMapRepairText(groupNode.note)) {
-          groupNode.note = buildDocumentToLogicMapGroupFallbackNote({
-            role: 'basis',
-            groupNode,
-            moduleNode,
-            candidates,
-          })
-        }
+        removeSubtree(groupNode.id)
         repairWarnings.add(
-          `[kept-group-note] Judgment group "${groupNode.title}" in module "${moduleNode?.title ?? 'unknown module'}" has no extractable basis candidates; kept group note.`,
+          `[omitted-group] Judgment group "${groupNode.title}" in module "${moduleNode?.title ?? 'unknown module'}" has no extractable basis candidates; omitted unsupported group.`,
         )
         return
       }
@@ -2976,16 +3076,9 @@ function repairDocumentToLogicMapJudgmentTree(
     const actionCandidates = actionSelection.candidates
 
     if (actionCandidates.length === 0) {
-      if (!normalizeDocumentToLogicMapRepairText(groupNode.note)) {
-        groupNode.note = buildDocumentToLogicMapGroupFallbackNote({
-          role: 'action',
-          groupNode,
-          moduleNode,
-          candidates,
-        })
-      }
+      removeSubtree(groupNode.id)
       repairWarnings.add(
-        `[kept-group-note] Judgment group "${groupNode.title}" in module "${moduleNode?.title ?? 'unknown module'}" has no extractable action candidates; kept group note.`,
+        `[omitted-group] Judgment group "${groupNode.title}" in module "${moduleNode?.title ?? 'unknown module'}" has no extractable action candidates; omitted unsupported group.`,
       )
       return
     }
@@ -3024,6 +3117,21 @@ function repairDocumentToLogicMapJudgmentTree(
       `[auto-filled] Judgment group "${groupNode.title}" in module "${moduleNode?.title ?? 'unknown module'}" was auto-filled with ${actionCandidates.length} inferred action items (${actionSelection.mode}).`,
     )
   })
+
+  repaired
+    .filter((node) => node.structureRole === 'judgment_module')
+    .forEach((moduleNode) => {
+      if (!nodesById.has(moduleNode.id)) {
+        return
+      }
+      if (hasConcreteJudgmentDescendants(moduleNode.id)) {
+        return
+      }
+      removeSubtree(moduleNode.id)
+      repairWarnings.add(
+        `[omitted-shell-module] Judgment module "${moduleNode.title}" has no concrete descendants after repair; omitted shell module.`,
+      )
+    })
 
   return {
     nodes: repaired,
@@ -4383,6 +4491,8 @@ function buildDocumentToLogicMapPrompt(
     '- Follow the `document-to-logic-map/v2` input and output contracts exactly.',
     '- First classify the source as analysis, process, plan, or notes.',
     '- Rewrite the visible thinking structure into a judgment tree around the core question instead of preserving the source outline.',
+    '- Do not jump from source text directly to the visible tree. First understand the document semantically, then distill a sparse internal semantic-card inventory, then emit visible nodes.',
+    '- The semantic-card inventory is an internal protocol step only. Do not add it to the JSON. Use it to resolve role, source spans, module binding, local judgment anchor, promotion decision, and emission target before tree construction.',
     '- Treat wrapper headings such as 说明, 备注, 对话记录, 用户, 助手, 文件格式, 本文说明, 当前对话整理, 对话整理, Markdown 记录, Turn n · User, and Turn n · Assistant as archival unless they clearly carry the thesis.',
     '- Wrapper headings and conversation-export scaffolding must stay out of the visible thinking spine. Keep them only for archive handling.',
     '- For conversation-export documents, keep only the core question and the judgment modules in the visible tree. Do not surface 用户, 助手, 对话记录, 说明, or 备注 as visible logic branches.',
@@ -4391,6 +4501,11 @@ function buildDocumentToLogicMapPrompt(
     '- `semantic_role` must equal `type` for every node.',
     '- Visible level-1 branches must be independent judgment modules with judgment-phrase titles. Do not mix question sentences, neutral theme labels, and top-level tasks at the same level.',
     '- Order judgment modules by prerequisite or causal dependency, not by source order or heading depth. Use source order only as a weak tie-breaker.',
+    '- Keep the visible root core-question-centered and keep judgment modules as the visible level-1 branches, but do not force every module to display all three groups if the source does not support them.',
+    '- The fixed group labels are conditional emission targets, not mandatory placeholders. Unsupported groups must be omitted instead of shown as empty shells.',
+    '- Use mixed-semantics split by default. If one source span contains judgment plus evidence plus action intent, split it into multiple semantic cards and then emit multiple descendants instead of one summary node or one long note.',
+    '- If a source span contains an explicit judgment, use that judgment as the local anchor. Attach evidence, validation methods, pass criteria, checks, interview prompts, and observations under 鍒ゆ柇渚濇嵁. Attach action intent and task outputs under 娼滃湪鍔ㄤ綔.',
+    '- Promote to a hypothesis or judgment only when the source contains a supportable or falsifiable claim. Promote to a validation method only when the source gives a concrete way to test, compare, interview, inspect, score, or verify. Promote to pass criteria only when the source gives an explicit threshold, success condition, acceptance condition, or convergence standard. Promote to task only when the action intent is concrete enough to support an identifiable execution output. Otherwise keep the weaker role instead of upgrading for completeness.',
     '- Each judgment module must use the fixed skeleton: 核心判断 -> 判断依据 -> 潜在动作.',
     '- Treat 判断依据 as a grouping layer, not the main information layer. Prefer concrete basis_item grandchildren over group-level summaries.',
     '- If the source contains concrete checks, interview prompts, evidence conditions, criteria, or observation points, emit them as separate basis_item children under 判断依据.',
@@ -4402,6 +4517,9 @@ function buildDocumentToLogicMapPrompt(
     '- Extract tasks with high recall. If the action is clear but the deliverable is incomplete, infer `task.output` and mark `inferred_output=true` instead of dropping the task.',
     '- Convert only source-grounded validation,整理,核查,汇总,访谈,评分,建表, and output intent into tasks. Infer outputs when needed, but do not invent new workstreams or strategy packages beyond the source.',
     '- Keep logic tasks under their owning judgment module. Do not let top-level tasks such as 制作筛选表抢占一级分支 unless the whole document is a pure execution plan.',
+    '- Use sparse emission. If a semantic role is unsupported, omit it. Do not fabricate placeholder sub-branches for completeness.',
+    '- Basis, action, and core judgment groups are not summary containers. Do not keep a visible judgment group if it has no concrete descendants. Note-only shells are invalid.',
+    '- Visible-tree emission is fail-closed: supported concrete descendants must be emitted, unsupported roles must be omitted, and shell modules with no concrete descendants must not survive.',
     '- Return node-level metadata for structure_role, locked, proposed_reorder, proposed_reparent, and source_module_id, plus task metadata for depends_on, inferred_output, and mirrored_task_id.',
     '- Always emit source-role and topic-merge metadata at top-level: source_role, canonical_topic_id, same_as_topic_id, merge_mode, merge_confidence, semantic_fingerprint.',
     '- source_role must be one of canonical_knowledge, context_record, supporting_material.',
@@ -4411,8 +4529,8 @@ function buildDocumentToLogicMapPrompt(
     '- Keep titles short and use child nodes, not long notes, to carry basis items and actions.',
     '- Preserve source-grounded spans and confidence for every node.',
     mode === 'repair'
-      ? '- This is a repair attempt because the previous output was not schema-compatible or structurally weak. Tighten the judgment tree, remove duplicates, and restore the fixed module skeleton.'
-      : '- Prefer a complete, stable judgment tree on the first attempt.',
+      ? '- This is a repair attempt because the previous output was not schema-compatible or structurally weak. Tighten the semantic-card inventory, remove shell groups, split mixed roles, omit unsupported groups, and remove shell modules.'
+      : '- Prefer a complete, stable judgment tree on the first attempt, but stay sparse and omit unsupported roles instead of fabricating completeness.',
     '',
     'Skill input JSON:',
     promptContextText,

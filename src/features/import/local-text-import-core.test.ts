@@ -206,11 +206,15 @@ describe('local-text-import-core', () => {
     expect(stepFile?.canonicalTopicId).toBe(mainFile?.canonicalTopicId)
     expect(stepFile?.sameAsTopicId).toBe(mainFile?.canonicalTopicId)
     const emptyJudgmentGroups = built.response.previewNodes.filter((node) => {
-      if (node.structureRole !== 'judgment_basis_group' && node.structureRole !== 'potential_action_group') {
+      if (
+        node.structureRole !== 'core_judgment_group' &&
+        node.structureRole !== 'judgment_basis_group' &&
+        node.structureRole !== 'potential_action_group'
+      ) {
         return false
       }
       const hasChildren = built.response.previewNodes.some((child) => child.parentId === node.id)
-      return !hasChildren && !(node.note?.trim())
+      return !hasChildren
     })
     expect(emptyJudgmentGroups).toHaveLength(0)
   })

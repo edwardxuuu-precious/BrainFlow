@@ -1045,13 +1045,33 @@ function shouldHideEmptyJudgmentGroup(
   edgesByParent: Map<string, KnowledgeSemanticEdge[]>,
 ): boolean {
   if (
+    node.structure_role !== 'core_judgment_group' &&
     node.structure_role !== 'judgment_basis_group' &&
     node.structure_role !== 'potential_action_group'
   ) {
     return false
   }
 
-  return collectJudgmentChildren(node.id, nodesById, edgesByParent).length === 0
+  const hasChildren = collectJudgmentChildren(node.id, nodesById, edgesByParent).length > 0
+  return !hasChildren
+}
+
+function hasConcreteJudgmentDescendants(
+  nodeId: string,
+  nodesById: Map<string, KnowledgeSemanticNode>,
+  edgesByParent: Map<string, KnowledgeSemanticEdge[]>,
+): boolean {
+  return collectJudgmentChildren(nodeId, nodesById, edgesByParent).some((child) => {
+    if (
+      child.structure_role === 'judgment_module' ||
+      child.structure_role === 'core_judgment_group' ||
+      child.structure_role === 'judgment_basis_group' ||
+      child.structure_role === 'potential_action_group'
+    ) {
+      return hasConcreteJudgmentDescendants(child.id, nodesById, edgesByParent)
+    }
+    return true
+  })
 }
 
 function selectThinkingCenter(options: {
@@ -1304,14 +1324,21 @@ function createThinkingProjection(options: {
       )
 
       collectJudgmentChildren(node.id, nodesById, edgesByParent)
-        .filter((child) => !shouldHideEmptyJudgmentGroup(child, nodesById, edgesByParent))
+        .filter((child) => {
+          if (child.structure_role === 'judgment_module') {
+            return hasConcreteJudgmentDescendants(child.id, nodesById, edgesByParent)
+          }
+          return !shouldHideEmptyJudgmentGroup(child, nodesById, edgesByParent)
+        })
         .forEach((child, childIndex) => {
           walkJudgmentBranch(child, node.id, childIndex)
         })
     }
 
     const judgmentModules = collectJudgmentChildren(rootContext.id, nodesById, edgesByParent).filter(
-      (node) => node.structure_role === 'judgment_module',
+      (node) =>
+        node.structure_role === 'judgment_module' &&
+        hasConcreteJudgmentDescendants(node.id, nodesById, edgesByParent),
     )
     judgmentModules.forEach((module, moduleIndex) => {
       walkJudgmentBranch(module, rootContext.id, moduleIndex)
