@@ -1,9 +1,11 @@
 import type {
   CodexApiError,
+  TextImportProgressEntry,
   TextImportRequest,
   TextImportResponse,
   TextImportRunStage,
   TextImportStreamEvent,
+  TextImportTraceEntry,
 } from '../../../shared/ai-contract'
 import type { CodexRequestFailureKind } from '../ai/ai-client'
 import { composeTextImportBatchPreview, type BatchTextImportPreviewSource } from './text-import-batch-compose'
@@ -34,6 +36,18 @@ export type TextImportJobEvent =
       semanticAdjudicatedCount?: number
       semanticFallbackCount?: number
       requestId?: string
+    }
+  | {
+      type: 'progress'
+      entry: TextImportProgressEntry
+      mode: TextImportJobMode
+      jobType: TextImportJobType
+    }
+  | {
+      type: 'trace'
+      entry: TextImportTraceEntry
+      mode: TextImportJobMode
+      jobType: TextImportJobType
     }
   | {
       type: 'preview'
@@ -171,6 +185,8 @@ async function runCodexTextImportPreview(
   options?: {
     signal?: AbortSignal
     onStatus?: (event: Extract<TextImportStreamEvent, { type: 'status' }>) => void
+    onProgress?: (entry: TextImportProgressEntry) => void
+    onTrace?: (entry: TextImportTraceEntry) => void
   },
 ): Promise<TextImportResponse> {
   let response: TextImportResponse | null = null
@@ -178,6 +194,24 @@ async function runCodexTextImportPreview(
   await streamCodexTextImportPreview(
     request,
     (event) => {
+      if (event.type === 'progress') {
+        options?.onProgress?.({
+          ...event.entry,
+          currentFileName: event.entry.currentFileName ?? request.sourceName,
+          requestId: event.entry.requestId ?? event.requestId,
+        })
+        return
+      }
+
+      if (event.type === 'trace') {
+        options?.onTrace?.({
+          ...event.entry,
+          currentFileName: event.entry.currentFileName ?? request.sourceName,
+          requestId: event.entry.requestId ?? event.requestId,
+        })
+        return
+      }
+
       if (event.type === 'status') {
         options?.onStatus?.(event)
         return
@@ -266,6 +300,28 @@ async function buildBatchPreviewSource(
   }
   const response = await runCodexTextImportPreview(singleRequest, {
     signal,
+    onTrace: (entry) => {
+      onEvent({
+        type: 'trace',
+        entry: {
+          ...entry,
+          currentFileName: entry.currentFileName ?? file.sourceName,
+        },
+        mode: 'codex_import',
+        jobType: 'batch',
+      })
+    },
+    onProgress: (entry) => {
+      onEvent({
+        type: 'progress',
+        entry: {
+          ...entry,
+          currentFileName: entry.currentFileName ?? file.sourceName,
+        },
+        mode: 'codex_import',
+        jobType: 'batch',
+      })
+    },
     onStatus: (event) => {
       emitBatchStatus(onEvent, 'codex_import', fileCount, fileIndex, file.sourceName, {
         stage: event.stage,
@@ -430,6 +486,32 @@ export function startTextImportJob(
           mode,
           jobType: 'single',
           requestId: event.requestId,
+        })
+        return
+      }
+
+      if (event.type === 'progress') {
+        onEvent({
+          type: 'progress',
+          entry: {
+            ...event.entry,
+            currentFileName: event.entry.currentFileName ?? request.sourceName,
+          },
+          mode,
+          jobType: 'single',
+        })
+        return
+      }
+
+      if (event.type === 'trace') {
+        onEvent({
+          type: 'trace',
+          entry: {
+            ...event.entry,
+            currentFileName: event.entry.currentFileName ?? request.sourceName,
+          },
+          mode,
+          jobType: 'single',
         })
         return
       }

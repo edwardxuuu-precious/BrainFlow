@@ -116,6 +116,10 @@ export type KnowledgeTaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done'
 
 export type KnowledgeTaskPriority = 'low' | 'medium' | 'high'
 
+export type KnowledgeSourceRole = 'canonical_knowledge' | 'context_record' | 'supporting_material'
+
+export type KnowledgeMergeMode = 'create_new' | 'merge_into_existing' | 'archive_only'
+
 export interface TextImportPresentationHints {
   collapsedByDefault?: boolean
   groupKey?: string | null
@@ -127,6 +131,12 @@ export interface KnowledgeSource {
   type: TextImportSourceType
   title: string
   raw_content: string
+  source_role: KnowledgeSourceRole
+  canonical_topic_id: string
+  same_as_topic_id: string | null
+  merge_mode: KnowledgeMergeMode
+  merge_confidence: number
+  semantic_fingerprint: string
   metadata: Record<string, unknown>
 }
 
@@ -630,6 +640,9 @@ export interface TextImportCrossFileMergeSuggestion {
   kind?: 'same_topic' | 'partial_overlap' | 'conflict'
   confidence: 'high' | 'medium'
   reason: string
+  canonicalTopicId?: string | null
+  sameAsTopicId?: string | null
+  mergeMode?: KnowledgeMergeMode
 }
 
 export interface TextImportSemanticTargetSnapshot {
@@ -648,6 +661,12 @@ export interface TextImportSemanticCandidate {
   scope: 'existing_topic' | 'cross_file'
   source: TextImportSemanticTargetSnapshot
   target: TextImportSemanticTargetSnapshot
+  sourceRole?: KnowledgeSourceRole
+  canonicalTopicId?: string | null
+  sameAsTopicId?: string | null
+  mergeMode?: KnowledgeMergeMode
+  mergeConfidence?: number
+  semanticFingerprint?: string | null
   groupId?: string | null
   groupSize?: number
   similarityScore?: number | null
@@ -680,6 +699,12 @@ export interface TextImportBatchFileSummary {
   sourceType: TextImportSourceType
   previewNodeId: string
   nodeCount: number
+  sourceRole: KnowledgeSourceRole
+  canonicalTopicId: string
+  sameAsTopicId: string | null
+  mergeMode: KnowledgeMergeMode
+  mergeConfidence: number
+  semanticFingerprint: string
   mergeSuggestionCount: number
   warningCount: number
   classification?: TextImportClassification | null
@@ -908,6 +933,42 @@ export interface AiStatusFeedback {
   message: string
 }
 
+export type TextImportProgressTone = 'info' | 'waiting' | 'success' | 'warning'
+
+export type TextImportProgressSource = 'status' | 'observation' | 'codex'
+
+export type TextImportProgressAttempt = 'local' | 'primary' | 'repair'
+
+export interface TextImportProgressEntry {
+  id: string
+  timestampMs: number
+  stage: TextImportRunStage
+  message: string
+  tone: TextImportProgressTone
+  source: TextImportProgressSource
+  attempt: TextImportProgressAttempt
+  replaceKey?: string
+  currentFileName?: string | null
+  requestId?: string
+}
+
+export type TextImportTraceAttempt = 'local' | 'primary' | 'repair'
+
+export type TextImportTraceChannel = 'request' | 'runner' | 'codex'
+
+export interface TextImportTraceEntry {
+  id: string
+  sequence: number
+  timestampMs: number
+  requestId?: string
+  currentFileName?: string | null
+  attempt: TextImportTraceAttempt
+  channel: TextImportTraceChannel
+  eventType: string
+  payload: unknown
+  replaceKey?: string
+}
+
 export type AiStreamEvent =
   | {
       type: 'status'
@@ -936,6 +997,16 @@ export type TextImportStreamEvent =
       type: 'status'
       stage: TextImportRunStage
       message: string
+      requestId?: string
+    }
+  | {
+      type: 'progress'
+      entry: TextImportProgressEntry
+      requestId?: string
+    }
+  | {
+      type: 'trace'
+      entry: TextImportTraceEntry
       requestId?: string
     }
   | {

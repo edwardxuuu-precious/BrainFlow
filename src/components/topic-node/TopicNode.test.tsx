@@ -33,7 +33,7 @@ function createTopicNodeProps(
 }
 
 function renderTopicNode(props: NodeProps<MindMapFlowNode>) {
-  render(
+  return render(
     <ReactFlowProvider>
       <TopicNode {...props} />
     </ReactFlowProvider>,
@@ -54,11 +54,16 @@ describe('TopicNode', () => {
     useEditorStore.getState().setDocument(document)
     renderTopicNode(createTopicNodeProps(branchId, document))
 
+    const title = screen.getByText(branchTitle)
+    const preview = screen.getByText('谁最先愿意为这个结果付费，谁就更接近第一波目标用户。')
+
     expect(
-      screen.getByText('谁最先愿意为这个结果付费，谁就更接近第一波目标用户。'),
+      preview,
     ).toBeInTheDocument()
+    expect(preview).toHaveAttribute('data-inline-detail', 'true')
+    expect(preview.previousElementSibling).toBe(title)
     expect(screen.queryByRole('img', { name: '已添加详细内容' })).not.toBeInTheDocument()
-    expect(screen.getByText(branchTitle).closest('[data-selected]')).toHaveAttribute(
+    expect(title.closest('[data-selected]')).toHaveAttribute(
       'data-selected',
       'false',
     )
@@ -113,13 +118,16 @@ describe('TopicNode', () => {
     const branchId = document.topics[document.rootTopicId].childIds[0]
     const branchTitle = document.topics[branchId].title
     document.topics[branchId].aiLocked = true
+    document.topics[branchId].note = '锁定状态下也要继续显示这段详细内容。'
 
     useEditorStore.getState().setDocument(document)
     useEditorStore.getState().setSelection([branchId], branchId)
 
     renderTopicNode(createTopicNodeProps(branchId, document, { selected: true }))
 
+    const preview = screen.getByText('锁定状态下也要继续显示这段详细内容。')
     expect(screen.getByRole('img', { name: 'AI 锁定节点' })).toBeInTheDocument()
+    expect(preview).toHaveAttribute('data-inline-detail', 'true')
     expect(screen.getByText(branchTitle).closest('[data-selected]')).toHaveAttribute('data-selected', 'true')
   })
 
@@ -149,6 +157,46 @@ describe('TopicNode', () => {
 
     expect(screen.getAllByRole('img', { name: /贴纸：/ })).toHaveLength(2)
     expect(screen.getByText('+1')).toBeInTheDocument()
+  })
+
+  it('keeps task status icons inside the title row with the inline detail text', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    const branchTitle = document.topics[branchId].title
+    document.topics[branchId].metadata.type = 'task'
+    document.topics[branchId].note = '任务说明会直接显示在标题下面，而不是进入一个单独提示框。'
+
+    useEditorStore.getState().setDocument(document)
+    renderTopicNode(createTopicNodeProps(branchId, document))
+
+    const title = screen.getByText(branchTitle)
+    const taskIcon = screen.getByRole('img', { name: '任务' })
+    const titleRow = title.parentElement?.parentElement
+
+    expect(titleRow).toContainElement(taskIcon)
+    expect(screen.getByText('任务说明会直接显示在标题下面，而不是进入一个单独提示框。')).toHaveAttribute(
+      'data-inline-detail',
+      'true',
+    )
+  })
+
+  it('uses the same inline detail element for root and regular nodes', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    document.topics[document.rootTopicId].note = '根节点也应该沿用同一套正文预览样式。'
+    document.topics[branchId].note = '普通节点也应该沿用同一套正文预览样式。'
+
+    useEditorStore.getState().setDocument(document)
+    const rootView = renderTopicNode(createTopicNodeProps(document.rootTopicId, document))
+    const rootPreview = screen.getByText('根节点也应该沿用同一套正文预览样式。')
+    const rootPreviewClassName = rootPreview.className
+    rootView.unmount()
+
+    renderTopicNode(createTopicNodeProps(branchId, document))
+    const branchPreview = screen.getByText('普通节点也应该沿用同一套正文预览样式。')
+
+    expect(rootPreviewClassName).toBe(branchPreview.className)
+    expect(branchPreview).toHaveAttribute('data-inline-detail', 'true')
   })
 
   it('uses the shared compact title tier and taller layout for long node titles', () => {

@@ -185,6 +185,30 @@ function normalizeKnowledgeSource(value: Partial<KnowledgeSource> | undefined): 
     type: value.type === 'paste' ? 'paste' : 'file',
     title: typeof value.title === 'string' && value.title.trim().length > 0 ? value.title : 'Imported source',
     raw_content: typeof value.raw_content === 'string' ? value.raw_content : '',
+    source_role:
+      value.source_role === 'context_record' || value.source_role === 'supporting_material'
+        ? value.source_role
+        : 'canonical_knowledge',
+    canonical_topic_id:
+      typeof value.canonical_topic_id === 'string' && value.canonical_topic_id.trim().length > 0
+        ? value.canonical_topic_id
+        : `topic_${value.id}`,
+    same_as_topic_id:
+      typeof value.same_as_topic_id === 'string' && value.same_as_topic_id.trim().length > 0
+        ? value.same_as_topic_id
+        : null,
+    merge_mode:
+      value.merge_mode === 'merge_into_existing' || value.merge_mode === 'archive_only'
+        ? value.merge_mode
+        : 'create_new',
+    merge_confidence:
+      typeof value.merge_confidence === 'number' && Number.isFinite(value.merge_confidence)
+        ? Math.max(0, Math.min(1, value.merge_confidence))
+        : 1,
+    semantic_fingerprint:
+      typeof value.semantic_fingerprint === 'string' && value.semantic_fingerprint.trim().length > 0
+        ? value.semantic_fingerprint
+        : `fingerprint_${value.id}`,
     metadata:
       value.metadata && typeof value.metadata === 'object' && !Array.isArray(value.metadata)
         ? (value.metadata as Record<string, unknown>)

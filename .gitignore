@@ -13,6 +13,8 @@ dist-ssr
 *.local
 playwright-report
 test-results
+output/choose-files/
+output/e2e/
 
 # Editor directories and files
 .vscode/*

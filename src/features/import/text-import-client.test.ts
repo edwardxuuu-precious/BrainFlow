@@ -147,6 +147,83 @@ describe('text-import-client transport handling', () => {
     await request
   })
 
+  it('normalizes progress events and preserves nested request ids', async () => {
+    const encoder = new TextEncoder()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({
+                done: false,
+                value: encoder.encode(
+                  `${JSON.stringify({
+                    type: 'progress',
+                    requestId: 'import_stream_progress',
+                    entry: {
+                      id: 'progress_1',
+                      timestampMs: 10,
+                      stage: 'waiting_codex_primary',
+                      message: '我正在等待 Codex 返回主导入结果。已等待 5s，仍在运行。',
+                      tone: 'waiting',
+                      source: 'observation',
+                      attempt: 'primary',
+                    },
+                  })}\n${JSON.stringify({
+                    type: 'result',
+                    requestId: 'import_stream_progress',
+                    data: {
+                      summary: 'done',
+                      baseDocumentUpdatedAt: 1,
+                      anchorTopicId: 'root',
+                      classification: null,
+                      templateSummary: null,
+                      bundle: null,
+                      sources: [],
+                      semanticNodes: [],
+                      semanticEdges: [],
+                      views: [],
+                      viewProjections: {},
+                      defaultViewId: null,
+                      activeViewId: null,
+                      nodePlans: [],
+                      previewNodes: [],
+                      operations: [],
+                      conflicts: [],
+                      warnings: [],
+                    },
+                  })}\n`,
+                ),
+              })
+              .mockResolvedValueOnce({
+                done: true,
+                value: undefined,
+              }),
+          }),
+        },
+      }),
+    )
+
+    const onEvent = vi.fn()
+
+    await streamCodexTextImportPreview(createRequest(), onEvent)
+
+    expect(onEvent).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        type: 'progress',
+        requestId: 'import_stream_progress',
+        entry: expect.objectContaining({
+          id: 'progress_1',
+          requestId: 'import_stream_progress',
+        }),
+      }),
+    )
+  })
+
   it('normalizes stream read interruptions after the response starts', async () => {
     const encoder = new TextEncoder()
     const read = vi

@@ -8,6 +8,12 @@
     "document_type",
     "document_type_confidence",
     "document_type_rationale",
+    "source_role",
+    "canonical_topic_id",
+    "same_as_topic_id",
+    "merge_mode",
+    "merge_confidence",
+    "semantic_fingerprint",
     "summary",
     "nodes",
     "warnings"
@@ -26,6 +32,28 @@
       "maximum": 1
     },
     "document_type_rationale": {
+      "type": "string"
+    },
+    "source_role": {
+      "type": "string",
+      "enum": ["canonical_knowledge", "context_record", "supporting_material"]
+    },
+    "canonical_topic_id": {
+      "type": "string"
+    },
+    "same_as_topic_id": {
+      "type": ["string", "null"]
+    },
+    "merge_mode": {
+      "type": "string",
+      "enum": ["create_new", "merge_into_existing", "archive_only"]
+    },
+    "merge_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "semantic_fingerprint": {
       "type": "string"
     },
     "summary": {

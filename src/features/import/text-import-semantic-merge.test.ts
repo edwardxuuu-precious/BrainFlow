@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { TextImportResponse } from '../../../shared/ai-contract'
 import { buildAiContext } from '../ai/ai-context'
 import { createMindMapDocument } from '../documents/document-factory'
+import type { LocalTextImportBatchRequest } from './local-text-import-core'
+import { composeTextImportBatchPreview, type BatchTextImportPreviewSource } from './text-import-batch-compose'
 import {
   applyTextImportSemanticAdjudication,
   createTextImportSemanticDraft,
@@ -42,6 +44,17 @@ function createBaseResponse(overrides: Partial<TextImportResponse> = {}): TextIm
     warnings: [],
     ...overrides,
   }
+}
+
+function createBatchSourceResponse(
+  previewNodes: TextImportResponse['previewNodes'],
+): TextImportResponse {
+  return createBaseResponse({
+    previewNodes,
+    nodePlans: [],
+    operations: [],
+    warnings: [],
+  })
 }
 
 describe('text-import-semantic-merge', () => {
@@ -225,6 +238,12 @@ describe('text-import-semantic-merge', () => {
             sourceType: 'file',
             previewNodeId: 'file_alpha',
             nodeCount: 2,
+            sourceRole: 'canonical_knowledge',
+            canonicalTopicId: 'topic_strategy_alpha',
+            sameAsTopicId: null,
+            mergeMode: 'create_new',
+            mergeConfidence: 1,
+            semanticFingerprint: 'fingerprint_strategy_alpha',
             mergeSuggestionCount: 0,
             warningCount: 0,
             classification: null,
@@ -235,6 +254,12 @@ describe('text-import-semantic-merge', () => {
             sourceType: 'file',
             previewNodeId: 'file_beta',
             nodeCount: 2,
+            sourceRole: 'context_record',
+            canonicalTopicId: 'topic_strategy_alpha',
+            sameAsTopicId: 'topic_strategy_alpha',
+            mergeMode: 'merge_into_existing',
+            mergeConfidence: 0.88,
+            semanticFingerprint: 'fingerprint_strategy_beta',
             mergeSuggestionCount: 0,
             warningCount: 0,
             classification: null,
@@ -364,6 +389,12 @@ describe('text-import-semantic-merge', () => {
             sourceType: 'file',
             previewNodeId: 'file_alpha',
             nodeCount: 2,
+            sourceRole: 'canonical_knowledge',
+            canonicalTopicId: 'topic_strategy_alpha',
+            sameAsTopicId: null,
+            mergeMode: 'create_new',
+            mergeConfidence: 1,
+            semanticFingerprint: 'fingerprint_strategy_alpha',
             mergeSuggestionCount: 0,
             warningCount: 0,
             classification: null,
@@ -374,6 +405,12 @@ describe('text-import-semantic-merge', () => {
             sourceType: 'file',
             previewNodeId: 'file_beta',
             nodeCount: 2,
+            sourceRole: 'context_record',
+            canonicalTopicId: 'topic_strategy_alpha',
+            sameAsTopicId: 'topic_strategy_alpha',
+            mergeMode: 'merge_into_existing',
+            mergeConfidence: 0.88,
+            semanticFingerprint: 'fingerprint_strategy_beta',
             mergeSuggestionCount: 0,
             warningCount: 0,
             classification: null,
@@ -389,5 +426,264 @@ describe('text-import-semantic-merge', () => {
     expect(crossFileCandidate?.candidate.groupId).toBeTruthy()
     expect(crossFileCandidate?.candidate.groupSize).toBeGreaterThanOrEqual(1)
     expect(crossFileCandidate?.candidate.similarityScore).toBeGreaterThan(0)
+  })
+
+  it('merges context records into a single canonical root and injects basis/task increments', () => {
+    const document = createMindMapDocument('Import doc')
+    const batchRequest: LocalTextImportBatchRequest = {
+      documentId: document.id,
+      documentTitle: document.title,
+      baseDocumentUpdatedAt: document.updatedAt,
+      context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
+      anchorTopicId: document.rootTopicId,
+      batchTitle: 'Import batch: GTM',
+      files: [
+        {
+          sourceName: 'GTM_main.md',
+          sourceType: 'file',
+          rawText: '# GTM main',
+          preprocessedHints: [],
+          semanticHints: [],
+          intent: 'distill_structure',
+        },
+        {
+          sourceName: 'GTM_step1.md',
+          sourceType: 'file',
+          rawText: '# GTM step1',
+          preprocessedHints: [],
+          semanticHints: [],
+          intent: 'distill_structure',
+        },
+      ],
+    }
+    const sources: BatchTextImportPreviewSource[] = [
+      {
+        ...batchRequest.files[0],
+        route: 'codex_import',
+        response: createBatchSourceResponse([
+          {
+            id: 'root_main',
+            parentId: null,
+            order: 0,
+            title: '第一波市场先打谁',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'section',
+            semanticType: 'question',
+            structureRole: 'root_context',
+            confidence: 'high',
+          },
+          {
+            id: 'module_main',
+            parentId: 'root_main',
+            order: 0,
+            title: '先识别真实痛点',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'claim',
+            semanticType: 'claim',
+            structureRole: 'judgment_module',
+            confidence: 'high',
+          },
+          {
+            id: 'basis_group_main',
+            parentId: 'module_main',
+            order: 0,
+            title: '判断依据',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'evidence',
+            semanticType: 'evidence',
+            structureRole: 'judgment_basis_group',
+            confidence: 'high',
+          },
+          {
+            id: 'basis_item_shared_main',
+            parentId: 'basis_group_main',
+            order: 0,
+            title: '是否存在重复高频抱怨',
+            note: 'main basis detail',
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'evidence',
+            semanticType: 'evidence',
+            structureRole: 'basis_item',
+            confidence: 'high',
+          },
+          {
+            id: 'action_group_main',
+            parentId: 'module_main',
+            order: 1,
+            title: '潜在动作',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'task',
+            semanticType: 'task',
+            structureRole: 'potential_action_group',
+            confidence: 'high',
+          },
+          {
+            id: 'action_item_main',
+            parentId: 'action_group_main',
+            order: 0,
+            title: '访谈10个候选客户',
+            note: 'main action detail',
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'task',
+            semanticType: 'task',
+            structureRole: 'action_item',
+            confidence: 'high',
+          },
+        ]),
+      },
+      {
+        ...batchRequest.files[1],
+        route: 'codex_import',
+        response: createBatchSourceResponse([
+          {
+            id: 'root_step',
+            parentId: null,
+            order: 0,
+            title: '第一波市场先打谁',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'section',
+            semanticType: 'question',
+            structureRole: 'root_context',
+            confidence: 'high',
+          },
+          {
+            id: 'module_step',
+            parentId: 'root_step',
+            order: 0,
+            title: '先识别真实痛点',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'claim',
+            semanticType: 'claim',
+            structureRole: 'judgment_module',
+            confidence: 'high',
+          },
+          {
+            id: 'basis_group_step',
+            parentId: 'module_step',
+            order: 0,
+            title: '判断依据',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'evidence',
+            semanticType: 'evidence',
+            structureRole: 'judgment_basis_group',
+            confidence: 'high',
+          },
+          {
+            id: 'basis_item_shared_step',
+            parentId: 'basis_group_step',
+            order: 0,
+            title: '是否存在重复高频抱怨',
+            note: 'step conflict phrasing',
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'evidence',
+            semanticType: 'evidence',
+            structureRole: 'basis_item',
+            confidence: 'high',
+          },
+          {
+            id: 'basis_item_increment_step',
+            parentId: 'basis_group_step',
+            order: 1,
+            title: '收集最近30天工单标签频率',
+            note: 'step added basis',
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'evidence',
+            semanticType: 'evidence',
+            structureRole: 'basis_item',
+            confidence: 'high',
+          },
+          {
+            id: 'action_group_step',
+            parentId: 'module_step',
+            order: 1,
+            title: '潜在动作',
+            note: null,
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'task',
+            semanticType: 'task',
+            structureRole: 'potential_action_group',
+            confidence: 'high',
+          },
+          {
+            id: 'action_item_increment_step',
+            parentId: 'action_group_step',
+            order: 0,
+            title: '按行业拆分痛点热度表',
+            note: 'step added action',
+            relation: 'new',
+            matchedTopicId: null,
+            reason: null,
+            semanticRole: 'task',
+            semanticType: 'task',
+            structureRole: 'action_item',
+            confidence: 'high',
+          },
+        ]),
+      },
+    ]
+
+    const composed = composeTextImportBatchPreview(batchRequest, sources)
+    const rootNodes = composed.previewNodes.filter((node) => node.parentId === null)
+    const batchFiles = composed.batch?.files ?? []
+    const mainFile = batchFiles.find((file) => file.sourceName === 'GTM_main.md')
+    const stepFile = batchFiles.find((file) => file.sourceName === 'GTM_step1.md')
+    const emptyJudgmentGroups = composed.previewNodes.filter((node) => {
+      if (node.structureRole !== 'judgment_basis_group' && node.structureRole !== 'potential_action_group') {
+        return false
+      }
+      const hasChildren = composed.previewNodes.some((child) => child.parentId === node.id)
+      return !hasChildren && !(node.note?.trim())
+    })
+    const conflictNode = composed.previewNodes.find(
+      (node) => node.title === '是否存在重复高频抱怨',
+    )
+
+    expect(rootNodes).toHaveLength(1)
+    expect(emptyJudgmentGroups).toHaveLength(0)
+    expect(rootNodes[0]?.title).not.toBe('GTM_step1')
+    expect(composed.previewNodes.some((node) => node.title === '收集最近30天工单标签频率')).toBe(true)
+    expect(composed.previewNodes.some((node) => node.title === '按行业拆分痛点热度表')).toBe(true)
+    expect(conflictNode?.note ?? '').toContain('[Source-backed conflict:GTM_step1.md]')
+    expect(mainFile).toMatchObject({
+      sourceRole: 'canonical_knowledge',
+      mergeMode: 'create_new',
+    })
+    expect(stepFile).toMatchObject({
+      sourceRole: 'context_record',
+      mergeMode: 'merge_into_existing',
+    })
+    expect(stepFile?.canonicalTopicId).toBe(mainFile?.canonicalTopicId)
+    expect(stepFile?.sameAsTopicId).toBe(mainFile?.canonicalTopicId)
   })
 })

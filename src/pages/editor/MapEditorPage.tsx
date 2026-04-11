@@ -434,6 +434,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const textImportStatusText = useTextImportStore((state) => state.statusText)
   const textImportProgress = useTextImportStore((state) => state.progress)
   const textImportProgressIndeterminate = useTextImportStore((state) => state.progressIndeterminate)
+  const textImportProgressEntries = useTextImportStore((state) => state.progressEntries)
+  const textImportTraceEntries = useTextImportStore((state) => state.traceEntries)
   const textImportActiveJobMode = useTextImportStore((state) => state.activeJobMode)
   const textImportActiveJobType = useTextImportStore((state) => state.activeJobType)
   const textImportFileCount = useTextImportStore((state) => state.fileCount)
@@ -1919,6 +1921,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
           statusText={textImportStatusText}
           progress={textImportProgress}
           progressIndeterminate={textImportProgressIndeterminate}
+          progressEntries={textImportProgressEntries}
+          traceEntries={textImportTraceEntries}
           modeHint={textImportModeHint}
           error={textImportError}
           isPreviewing={textImportIsPreviewing}

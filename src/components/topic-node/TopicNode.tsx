@@ -132,53 +132,6 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
       />
 
       <div className={styles.content}>
-        {(isLocked || topicType) && (
-          <div className={styles.statusBar}>
-            {isLocked ? (
-              <span
-                className={styles.statusIcon}
-                onMouseEnter={() => setHoveredIcon('lock')}
-                onMouseLeave={() => setHoveredIcon(null)}
-                role="img"
-                aria-label="AI 锁定节点"
-              >
-                <Icon name="lock" size={14} strokeWidth={2} />
-                {hoveredIcon === 'lock' ? (
-                  <span className={styles.statusTooltip}>AI 锁定：节点不会被 AI 修改</span>
-                ) : null}
-              </span>
-            ) : null}
-            {topicType === 'milestone' ? (
-              <span
-                className={classNames(styles.statusIcon, styles.milestoneIcon)}
-                onMouseEnter={() => setHoveredIcon('milestone')}
-                onMouseLeave={() => setHoveredIcon(null)}
-                role="img"
-                aria-label="里程碑"
-              >
-                <Icon name="star" size={14} strokeWidth={2} />
-                {hoveredIcon === 'milestone' ? (
-                  <span className={styles.statusTooltip}>里程碑节点</span>
-                ) : null}
-              </span>
-            ) : null}
-            {topicType === 'task' ? (
-              <span
-                className={classNames(styles.statusIcon, styles.taskIcon)}
-                onMouseEnter={() => setHoveredIcon('task')}
-                onMouseLeave={() => setHoveredIcon(null)}
-                role="img"
-                aria-label="任务"
-              >
-                <Icon name="checkCircle" size={14} strokeWidth={2} />
-                {hoveredIcon === 'task' ? (
-                  <span className={styles.statusTooltip}>任务节点</span>
-                ) : null}
-              </span>
-            ) : null}
-          </div>
-        )}
-
         {isEditing ? (
           <input
             ref={inputRef}
@@ -204,20 +157,73 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
         ) : (
           <>
             <div className={styles.titleRow}>
-              <div
-                className={styles.title}
-                data-title-tier={titleTypography.tier}
-                style={titleStyleVars as CSSProperties}
-              >
-                {data.title}
-              </div>
-            </div>
+              <div className={styles.titleBlock}>
+                <div
+                  className={styles.title}
+                  data-title-tier={titleTypography.tier}
+                  style={titleStyleVars as CSSProperties}
+                >
+                  {data.title}
+                </div>
 
-            {hasNotePreview ? (
-              <div className={styles.detailPreview} title={data.notePreview}>
-                {data.notePreview}
+                {hasNotePreview ? (
+                  <div
+                    className={styles.detailPreview}
+                    data-inline-detail="true"
+                    title={data.notePreview}
+                  >
+                    {data.notePreview}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+
+              {(isLocked || topicType) && (
+                <div className={styles.statusGroup}>
+                  {isLocked ? (
+                    <span
+                      className={styles.statusIcon}
+                      onMouseEnter={() => setHoveredIcon('lock')}
+                      onMouseLeave={() => setHoveredIcon(null)}
+                      role="img"
+                      aria-label="AI 锁定节点"
+                    >
+                      <Icon name="lock" size={14} strokeWidth={2} />
+                      {hoveredIcon === 'lock' ? (
+                        <span className={styles.statusTooltip}>AI 锁定：节点不会被 AI 修改</span>
+                      ) : null}
+                    </span>
+                  ) : null}
+                  {topicType === 'milestone' ? (
+                    <span
+                      className={classNames(styles.statusIcon, styles.milestoneIcon)}
+                      onMouseEnter={() => setHoveredIcon('milestone')}
+                      onMouseLeave={() => setHoveredIcon(null)}
+                      role="img"
+                      aria-label="里程碑"
+                    >
+                      <Icon name="star" size={14} strokeWidth={2} />
+                      {hoveredIcon === 'milestone' ? (
+                        <span className={styles.statusTooltip}>里程碑节点</span>
+                      ) : null}
+                    </span>
+                  ) : null}
+                  {topicType === 'task' ? (
+                    <span
+                      className={classNames(styles.statusIcon, styles.taskIcon)}
+                      onMouseEnter={() => setHoveredIcon('task')}
+                      onMouseLeave={() => setHoveredIcon(null)}
+                      role="img"
+                      aria-label="任务"
+                    >
+                      <Icon name="checkCircle" size={14} strokeWidth={2} />
+                      {hoveredIcon === 'task' ? (
+                        <span className={styles.statusTooltip}>任务节点</span>
+                      ) : null}
+                    </span>
+                  ) : null}
+                </div>
+              )}
+            </div>
 
             {showMetaRow ? (
               <div className={styles.metaRow}>

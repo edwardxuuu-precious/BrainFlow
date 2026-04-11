@@ -8,6 +8,7 @@ import {
 } from './local-text-import-core'
 import { preprocessTextToImportHints } from './text-import-preprocess'
 import GTM_MAIN_FIXTURE from './__fixtures__/GTM_main.md?raw'
+import GTM_STEP1_FIXTURE from '../../../docs/test_docs/GTM_step1.md?raw'
 import { resolveTextImportPlanningOptions } from '../../../shared/text-import-semantics'
 
 describe('local-text-import-core', () => {
@@ -129,20 +130,89 @@ describe('local-text-import-core', () => {
     )
 
     const previewRoots = built.response.previewNodes.filter((node) => node.parentId === null)
-    const mainFileRoot = built.response.previewNodes.find((node) => node.title === 'GTM_main')
-    const stepOneFileRoot = built.response.previewNodes.find((node) => node.title === 'GTM_step1')
-    const stepOneOneFileRoot = built.response.previewNodes.find((node) => node.title === 'GTM_step1-1')
+    const batchFiles = built.response.batch?.files ?? []
+    const mainFile = batchFiles.find((file) => file.sourceName === 'GTM_main.md')
+    const stepOneFile = batchFiles.find((file) => file.sourceName === 'GTM_step1.md')
+    const stepOneOneFile = batchFiles.find((file) => file.sourceName === 'GTM_step1-1.md')
 
-    expect(previewRoots.map((node) => node.title)).toEqual(['GTM_main'])
-    expect(mainFileRoot?.parentId).toBeNull()
-    expect(stepOneFileRoot?.parentId).toBe(mainFileRoot?.id)
-    expect(stepOneOneFileRoot?.parentId).toBe(stepOneFileRoot?.id)
+    expect(previewRoots).toHaveLength(1)
+    expect(mainFile).toMatchObject({
+      sourceRole: 'canonical_knowledge',
+      mergeMode: 'create_new',
+    })
+    expect(stepOneFile).toMatchObject({
+      sourceRole: 'context_record',
+      mergeMode: 'merge_into_existing',
+    })
+    expect(stepOneOneFile).toMatchObject({
+      sourceRole: 'context_record',
+      mergeMode: 'merge_into_existing',
+    })
+    expect(stepOneFile?.canonicalTopicId).toBe(mainFile?.canonicalTopicId)
+    expect(stepOneOneFile?.canonicalTopicId).toBe(mainFile?.canonicalTopicId)
     expect(built.response.views.map((view) => view.type)).toEqual([
       'thinking_view',
       'execution_view',
       'archive_view',
     ])
     expect(built.response.crossFileMergeSuggestions).toEqual([])
+  })
+
+  it('keeps a single canonical root for GTM main+step1 and preserves dual-source metadata', () => {
+    const document = createMindMapDocument('Import doc')
+    const files = sortTextImportBatchSources([
+      {
+        sourceName: 'GTM_main.md',
+        sourceType: 'file' as const,
+        rawText: GTM_MAIN_FIXTURE,
+        preprocessedHints: preprocessTextToImportHints(GTM_MAIN_FIXTURE),
+        semanticHints: [],
+        intent: 'distill_structure' as const,
+      },
+      {
+        sourceName: 'GTM_step1.md',
+        sourceType: 'file' as const,
+        rawText: GTM_STEP1_FIXTURE,
+        preprocessedHints: preprocessTextToImportHints(GTM_STEP1_FIXTURE),
+        semanticHints: [],
+        intent: 'distill_structure' as const,
+      },
+    ])
+
+    const built = createLocalTextImportBatchPreview({
+      documentId: document.id,
+      documentTitle: document.title,
+      baseDocumentUpdatedAt: document.updatedAt,
+      context: buildAiContext(document, [document.rootTopicId], document.rootTopicId),
+      anchorTopicId: document.rootTopicId,
+      batchTitle: 'Import batch: GTM',
+      files,
+    })
+
+    const roots = built.response.previewNodes.filter((node) => node.parentId === null)
+    const batchFiles = built.response.batch?.files ?? []
+    const mainFile = batchFiles.find((file) => file.sourceName === 'GTM_main.md')
+    const stepFile = batchFiles.find((file) => file.sourceName === 'GTM_step1.md')
+
+    expect(roots).toHaveLength(1)
+    expect(mainFile).toMatchObject({
+      sourceRole: 'canonical_knowledge',
+      mergeMode: 'create_new',
+    })
+    expect(stepFile).toMatchObject({
+      sourceRole: 'context_record',
+    })
+    expect(stepFile?.mergeMode === 'merge_into_existing' || stepFile?.mergeMode === 'archive_only').toBe(true)
+    expect(stepFile?.canonicalTopicId).toBe(mainFile?.canonicalTopicId)
+    expect(stepFile?.sameAsTopicId).toBe(mainFile?.canonicalTopicId)
+    const emptyJudgmentGroups = built.response.previewNodes.filter((node) => {
+      if (node.structureRole !== 'judgment_basis_group' && node.structureRole !== 'potential_action_group') {
+        return false
+      }
+      const hasChildren = built.response.previewNodes.some((child) => child.parentId === node.id)
+      return !hasChildren && !(node.note?.trim())
+    })
+    expect(emptyJudgmentGroups).toHaveLength(0)
   })
 
   it('keeps GTM imports on the generic planner path instead of the removed fixed template', () => {

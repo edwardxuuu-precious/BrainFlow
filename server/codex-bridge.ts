@@ -27,9 +27,14 @@ import type {
   TextImportNodePlan,
   TextImportPresentationHints,
   TextImportPreviewItem,
+  TextImportProgressAttempt,
+  TextImportProgressEntry,
+  TextImportProgressSource,
+  TextImportProgressTone,
   TextImportRequest,
   TextImportResponse,
   TextImportRunStage,
+  TextImportTraceEntry,
   TextImportTemplateSlot,
   TextImportTemplateSummary,
 } from '../shared/ai-contract.js'
@@ -211,6 +216,12 @@ interface RawKnowledgeSource {
   type?: string | null
   title?: string | null
   raw_content?: string | null
+  source_role?: string | null
+  canonical_topic_id?: string | null
+  same_as_topic_id?: string | null
+  merge_mode?: string | null
+  merge_confidence?: number | null
+  semantic_fingerprint?: string | null
   metadata?: Record<string, unknown> | null
 }
 
@@ -368,6 +379,12 @@ interface RawDocumentToLogicMapPayload {
   document_type?: string | null
   document_type_confidence?: number | null
   document_type_rationale?: string | null
+  source_role?: string | null
+  canonical_topic_id?: string | null
+  same_as_topic_id?: string | null
+  merge_mode?: string | null
+  merge_confidence?: number | null
+  semantic_fingerprint?: string | null
   summary?: string | null
   nodes?: RawDocumentToLogicMapNode[] | null
   warnings?: string[] | null
@@ -407,6 +424,8 @@ export interface TextImportStatusUpdate {
 export interface TextImportPreviewOptions {
   requestId?: string
   onStatus?: (update: TextImportStatusUpdate) => void
+  onProgress?: (entry: TextImportProgressEntry) => void
+  onTrace?: (entry: TextImportTraceEntry) => void
 }
 
 export class CodexBridgeError extends Error {
@@ -795,6 +814,12 @@ const DOCUMENT_TO_LOGIC_MAP_RESPONSE_SCHEMA = {
     'document_type',
     'document_type_confidence',
     'document_type_rationale',
+    'source_role',
+    'canonical_topic_id',
+    'same_as_topic_id',
+    'merge_mode',
+    'merge_confidence',
+    'semantic_fingerprint',
     'summary',
     'nodes',
     'warnings',
@@ -807,6 +832,18 @@ const DOCUMENT_TO_LOGIC_MAP_RESPONSE_SCHEMA = {
     },
     document_type_confidence: { type: ['number', 'null'] },
     document_type_rationale: { type: ['string', 'null'] },
+    source_role: {
+      type: ['string', 'null'],
+      enum: ['canonical_knowledge', 'context_record', 'supporting_material', null],
+    },
+    canonical_topic_id: { type: ['string', 'null'] },
+    same_as_topic_id: { type: ['string', 'null'] },
+    merge_mode: {
+      type: ['string', 'null'],
+      enum: ['create_new', 'merge_into_existing', 'archive_only', null],
+    },
+    merge_confidence: { type: ['number', 'null'] },
+    semantic_fingerprint: { type: ['string', 'null'] },
     summary: { type: ['string', 'null'] },
     nodes: {
       type: ['array', 'null'],
@@ -1394,6 +1431,33 @@ function normalizeStructureRole(
     : null
 }
 
+function normalizeKnowledgeSourceRole(
+  value: string | null | undefined,
+): KnowledgeSource['source_role'] {
+  const normalized = normalizeText(value)
+  if (normalized === 'context_record' || normalized === 'supporting_material') {
+    return normalized
+  }
+  return 'canonical_knowledge'
+}
+
+function normalizeKnowledgeMergeMode(
+  value: string | null | undefined,
+): KnowledgeSource['merge_mode'] {
+  const normalized = normalizeText(value)
+  if (normalized === 'merge_into_existing' || normalized === 'archive_only') {
+    return normalized
+  }
+  return 'create_new'
+}
+
+function normalizeMergeConfidence(value: number | null | undefined, fallback = 1): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return Math.max(0, Math.min(1, fallback))
+  }
+  return Math.max(0, Math.min(1, value))
+}
+
 function normalizeProposedReorder(
   value:
     | RawImportPreviewItem['proposedReorder']
@@ -1518,15 +1582,25 @@ function normalizeKnowledgeSource(
   fallbackId: string,
 ): KnowledgeSource {
   const sourceType = normalizeText(value?.type) ?? request.sourceType
+  const sourceId = normalizeText(value?.id) ?? fallbackId
+  const sourceRole = normalizeKnowledgeSourceRole(value?.source_role)
+  const canonicalTopicId = normalizeText(value?.canonical_topic_id) ?? `topic_${sourceId}`
+  const mergeMode = normalizeKnowledgeMergeMode(value?.merge_mode)
 
   return {
-    id: normalizeText(value?.id) ?? fallbackId,
+    id: sourceId,
     type:
       sourceType === 'paste' || sourceType === 'file'
         ? sourceType
         : request.sourceType,
     title: normalizeText(value?.title) ?? request.sourceName,
     raw_content: normalizeText(value?.raw_content) ?? request.rawText,
+    source_role: sourceRole,
+    canonical_topic_id: canonicalTopicId,
+    same_as_topic_id: normalizeText(value?.same_as_topic_id) ?? null,
+    merge_mode: mergeMode,
+    merge_confidence: normalizeMergeConfidence(value?.merge_confidence, mergeMode === 'create_new' ? 1 : 0.8),
+    semantic_fingerprint: normalizeText(value?.semantic_fingerprint) ?? `fingerprint_${canonicalTopicId}`,
     metadata:
       value?.metadata && typeof value.metadata === 'object'
         ? value.metadata
@@ -2302,6 +2376,661 @@ type NormalizedDocumentToLogicMapNode = {
     | null
 }
 
+type DocumentToLogicMapRepairCandidate = {
+  text: string
+  sourceAnchors: TextImportNodePlan['sourceAnchors']
+  confidence: TextImportNodePlan['confidence']
+}
+
+type DocumentToLogicMapRepairCandidateRole = 'basis' | 'action'
+
+type DocumentToLogicMapRepairCandidateSelection = {
+  candidates: DocumentToLogicMapRepairCandidate[]
+  mode: 'strong' | 'relaxed' | 'none'
+}
+
+type DocumentToLogicMapRepairResult = {
+  nodes: NormalizedDocumentToLogicMapNode[]
+  warnings: string[]
+}
+
+const DOCUMENT_TO_LOGIC_MAP_JUDGMENT_TREE_ROLES = new Set<NonNullable<NormalizedDocumentToLogicMapNode['structureRole']>>([
+  'root_context',
+  'judgment_module',
+  'core_judgment_group',
+  'judgment_basis_group',
+  'potential_action_group',
+  'core_judgment',
+  'basis_item',
+  'action_item',
+  'execution_root',
+  'execution_task_mirror',
+])
+
+const DOCUMENT_TO_LOGIC_MAP_ENGLISH_ACTION_INTENT_RE =
+  /^(?:list|create|build|make|compile|prepare|write|draft|run|check|verify|review|gather|collect|summarize|score|compare|document|define)\b/i
+
+const DOCUMENT_TO_LOGIC_MAP_CHINESE_ACTION_INTENT_RE =
+  /^(?:整理|列出|建立|制作|创建|准备|撰写|输出|汇总|收集|核查|验证|访谈|比较|评分|梳理|盘点|拉名单|生成|记录|补证据|跑一轮)/
+
+const DOCUMENT_TO_LOGIC_MAP_ACTION_PHRASE_RE =
+  /\b(?:next step|action item|follow[- ]up|to (?:build|create|compile|prepare|write|run|check|verify|compare|list|define|summarize))\b/i
+
+const DOCUMENT_TO_LOGIC_MAP_OUTPUT_HINT_RE =
+  /\b(?:list|checklist|table|sheet|guide|brief|report|summary|definition|matrix|scorecard|template|plan|transcript|notes?|writeup|memo)\b|(?:清单|名单|表|表格|提纲|报告|汇总|定义|纪要|模板|矩阵|评分表|记录|说明|文档)/i
+
+const DOCUMENT_TO_LOGIC_MAP_BASIS_HINT_RE =
+  /[?？]|^(?:if|whether|when|what|which|who|where|how|can|does|is|are|should|must)\b|^(?:是否|谁|什么|什么时候|何时|哪里|如何|怎么|哪种|哪个|如果|标准|条件|指标|观察|信号|核查|访谈|问题)/i
+
+const DOCUMENT_TO_LOGIC_MAP_ENGLISH_BASIS_CONTEXT_RE =
+  /\b(?:criteria|criterion|signal|indicator|evidence|metric|checkpoint|constraint|assumption|condition|observation|compare|baseline)\b/i
+
+const DOCUMENT_TO_LOGIC_MAP_CHINESE_BASIS_CONTEXT_RE =
+  /(?:标准|条件|信号|指标|证据|观察点|检查项|核查项|判断条件|前后对比|基线)/
+
+const DOCUMENT_TO_LOGIC_MAP_ENGLISH_ACTION_VERB_RE =
+  /\b(?:list|create|build|make|compile|prepare|write|draft|run|check|verify|review|gather|collect|summarize|score|compare|document|define|interview|validate|map)\b/i
+
+const DOCUMENT_TO_LOGIC_MAP_CHINESE_ACTION_VERB_RE =
+  /(?:整理|列出|建立|制作|创建|准备|撰写|输出|汇总|收集|核查|验证|访谈|比较|评分|梳理|盘点|拉名单|生成|记录|补证据|跑一轮|建表|核对)/
+
+function normalizeDocumentToLogicMapRepairText(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const stripped = value
+    .trim()
+    .replace(/^\s*(?:[-*+•]|(?:\d+[\.\)])|\(\d+\)|\[[ xX]\])\s+/, '')
+    .replace(/[ \t]+/g, ' ')
+    .trim()
+
+  return stripped.length > 0 ? stripped : null
+}
+
+function normalizeDocumentToLogicMapRepairKey(value: string): string {
+  return value.toLowerCase().normalize('NFKC').replace(/[^\p{Letter}\p{Number}]+/gu, '')
+}
+
+function splitDocumentToLogicMapRepairText(text: string | null | undefined): string[] {
+  if (typeof text !== 'string' || text.trim().length === 0) {
+    return []
+  }
+
+  const segments = text
+    .replace(/\r\n/g, '\n')
+    .split(/\n+/)
+    .flatMap((line) => line.split(/\s*[；;]\s*/))
+    .flatMap((line) => line.split(/(?<=[?？!！])\s*/))
+    .map((line) => normalizeDocumentToLogicMapRepairText(line))
+    .filter((line): line is string => !!line)
+
+  const seen = new Set<string>()
+  const items: string[] = []
+  segments.forEach((segment) => {
+    const key = normalizeDocumentToLogicMapRepairKey(segment)
+    if (!key || seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    items.push(segment)
+  })
+  return items
+}
+
+function documentToLogicMapRepairAnchorsOverlap(
+  anchors: TextImportNodePlan['sourceAnchors'],
+  lineStart: number,
+  lineEnd: number,
+): boolean {
+  return anchors.some((anchor) => lineStart <= anchor.lineEnd && lineEnd >= anchor.lineStart)
+}
+
+function collectDocumentToLogicMapRepairCandidatesFromHints(
+  request: TextImportRequest,
+  anchors: TextImportNodePlan['sourceAnchors'],
+  fallbackConfidence: TextImportNodePlan['confidence'],
+): DocumentToLogicMapRepairCandidate[] {
+  if (anchors.length === 0) {
+    return []
+  }
+
+  const candidates: DocumentToLogicMapRepairCandidate[] = []
+
+  request.preprocessedHints
+    .filter((hint) => hint.kind !== 'heading')
+    .filter((hint) => documentToLogicMapRepairAnchorsOverlap(anchors, hint.lineStart, hint.lineEnd))
+    .forEach((hint) => {
+      const texts = hint.items?.length ? hint.items : splitDocumentToLogicMapRepairText(hint.text)
+      texts.forEach((text) => {
+        const normalized = normalizeDocumentToLogicMapRepairText(text)
+        if (!normalized) {
+          return
+        }
+        candidates.push({
+          text: normalized,
+          sourceAnchors: [{ lineStart: hint.lineStart, lineEnd: hint.lineEnd }],
+          confidence: fallbackConfidence,
+        })
+      })
+    })
+
+  request.semanticHints
+    .filter((hint) => documentToLogicMapRepairAnchorsOverlap(anchors, hint.lineStart, hint.lineEnd))
+    .forEach((hint) => {
+      const normalized = normalizeDocumentToLogicMapRepairText(hint.text)
+      if (!normalized) {
+        return
+      }
+      candidates.push({
+        text: normalized,
+        sourceAnchors: [{ lineStart: hint.lineStart, lineEnd: hint.lineEnd }],
+        confidence: hint.confidence,
+      })
+    })
+
+  return candidates
+}
+
+function dedupeDocumentToLogicMapRepairCandidates(
+  candidates: DocumentToLogicMapRepairCandidate[],
+): DocumentToLogicMapRepairCandidate[] {
+  const seen = new Set<string>()
+  const deduped: DocumentToLogicMapRepairCandidate[] = []
+  candidates.forEach((candidate) => {
+    const key = normalizeDocumentToLogicMapRepairKey(candidate.text)
+    if (!key || seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    deduped.push(candidate)
+  })
+  return deduped
+}
+
+function looksLikeDocumentToLogicMapActionIntent(text: string): boolean {
+  return (
+    DOCUMENT_TO_LOGIC_MAP_ENGLISH_ACTION_INTENT_RE.test(text) ||
+    DOCUMENT_TO_LOGIC_MAP_CHINESE_ACTION_INTENT_RE.test(text) ||
+    DOCUMENT_TO_LOGIC_MAP_ACTION_PHRASE_RE.test(text) ||
+    DOCUMENT_TO_LOGIC_MAP_ENGLISH_ACTION_VERB_RE.test(text) ||
+    DOCUMENT_TO_LOGIC_MAP_CHINESE_ACTION_VERB_RE.test(text)
+  )
+}
+
+function looksLikeDocumentToLogicMapBasisItem(text: string): boolean {
+  if (DOCUMENT_TO_LOGIC_MAP_BASIS_HINT_RE.test(text)) {
+    return true
+  }
+
+  if (
+    DOCUMENT_TO_LOGIC_MAP_ENGLISH_BASIS_CONTEXT_RE.test(text) ||
+    DOCUMENT_TO_LOGIC_MAP_CHINESE_BASIS_CONTEXT_RE.test(text)
+  ) {
+    return true
+  }
+
+  if (looksLikeDocumentToLogicMapActionIntent(text)) {
+    return false
+  }
+
+  return /\b(?:criteria|criterion|signal|indicator|evidence|metric|checkpoint|constraint)\b|(?:标准|条件|信号|指标|证据|观察点|检查项|核查项|判断条件)/i.test(
+    text,
+  )
+}
+
+function inferDocumentToLogicMapTaskOutput(text: string): string | null {
+  if (!DOCUMENT_TO_LOGIC_MAP_OUTPUT_HINT_RE.test(text)) {
+    return null
+  }
+
+  const stripped = normalizeDocumentToLogicMapRepairText(
+    text
+      .replace(DOCUMENT_TO_LOGIC_MAP_ENGLISH_ACTION_INTENT_RE, '')
+      .replace(DOCUMENT_TO_LOGIC_MAP_CHINESE_ACTION_INTENT_RE, '')
+      .trim(),
+  )
+
+  return stripped ?? normalizeDocumentToLogicMapRepairText(text)
+}
+
+function buildDocumentToLogicMapRepairChildId(
+  usedIds: Set<string>,
+  parentId: string,
+  suffix: string,
+): string {
+  const base = `${parentId}_${suffix}`
+  if (!usedIds.has(base)) {
+    usedIds.add(base)
+    return base
+  }
+
+  let index = 2
+  while (usedIds.has(`${base}_${index}`)) {
+    index += 1
+  }
+  const nextId = `${base}_${index}`
+  usedIds.add(nextId)
+  return nextId
+}
+
+function buildDocumentToLogicMapRepairTitle(text: string): string {
+  const normalized = normalizeDocumentToLogicMapRepairText(text) ?? text.trim()
+  if (normalized.length <= 120) {
+    return normalized
+  }
+  return `${normalized.slice(0, 117).trimEnd()}...`
+}
+
+function appendDocumentToLogicMapRepairCandidatesFromText(
+  candidates: DocumentToLogicMapRepairCandidate[],
+  text: string | null | undefined,
+  sourceAnchors: TextImportNodePlan['sourceAnchors'],
+  confidence: TextImportNodePlan['confidence'],
+): void {
+  splitDocumentToLogicMapRepairText(text).forEach((segment) => {
+    candidates.push({
+      text: segment,
+      sourceAnchors: [...sourceAnchors],
+      confidence,
+    })
+  })
+}
+
+function mergeDocumentToLogicMapRepairAnchors(
+  ...anchorsList: Array<TextImportNodePlan['sourceAnchors'] | undefined>
+): TextImportNodePlan['sourceAnchors'] {
+  const merged: TextImportNodePlan['sourceAnchors'] = []
+  const seen = new Set<string>()
+  anchorsList.forEach((anchors) => {
+    ;(anchors ?? []).forEach((anchor) => {
+      const key = `${anchor.lineStart}:${anchor.lineEnd}`
+      if (seen.has(key)) {
+        return
+      }
+      seen.add(key)
+      merged.push(anchor)
+    })
+  })
+  return merged
+}
+
+function scoreDocumentToLogicMapRepairCandidate(
+  candidate: DocumentToLogicMapRepairCandidate,
+  role: DocumentToLogicMapRepairCandidateRole,
+): number {
+  const text = candidate.text
+  const normalizedLength = text.length
+  const isQuestion = /[?？]$/.test(text) || /^(?:if|whether|when|what|which|who|where|how|why)\b/i.test(text)
+  const hasActionIntent = looksLikeDocumentToLogicMapActionIntent(text)
+  const hasBasisHint = looksLikeDocumentToLogicMapBasisItem(text)
+  const hasOutputHint = DOCUMENT_TO_LOGIC_MAP_OUTPUT_HINT_RE.test(text)
+
+  let score = 0
+  if (role === 'basis') {
+    if (hasBasisHint) {
+      score += 4
+    }
+    if (isQuestion) {
+      score += 2
+    }
+    if (hasActionIntent) {
+      score -= 2
+    }
+    if (hasOutputHint) {
+      score -= 1
+    }
+  } else {
+    if (hasActionIntent) {
+      score += 4
+    }
+    if (DOCUMENT_TO_LOGIC_MAP_ENGLISH_ACTION_VERB_RE.test(text) || DOCUMENT_TO_LOGIC_MAP_CHINESE_ACTION_VERB_RE.test(text)) {
+      score += 2
+    }
+    if (hasOutputHint) {
+      score += 2
+    }
+    if (isQuestion) {
+      score -= 2
+    }
+    if (hasBasisHint && !hasActionIntent) {
+      score -= 1
+    }
+  }
+
+  if (normalizedLength < 8) {
+    score -= 1
+  }
+  if (normalizedLength > 220) {
+    score -= 1
+  }
+  return score
+}
+
+function selectDocumentToLogicMapRepairCandidates(
+  candidates: DocumentToLogicMapRepairCandidate[],
+  role: DocumentToLogicMapRepairCandidateRole,
+  limit: number,
+): DocumentToLogicMapRepairCandidateSelection {
+  const ranked = candidates
+    .map((candidate, index) => ({
+      candidate,
+      index,
+      score: scoreDocumentToLogicMapRepairCandidate(candidate, role),
+    }))
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score
+      }
+      return left.index - right.index
+    })
+
+  const strong = ranked.filter((item) => item.score >= 4).slice(0, limit)
+  if (strong.length > 0) {
+    return {
+      candidates: strong.map((item) => item.candidate),
+      mode: 'strong',
+    }
+  }
+
+  const relaxed = ranked.filter((item) => item.score >= 2).slice(0, limit)
+  if (relaxed.length > 0) {
+    return {
+      candidates: relaxed.map((item) => item.candidate),
+      mode: 'relaxed',
+    }
+  }
+
+  return {
+    candidates: [],
+    mode: 'none',
+  }
+}
+
+function buildDocumentToLogicMapGroupFallbackNote(options: {
+  role: DocumentToLogicMapRepairCandidateRole
+  groupNode: NormalizedDocumentToLogicMapNode
+  moduleNode: NormalizedDocumentToLogicMapNode | null
+  candidates: DocumentToLogicMapRepairCandidate[]
+}): string | null {
+  const fallback =
+    options.candidates[0]?.text ??
+    normalizeDocumentToLogicMapRepairText(options.moduleNode?.note) ??
+    normalizeDocumentToLogicMapRepairText(options.groupNode.note)
+  if (!fallback) {
+    return null
+  }
+  const prefix = options.role === 'basis' ? 'Pending basis detail from source: ' : 'Pending action detail from source: '
+  return `${prefix}${buildDocumentToLogicMapRepairTitle(fallback)}`
+}
+
+function collectDocumentToLogicMapRepairCandidates(options: {
+  request: TextImportRequest
+  groupNode: NormalizedDocumentToLogicMapNode
+  moduleNode: NormalizedDocumentToLogicMapNode | null
+  moduleChildren: NormalizedDocumentToLogicMapNode[]
+  childrenByParent: Map<string, NormalizedDocumentToLogicMapNode[]>
+}): DocumentToLogicMapRepairCandidate[] {
+  const candidates: DocumentToLogicMapRepairCandidate[] = []
+  appendDocumentToLogicMapRepairCandidatesFromText(
+    candidates,
+    options.groupNode.note,
+    options.groupNode.sourceAnchors,
+    options.groupNode.confidence,
+  )
+  if (options.moduleNode) {
+    appendDocumentToLogicMapRepairCandidatesFromText(
+      candidates,
+      options.moduleNode.note,
+      options.moduleNode.sourceAnchors,
+      options.moduleNode.confidence,
+    )
+  }
+
+  const coreGroup = options.moduleChildren.find((child) => child.structureRole === 'core_judgment_group') ?? null
+  if (coreGroup) {
+    appendDocumentToLogicMapRepairCandidatesFromText(
+      candidates,
+      coreGroup.note,
+      coreGroup.sourceAnchors,
+      coreGroup.confidence,
+    )
+    const coreChildren = options.childrenByParent.get(coreGroup.id) ?? []
+    coreChildren.forEach((coreChild) => {
+      appendDocumentToLogicMapRepairCandidatesFromText(
+        candidates,
+        coreChild.title,
+        coreChild.sourceAnchors,
+        coreChild.confidence,
+      )
+      appendDocumentToLogicMapRepairCandidatesFromText(
+        candidates,
+        coreChild.note,
+        coreChild.sourceAnchors,
+        coreChild.confidence,
+      )
+    })
+  }
+
+  const sourceAnchors = mergeDocumentToLogicMapRepairAnchors(
+    options.groupNode.sourceAnchors,
+    options.moduleNode?.sourceAnchors,
+    coreGroup?.sourceAnchors,
+  )
+  const fromHints = collectDocumentToLogicMapRepairCandidatesFromHints(
+    options.request,
+    sourceAnchors,
+    options.moduleNode?.confidence ?? options.groupNode.confidence,
+  )
+
+  return dedupeDocumentToLogicMapRepairCandidates([...candidates, ...fromHints])
+}
+
+function repairDocumentToLogicMapJudgmentTree(
+  request: TextImportRequest,
+  nodes: NormalizedDocumentToLogicMapNode[],
+): DocumentToLogicMapRepairResult {
+  if (
+    !nodes.some(
+      (node) => node.structureRole && DOCUMENT_TO_LOGIC_MAP_JUDGMENT_TREE_ROLES.has(node.structureRole),
+    )
+  ) {
+    return { nodes, warnings: [] }
+  }
+
+  const repaired = nodes.map((node) => ({
+    ...node,
+    sourceAnchors: [...node.sourceAnchors],
+    task: node.task
+      ? {
+          ...node.task,
+          dependsOn: [...node.task.dependsOn],
+        }
+      : null,
+  }))
+  const usedIds = new Set(repaired.map((node) => node.id))
+  const nodesById = new Map(repaired.map((node) => [node.id, node]))
+  const childrenByParent = new Map<string, NormalizedDocumentToLogicMapNode[]>()
+
+  const rebuildChildrenByParent = () => {
+    childrenByParent.clear()
+    repaired.forEach((node) => {
+      if (!node.parentId) {
+        return
+      }
+      const siblings = childrenByParent.get(node.parentId) ?? []
+      siblings.push(node)
+      childrenByParent.set(node.parentId, siblings)
+    })
+    childrenByParent.forEach((siblings) => siblings.sort((left, right) => left.order - right.order))
+  }
+
+  rebuildChildrenByParent()
+
+  const appendChild = (child: NormalizedDocumentToLogicMapNode) => {
+    repaired.push(child)
+    nodesById.set(child.id, child)
+    rebuildChildrenByParent()
+  }
+
+  const repairWarnings = new Set<string>()
+  const groups = repaired.filter(
+    (node) =>
+      node.structureRole === 'core_judgment_group' ||
+      node.structureRole === 'judgment_basis_group' ||
+      node.structureRole === 'potential_action_group',
+  )
+
+  groups.forEach((groupNode) => {
+    if ((childrenByParent.get(groupNode.id)?.length ?? 0) > 0) {
+      return
+    }
+
+    const moduleNode = groupNode.parentId ? nodesById.get(groupNode.parentId) ?? null : null
+    const moduleChildren = moduleNode ? childrenByParent.get(moduleNode.id) ?? [] : []
+    const sourceModuleId = groupNode.sourceModuleId ?? moduleNode?.id ?? null
+
+    if (groupNode.structureRole === 'core_judgment_group') {
+      const candidateText = normalizeDocumentToLogicMapRepairText(groupNode.note)
+      if (!candidateText) {
+        return
+      }
+
+      const isQuestion = candidateText.includes('?') || candidateText.includes('？')
+      appendChild({
+        id: buildDocumentToLogicMapRepairChildId(usedIds, groupNode.id, 'core'),
+        parentId: groupNode.id,
+        order: 0,
+        type: isQuestion ? 'question' : 'claim',
+        title: buildDocumentToLogicMapRepairTitle(candidateText),
+        note: null,
+        semanticRole: isQuestion ? 'question' : 'claim',
+        confidence: groupNode.confidence === 'high' ? 'medium' : groupNode.confidence,
+        sourceAnchors: [...groupNode.sourceAnchors],
+        structureRole: 'core_judgment',
+        locked: groupNode.locked,
+        sourceModuleId,
+        proposedReorder: null,
+        proposedReparent: null,
+        task: null,
+      })
+      groupNode.note = null
+      return
+    }
+
+    const candidates = collectDocumentToLogicMapRepairCandidates({
+      request,
+      groupNode,
+      moduleNode,
+      moduleChildren,
+      childrenByParent,
+    })
+
+    if (groupNode.structureRole === 'judgment_basis_group') {
+      const basisSelection = selectDocumentToLogicMapRepairCandidates(candidates, 'basis', 6)
+      const basisCandidates = basisSelection.candidates
+
+      if (basisCandidates.length === 0) {
+        if (!normalizeDocumentToLogicMapRepairText(groupNode.note)) {
+          groupNode.note = buildDocumentToLogicMapGroupFallbackNote({
+            role: 'basis',
+            groupNode,
+            moduleNode,
+            candidates,
+          })
+        }
+        repairWarnings.add(
+          `[kept-group-note] Judgment group "${groupNode.title}" in module "${moduleNode?.title ?? 'unknown module'}" has no extractable basis candidates; kept group note.`,
+        )
+        return
+      }
+
+      basisCandidates.forEach((candidate, index) => {
+        const isQuestion = candidate.text.includes('?') || candidate.text.includes('？')
+        appendChild({
+          id: buildDocumentToLogicMapRepairChildId(usedIds, groupNode.id, `basis_${index + 1}`),
+          parentId: groupNode.id,
+          order: index,
+          type: isQuestion ? 'question' : 'evidence',
+          title: buildDocumentToLogicMapRepairTitle(candidate.text),
+          note: null,
+          semanticRole: isQuestion ? 'question' : 'evidence',
+          confidence: candidate.confidence === 'high' ? 'medium' : candidate.confidence,
+          sourceAnchors: [...candidate.sourceAnchors],
+          structureRole: 'basis_item',
+          locked: groupNode.locked,
+          sourceModuleId,
+          proposedReorder: null,
+          proposedReparent: null,
+          task: null,
+        })
+      })
+      groupNode.note = null
+      repairWarnings.add(
+        `[auto-filled] Judgment group "${groupNode.title}" in module "${moduleNode?.title ?? 'unknown module'}" was auto-filled with ${basisCandidates.length} inferred basis items (${basisSelection.mode}).`,
+      )
+      return
+    }
+
+    const actionSelection = selectDocumentToLogicMapRepairCandidates(candidates, 'action', 5)
+    const actionCandidates = actionSelection.candidates
+
+    if (actionCandidates.length === 0) {
+      if (!normalizeDocumentToLogicMapRepairText(groupNode.note)) {
+        groupNode.note = buildDocumentToLogicMapGroupFallbackNote({
+          role: 'action',
+          groupNode,
+          moduleNode,
+          candidates,
+        })
+      }
+      repairWarnings.add(
+        `[kept-group-note] Judgment group "${groupNode.title}" in module "${moduleNode?.title ?? 'unknown module'}" has no extractable action candidates; kept group note.`,
+      )
+      return
+    }
+
+    actionCandidates.forEach((candidate, index) => {
+      const taskOutput = inferDocumentToLogicMapTaskOutput(candidate.text)
+      const childId = buildDocumentToLogicMapRepairChildId(usedIds, groupNode.id, `action_${index + 1}`)
+      appendChild({
+        id: childId,
+        parentId: groupNode.id,
+        order: index,
+        type: taskOutput ? 'task' : 'claim',
+        title: buildDocumentToLogicMapRepairTitle(candidate.text),
+        note: null,
+        semanticRole: taskOutput ? 'task' : 'claim',
+        confidence: candidate.confidence === 'high' ? 'medium' : candidate.confidence,
+        sourceAnchors: [...candidate.sourceAnchors],
+        structureRole: 'action_item',
+        locked: groupNode.locked,
+        sourceModuleId,
+        proposedReorder: null,
+        proposedReparent: null,
+        task: taskOutput
+          ? {
+              status: 'todo',
+              output: taskOutput,
+              dependsOn: [],
+              inferredOutput: true,
+              mirroredTaskId: `execution::${childId}`,
+            }
+          : null,
+      })
+    })
+    groupNode.note = null
+    repairWarnings.add(
+      `[auto-filled] Judgment group "${groupNode.title}" in module "${moduleNode?.title ?? 'unknown module'}" was auto-filled with ${actionCandidates.length} inferred action items (${actionSelection.mode}).`,
+    )
+  })
+
+  return {
+    nodes: repaired,
+    warnings: [...repairWarnings],
+  }
+}
+
 function normalizeDocumentToLogicMapNode(
   value: RawDocumentToLogicMapNode,
   fallbackOrder: number,
@@ -2354,7 +3083,17 @@ function normalizeDocumentToLogicMapNode(
   }
 }
 
-function createDocumentToLogicMapSource(request: TextImportRequest): KnowledgeSource {
+function createDocumentToLogicMapSource(
+  request: TextImportRequest,
+  options?: {
+    sourceRole?: string | null
+    canonicalTopicId?: string | null
+    sameAsTopicId?: string | null
+    mergeMode?: string | null
+    mergeConfidence?: number | null
+    semanticFingerprint?: string | null
+  },
+): KnowledgeSource {
   const headings = request.preprocessedHints
     .filter((hint) => hint.kind === 'heading')
     .map((hint) => ({
@@ -2372,11 +3111,22 @@ function createDocumentToLogicMapSource(request: TextImportRequest): KnowledgeSo
     pathTitles: hint.sourcePath,
   }))
 
+  const sourceRole = normalizeKnowledgeSourceRole(options?.sourceRole)
+  const canonicalTopicId = normalizeText(options?.canonicalTopicId) ?? 'topic_source_1'
+  const mergeMode = normalizeKnowledgeMergeMode(options?.mergeMode)
+
   return {
     id: 'source_1',
     type: request.sourceType,
     title: request.sourceName.replace(/\.[^.]+$/, '') || 'Imported source',
     raw_content: request.rawText,
+    source_role: sourceRole,
+    canonical_topic_id: canonicalTopicId,
+    same_as_topic_id: normalizeText(options?.sameAsTopicId) ?? null,
+    merge_mode: mergeMode,
+    merge_confidence: normalizeMergeConfidence(options?.mergeConfidence, mergeMode === 'create_new' ? 1 : 0.8),
+    semantic_fingerprint:
+      normalizeText(options?.semanticFingerprint) ?? `fingerprint_${canonicalTopicId}`,
     metadata: {
       sourceName: request.sourceName,
       headingCount: headings.length,
@@ -2576,14 +3326,23 @@ function normalizeDocumentToLogicMapPayload(
     }
   })
 
-  const source = createDocumentToLogicMapSource(request)
-  const nodePlans = buildDocumentToLogicMapNodePlans(nodes)
+  const repairResult = repairDocumentToLogicMapJudgmentTree(request, nodes)
+  const repairedNodes = repairResult.nodes
+  const source = createDocumentToLogicMapSource(request, {
+    sourceRole: rawPayload.source_role,
+    canonicalTopicId: rawPayload.canonical_topic_id,
+    sameAsTopicId: rawPayload.same_as_topic_id,
+    mergeMode: rawPayload.merge_mode,
+    mergeConfidence: rawPayload.merge_confidence,
+    semanticFingerprint: rawPayload.semantic_fingerprint,
+  })
+  const nodePlans = buildDocumentToLogicMapNodePlans(repairedNodes)
   const compiled = compileTextImportNodePlans({
     insertionParentTopicId: request.anchorTopicId ?? request.context.rootTopicId,
     nodePlans,
   })
-  const semanticNodes = buildDocumentToLogicMapSemanticNodes(request, source.id, nodes)
-  const semanticEdges = buildDocumentToLogicMapSemanticEdges(request, source.id, nodes)
+  const semanticNodes = buildDocumentToLogicMapSemanticNodes(request, source.id, repairedNodes)
+  const semanticEdges = buildDocumentToLogicMapSemanticEdges(request, source.id, repairedNodes)
   const bundleId = `bundle_${Math.random().toString(36).slice(2, 8)}`
   const bundleTitle = normalizeText(rawPayload.summary) ?? source.title
   const compiledViews = compileSemanticLayerViews({
@@ -2635,7 +3394,7 @@ function normalizeDocumentToLogicMapPayload(
     previewNodes: compiled.previewNodes,
     operations: compiled.operations,
     conflicts: [],
-    warnings: [...new Set([...normalizedWarnings, ...qualityWarnings])],
+    warnings: [...new Set([...normalizedWarnings, ...repairResult.warnings, ...qualityWarnings])],
   }
 }
 
@@ -2783,22 +3542,217 @@ function summarizeLogText(value: string | undefined, maxLength = 160): string | 
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}…` : normalized
 }
 
+function createImportProgressFactory(
+  options: TextImportPreviewOptions | undefined,
+  requestId: string | undefined,
+  request: TextImportRequest,
+  logInfo: (message: string) => void,
+  now: () => number,
+) {
+  let progressCounter = 0
+
+  return (
+    entry: Omit<TextImportProgressEntry, 'id' | 'timestampMs' | 'requestId' | 'currentFileName'> & {
+      id?: string
+      currentFileName?: string | null
+    },
+  ): void => {
+    const progressEntry: TextImportProgressEntry = {
+      ...entry,
+      id: entry.id ?? entry.replaceKey ?? `progress_${++progressCounter}`,
+      timestampMs: now(),
+      currentFileName: entry.currentFileName ?? request.sourceName,
+      requestId,
+    }
+
+    options?.onProgress?.(progressEntry)
+
+    if (!requestId) {
+      return
+    }
+
+    logInfo(
+      formatImportLog(requestId, {
+        event: 'progress',
+        stage: progressEntry.stage,
+        attempt: progressEntry.attempt,
+        source: progressEntry.source,
+        tone: progressEntry.tone,
+        replaceKey: progressEntry.replaceKey,
+        currentFileName: progressEntry.currentFileName,
+        message: summarizeLogText(progressEntry.message),
+      }),
+    )
+  }
+}
+
+function createImportTraceFactory(
+  options: TextImportPreviewOptions | undefined,
+  requestId: string | undefined,
+  request: TextImportRequest,
+  logInfo: (message: string) => void,
+  now: () => number,
+) {
+  let traceSequence = 0
+
+  return (
+    entry: Omit<TextImportTraceEntry, 'id' | 'sequence' | 'timestampMs' | 'requestId' | 'currentFileName'> & {
+      id?: string
+      currentFileName?: string | null
+    },
+  ): void => {
+    const traceEntry: TextImportTraceEntry = {
+      ...entry,
+      id: entry.id ?? entry.replaceKey ?? `trace_${traceSequence + 1}`,
+      sequence: ++traceSequence,
+      timestampMs: now(),
+      currentFileName: entry.currentFileName ?? request.sourceName,
+      requestId,
+    }
+
+    options?.onTrace?.(traceEntry)
+
+    if (!requestId) {
+      return
+    }
+
+    logInfo(
+      formatImportLog(requestId, {
+        event: 'trace',
+        sequence: traceEntry.sequence,
+        attempt: traceEntry.attempt,
+        channel: traceEntry.channel,
+        eventType: traceEntry.eventType,
+        replaceKey: traceEntry.replaceKey,
+        currentFileName: traceEntry.currentFileName,
+      }),
+    )
+  }
+}
+
+function resolveImportProgressAttempt(
+  stage: TextImportRunStage,
+  fallback: TextImportProgressAttempt = 'primary',
+): TextImportProgressAttempt {
+  if (
+    stage === 'repairing_structure' ||
+    stage === 'starting_codex_repair' ||
+    stage === 'waiting_codex_repair' ||
+    stage === 'parsing_repair_result'
+  ) {
+    return 'repair'
+  }
+
+  return fallback
+}
+
+function resolveImportProgressTone(
+  stage: TextImportRunStage,
+  source: TextImportProgressSource,
+  fallback: TextImportProgressTone = 'info',
+): TextImportProgressTone {
+  if (stage === 'repairing_structure') {
+    return 'warning'
+  }
+
+  if (stage === 'waiting_codex_primary' || stage === 'waiting_codex_repair') {
+    return 'waiting'
+  }
+
+  if (source === 'observation' && stage === 'parsing_primary_result') {
+    return 'success'
+  }
+
+  return fallback
+}
+
+function buildImportProgressReplaceKey(stage: TextImportRunStage): string | undefined {
+  if (stage === 'waiting_codex_primary' || stage === 'waiting_codex_repair') {
+    return `progress:${stage}`
+  }
+
+  return undefined
+}
+
 function buildImportWaitingStatusMessage(
   mode: 'primary' | 'repair',
   elapsedSinceLastEventMs?: number,
 ): string {
-  const baseMessage =
-    mode === 'primary'
-      ? 'Codex 正在分析全文与整张脑图…'
-      : 'Codex 正在修正导入结构…'
+  const waitingMessage =
+    mode === 'repair'
+      ? '我正在等待 Codex 返回修复结果。'
+      : '我正在等待 Codex 返回主导入结果。'
 
   if (!elapsedSinceLastEventMs || elapsedSinceLastEventMs <= 0) {
-    return baseMessage
+    return waitingMessage
   }
 
-  const elapsedSeconds = Math.max(1, Math.round(elapsedSinceLastEventMs / 1000))
-  return `${baseMessage} 已等待 ${elapsedSeconds}s，仍在运行。`
+  const elapsedSecondsRounded = Math.max(1, Math.round(elapsedSinceLastEventMs / 1000))
+  return `${waitingMessage} 已等待 ${elapsedSecondsRounded}s，仍在运行。`
 }
+
+function buildImportObservationProgressMessage(
+  event: CodexExecutionObservation,
+  attempt: TextImportProgressAttempt,
+): string | null {
+  switch (event.phase) {
+    case 'spawn_started':
+      return attempt === 'repair'
+        ? '我会先启动 Codex 结构修复。'
+        : '我会先启动 Codex 主导入分析。'
+    case 'first_json_event':
+      return '已收到 Codex 首个结构化事件，开始生成逻辑图。'
+    case 'completed':
+      return event.exitCode === 0
+        ? attempt === 'repair'
+          ? 'Codex 修复运行已完成，准备解析修复结果。'
+          : 'Codex 主导入运行已完成，准备解析返回结果。'
+        : 'Codex 运行已结束，但返回状态异常。'
+    case 'heartbeat':
+    default:
+      return null
+  }
+}
+
+function buildImportCodexProgressMessage(
+  event: CodexJsonEvent,
+  attempt: TextImportProgressAttempt,
+  state: { emittedDelta: boolean },
+): { message: string; tone: TextImportProgressTone } | null {
+  if (event.type === 'thread.started') {
+    return {
+      message: 'Codex 会话已建立，开始准备这一轮导入分析。',
+      tone: 'info',
+    }
+  }
+
+  if (event.type === 'turn.started') {
+    return {
+      message: 'Codex 已接收导入提示，正在组织结构化输出。',
+      tone: 'info',
+    }
+  }
+
+  if (!state.emittedDelta && extractAssistantDelta(event)) {
+    state.emittedDelta = true
+    return {
+      message: 'Codex 已开始生成结构化内容。',
+      tone: 'info',
+    }
+  }
+
+  if (event.type === 'item.completed' && event.item?.type === 'agent_message') {
+    return {
+      message: attempt === 'repair' ? 'Codex 已返回修复结果。' : 'Codex 已返回主导入结果。',
+      tone: 'success',
+    }
+  }
+
+  return null
+}
+
+void buildImportObservationProgressMessage
+void buildImportCodexProgressMessage
 
 function normalizeBridgeError(error: unknown): CodexBridgeError {
   if (error instanceof CodexBridgeError) {
@@ -3438,11 +4392,21 @@ function buildDocumentToLogicMapPrompt(
     '- Visible level-1 branches must be independent judgment modules with judgment-phrase titles. Do not mix question sentences, neutral theme labels, and top-level tasks at the same level.',
     '- Order judgment modules by prerequisite or causal dependency, not by source order or heading depth. Use source order only as a weak tie-breaker.',
     '- Each judgment module must use the fixed skeleton: 核心判断 -> 判断依据 -> 潜在动作.',
+    '- Treat 判断依据 as a grouping layer, not the main information layer. Prefer concrete basis_item grandchildren over group-level summaries.',
+    '- If the source contains concrete checks, interview prompts, evidence conditions, criteria, or observation points, emit them as separate basis_item children under 判断依据.',
+    '- Do not leave 判断依据 empty when the source or the group note already contains concrete checks, criteria, or interview prompts.',
     '- Attach evidence, questions, observations, interview prompts, and checks under 判断依据 instead of dumping them into one long note.',
+    '- Treat 潜在动作 as a grouping layer, not the main information layer. Prefer task or action_item grandchildren over action hints.',
+    '- Do not leave 潜在动作 empty when the source or the group note already contains clear validation,整理,核查,建表,访谈,汇总, or output intent.',
     '- Split nodes when semantic roles differ. Do not hide mixed judgment/basis/action content inside one long note.',
     '- Extract tasks with high recall. If the action is clear but the deliverable is incomplete, infer `task.output` and mark `inferred_output=true` instead of dropping the task.',
+    '- Convert only source-grounded validation,整理,核查,汇总,访谈,评分,建表, and output intent into tasks. Infer outputs when needed, but do not invent new workstreams or strategy packages beyond the source.',
     '- Keep logic tasks under their owning judgment module. Do not let top-level tasks such as 制作筛选表抢占一级分支 unless the whole document is a pure execution plan.',
     '- Return node-level metadata for structure_role, locked, proposed_reorder, proposed_reparent, and source_module_id, plus task metadata for depends_on, inferred_output, and mirrored_task_id.',
+    '- Always emit source-role and topic-merge metadata at top-level: source_role, canonical_topic_id, same_as_topic_id, merge_mode, merge_confidence, semantic_fingerprint.',
+    '- source_role must be one of canonical_knowledge, context_record, supporting_material.',
+    '- When the source is context_record and semantically overlaps an existing canonical topic, set merge_mode=merge_into_existing or archive_only instead of creating a second visible root.',
+    '- Never create a second parallel thinking root for context-record wrappers when the core question is the same as the canonical topic.',
     '- The execution view will mirror tasks separately. Do not emit execution-only judgment branches in the main thinking tree.',
     '- Keep titles short and use child nodes, not long notes, to carry basis items and actions.',
     '- Preserve source-grounded spans and confidence for every node.',
@@ -3796,10 +4760,20 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
       const requestId = options?.requestId
       const topicCount = request.context.topicCount
       const promptContext = buildTextImportPromptContext(request)
+      const emitImportProgress = createImportProgressFactory(options, requestId, request, logInfo, now)
+      const emitImportTrace = createImportTraceFactory(options, requestId, request, logInfo, now)
       const emitImportStatus = (
         stage: TextImportRunStage,
         message: string,
         durationMs?: number,
+        progressOptions?:
+          | false
+          | {
+              attempt?: TextImportProgressAttempt
+              tone?: TextImportProgressTone
+              replaceKey?: string
+              currentFileName?: string | null
+            },
       ): void => {
         options?.onStatus?.({
           stage,
@@ -3815,6 +4789,20 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
             topicCount,
           }),
         )
+
+        if (progressOptions === false) {
+          return
+        }
+
+        emitImportProgress({
+          stage,
+          message,
+          tone: resolveImportProgressTone(stage, 'status', progressOptions?.tone),
+          source: 'status',
+          attempt: resolveImportProgressAttempt(stage, progressOptions?.attempt),
+          replaceKey: progressOptions?.replaceKey ?? buildImportProgressReplaceKey(stage),
+          currentFileName: progressOptions?.currentFileName,
+        })
       }
       emitImportStatus(
         'analyzing_source',
@@ -3871,6 +4859,7 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
           mode === 'primary' ? 'waiting_codex_primary' : 'waiting_codex_repair'
         const parsingStage =
           mode === 'primary' ? 'parsing_primary_result' : 'parsing_repair_result'
+        const waitingReplaceKey = `trace:${mode}:heartbeat`
         let currentStage: TextImportRunStage = startingStage
 
         emitImportStatus(
@@ -3879,26 +4868,64 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
             ? '正在启动 Codex 导入分析…'
             : '正在启动 Codex 结构修正…',
         )
-
         try {
           currentStage = waitingStage
           emitImportStatus(
             waitingStage,
             buildImportWaitingStatusMessage(mode),
           )
+          const prompt = buildDocumentToLogicMapPrompt(
+            loadedPrompt,
+            promptContext.promptContextText,
+            mode,
+          )
+          emitImportTrace({
+            attempt: mode,
+            channel: 'request',
+            eventType: 'request.dispatched',
+            payload: {
+              kind: 'structured',
+              promptLength: prompt.length,
+              schemaEnabled: true,
+              sourceName: request.sourceName,
+              requestId,
+              attempt: mode,
+            },
+          })
 
           const rawText = await runner.execute(
-            buildDocumentToLogicMapPrompt(loadedPrompt, promptContext.promptContextText, mode),
+            prompt,
             DOCUMENT_TO_LOGIC_MAP_RESPONSE_SCHEMA,
             {
+              onEvent: (event: CodexJsonEvent) => {
+                emitImportTrace({
+                  attempt: mode,
+                  channel: 'codex',
+                  eventType: typeof event.type === 'string' && event.type ? event.type : 'unknown',
+                  payload: event,
+                })
+              },
               onObservation: (event: CodexExecutionObservation) => {
                 if (event.phase === 'heartbeat' && currentStage === waitingStage) {
-                  emitImportStatus(
-                    waitingStage,
-                    buildImportWaitingStatusMessage(mode, event.elapsedSinceLastEventMs),
+                  const waitingMessage = buildImportWaitingStatusMessage(
+                    mode,
                     event.elapsedSinceLastEventMs,
                   )
+                  emitImportStatus(
+                    waitingStage,
+                    waitingMessage,
+                    event.elapsedSinceLastEventMs,
+                    false,
+                  )
                 }
+
+                emitImportTrace({
+                  attempt: mode,
+                  channel: 'runner',
+                  eventType: event.phase,
+                  payload: event,
+                  replaceKey: event.phase === 'heartbeat' ? waitingReplaceKey : undefined,
+                })
 
                 logInfo(
                   formatImportLog(requestId, {

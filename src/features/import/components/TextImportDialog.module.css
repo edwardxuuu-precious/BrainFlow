@@ -243,11 +243,19 @@
   flex-shrink: 0;
 }
 
+.sourcePrimaryRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .toolbarRow {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  align-items: end;
+  align-items: start;
 }
 
 .toolbarField {
@@ -260,7 +268,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 42px;
+  min-height: 36px;
   padding: 0 14px;
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
   border-radius: 14px;
@@ -281,7 +289,10 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
+  background: color-mix(in srgb, var(--dialog-surface) 88%, var(--dialog-panel) 12%);
 }
 
 .sourceSummaryCopy {
@@ -292,6 +303,9 @@
 
 .sourceSummaryTitle {
   font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sourceSummaryMeta {
@@ -964,6 +978,18 @@
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 58%, white 42%);
 }
 
+.codexFeedItem[data-active='true'] {
+  border-color: color-mix(in srgb, var(--document-accent) 32%, white 68%);
+}
+
+.codexFeedItem[data-kind='attempt_marker'] {
+  background: color-mix(in srgb, var(--document-accent) 8%, var(--dialog-surface) 92%);
+}
+
+.codexFeedItem[data-kind='waiting'] {
+  background: color-mix(in srgb, var(--dialog-panel) 82%, white 18%);
+}
+
 .codexFeedItemHeader {
   display: flex;
   align-items: center;
@@ -991,6 +1017,19 @@
   white-space: pre-wrap;
 }
 
+.activityToolList {
+  margin: 0;
+  padding: 0 0 0 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.activityToolItem {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--document-muted);
+}
+
 .codexFeedEmpty {
   margin: 0;
   padding: 14px 16px;
@@ -1002,7 +1041,7 @@
 }
 
 .codexFeedEmpty::before {
-  content: 'Real CLI events will appear here when Codex emits them.';
+  content: attr(data-empty-copy);
   font-size: 13px;
 }
 

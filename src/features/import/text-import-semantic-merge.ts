@@ -160,7 +160,7 @@ function compactText(value: string | null | undefined): string {
   if (normalized.length <= MAX_NOTE_SUMMARY_LENGTH) {
     return normalized
   }
-  return `${normalized.slice(0, MAX_NOTE_SUMMARY_LENGTH)}…`
+  return `${normalized.slice(0, MAX_NOTE_SUMMARY_LENGTH)}...`
 }
 
 function createCandidateGroupId(bundle: CandidateBundle): string {
@@ -396,51 +396,63 @@ function annotateBatchPreview(
   const previewMetaById = new Map<string, PreviewNodeMeta>()
   const fileOrderBySourceName = new Map<string, number>()
   const sortedFiles = sortTextImportBatchSources(request.files)
+  const sourcePrefixes = sortedFiles.map((file, index) => ({
+    sourceName: file.sourceName,
+    prefix: `batch_${index + 1}__`,
+  }))
   const responseFiles = response.batch?.files ?? []
   const sourceByRootId = new Map(
     responseFiles.map((fileSummary) => [fileSummary.previewNodeId, fileSummary.sourceName]),
   )
-  const batchRoot = roots[0] ?? null
+  const directSourceRoots = roots.filter((root) => sourceByRootId.has(root.id))
+  const hasBatchContainer = directSourceRoots.length === 0 && roots.length === 1
+  const fileRoots = hasBatchContainer ? roots[0]?.children ?? [] : roots
+  const rootContainer = hasBatchContainer ? roots[0] : null
 
-  if (batchRoot) {
-    previewMetaById.set(batchRoot.id, {
-      id: batchRoot.id,
-      title: batchRoot.title,
-      note: batchRoot.note ?? '',
+  if (rootContainer) {
+    previewMetaById.set(rootContainer.id, {
+      id: rootContainer.id,
+      title: rootContainer.title,
+      note: rootContainer.note ?? '',
       parentId: null,
       parentTitle: null,
       sourceName: null,
-      pathTitles: [batchRoot.title],
+      pathTitles: [rootContainer.title],
       depth: 0,
     })
-
-    batchRoot.children.forEach((fileRoot, index) => {
-      const sourceName = sourceByRootId.get(fileRoot.id) ?? sortedFiles[index]?.sourceName ?? fileRoot.title
-      fileOrderBySourceName.set(sourceName, index)
-      const visit = (
-        node: TextImportPreviewNode,
-        parentTitle: string | null,
-        pathTitles: string[],
-        depth: number,
-      ) => {
-        previewMetaById.set(node.id, {
-          id: node.id,
-          title: node.title,
-          note: node.note ?? '',
-          parentId: node.parentId,
-          parentTitle,
-          sourceName,
-          pathTitles,
-          depth,
-        })
-        node.children.forEach((child) =>
-          visit(child, node.title, [...pathTitles, child.title], depth + 1),
-        )
-      }
-
-      visit(fileRoot, null, [fileRoot.title], 1)
-    })
   }
+
+  fileRoots.forEach((fileRoot, index) => {
+    const sourceName = sourceByRootId.get(fileRoot.id) ?? sortedFiles[index]?.sourceName ?? fileRoot.title
+    fileOrderBySourceName.set(sourceName, index)
+    const inferSourceName = (nodeId: string): string => {
+      const byPrefix = sourcePrefixes.find((entry) => nodeId.startsWith(entry.prefix))
+      return byPrefix?.sourceName ?? sourceName
+    }
+    const visit = (
+      node: TextImportPreviewNode,
+      parentTitle: string | null,
+      pathTitles: string[],
+      depth: number,
+    ) => {
+      const nodeSourceName = inferSourceName(node.id)
+      previewMetaById.set(node.id, {
+        id: node.id,
+        title: node.title,
+        note: node.note ?? '',
+        parentId: node.parentId,
+        parentTitle,
+        sourceName: nodeSourceName,
+        pathTitles,
+        depth,
+      })
+      node.children.forEach((child) =>
+        visit(child, node.title, [...pathTitles, child.title], depth + 1),
+      )
+    }
+
+    visit(fileRoot, null, [fileRoot.title], hasBatchContainer ? 1 : 0)
+  })
 
   return { previewMetaById, fileOrderBySourceName }
 }
@@ -451,6 +463,46 @@ export function createTextImportSemanticDraft(
 ): TextImportSemanticDraft {
   const { previewMetaById, fileOrderBySourceName } =
     'files' in request ? annotateBatchPreview(request, response) : annotateSinglePreview(request, response)
+  const sourceMetadataBySourceName = new Map(
+    (response.batch?.files ?? []).map((file) => [
+      file.sourceName,
+      {
+        sourceRole: file.sourceRole,
+        canonicalTopicId: file.canonicalTopicId,
+        sameAsTopicId: file.sameAsTopicId,
+        mergeMode: file.mergeMode,
+        mergeConfidence: file.mergeConfidence,
+        semanticFingerprint: file.semanticFingerprint,
+      },
+    ]),
+  )
+  const getSourceMergeMetadata = (sourceName: string | null | undefined) => {
+    if (!sourceName) {
+      return {
+        sourceRole: undefined,
+        canonicalTopicId: null as string | null,
+        sameAsTopicId: null as string | null,
+        mergeMode: undefined,
+        mergeConfidence: undefined as number | undefined,
+        semanticFingerprint: null as string | null,
+      }
+    }
+
+    const existing = sourceMetadataBySourceName.get(sourceName)
+    if (existing) {
+      return existing
+    }
+
+    const normalized = normalizeTitleForMatch(sourceName) || 'source'
+    return {
+      sourceRole: undefined,
+      canonicalTopicId: `topic_${normalized}`,
+      sameAsTopicId: null,
+      mergeMode: undefined,
+      mergeConfidence: undefined,
+      semanticFingerprint: `fingerprint_${normalized}`,
+    }
+  }
   const candidateBundles: CandidateBundle[] = []
   const existingIndex = collectExistingTopicIndex(request.context)
 
@@ -474,6 +526,7 @@ export function createTextImportSemanticDraft(
     }
 
     const candidateId = `semantic_existing_${meta.id}_${heuristic.target.topicId}`
+    const mergeMetadata = getSourceMergeMetadata(meta.sourceName)
     candidateBundles.push({
       scope: 'existing_topic',
       sourcePreviewNodeId: meta.id,
@@ -498,6 +551,12 @@ export function createTextImportSemanticDraft(
           parentTitle: meta.parentTitle,
           fingerprint: heuristic.target.fingerprint,
         },
+        sourceRole: mergeMetadata.sourceRole,
+        canonicalTopicId: mergeMetadata.canonicalTopicId,
+        sameAsTopicId: mergeMetadata.sameAsTopicId,
+        mergeMode: mergeMetadata.mergeMode,
+        mergeConfidence: mergeMetadata.mergeConfidence,
+        semanticFingerprint: mergeMetadata.semanticFingerprint,
       },
       fallbackDecision: {
         candidateId,
@@ -535,6 +594,7 @@ export function createTextImportSemanticDraft(
       seen.add(key)
       crossFileCount += 1
       const candidateId = `semantic_cross_${left.id}_${right.id}`
+      const mergeMetadata = getSourceMergeMetadata(left.sourceName)
       candidateBundles.push({
         scope: 'cross_file',
         sourcePreviewNodeId: left.id,
@@ -550,6 +610,12 @@ export function createTextImportSemanticDraft(
           scope: 'cross_file',
           source: createSnapshot('import_preview', left),
           target: createSnapshot('import_preview', right),
+          sourceRole: mergeMetadata.sourceRole,
+          canonicalTopicId: mergeMetadata.canonicalTopicId,
+          sameAsTopicId: mergeMetadata.sameAsTopicId,
+          mergeMode: mergeMetadata.mergeMode,
+          mergeConfidence: mergeMetadata.mergeConfidence,
+          semanticFingerprint: mergeMetadata.semanticFingerprint,
         },
         fallbackDecision: {
           candidateId,
@@ -903,6 +969,9 @@ export function applyTextImportSemanticAdjudication(
         kind: decision.kind,
         confidence: decision.confidence,
         reason: decision.evidence,
+        canonicalTopicId: bundle.candidate.canonicalTopicId ?? null,
+        sameAsTopicId: bundle.candidate.sameAsTopicId ?? null,
+        mergeMode: bundle.candidate.mergeMode,
       })
     }
   }

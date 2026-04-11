@@ -1,8 +1,12 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { TextImportResponse } from '../../../../shared/ai-contract'
+import type {
+  TextImportProgressEntry,
+  TextImportResponse,
+  TextImportTraceEntry,
+} from '../../../../shared/ai-contract'
 import type { TextImportSourcePlanningSummary } from '../../../../shared/text-import-semantics'
 import { TextImportDialog } from './TextImportDialog'
 
@@ -108,6 +112,29 @@ function createPreview(overrides: Partial<TextImportResponse> = {}): TextImportR
   }
 }
 
+function createTraceEntry(
+  overrides: Partial<TextImportTraceEntry> = {},
+): TextImportTraceEntry {
+  return {
+    id: 'trace_1',
+    sequence: 1,
+    timestampMs: Date.now(),
+    attempt: 'primary',
+    channel: 'runner',
+    eventType: 'heartbeat',
+    payload: {
+      kind: 'structured',
+      phase: 'heartbeat',
+      promptLength: 120,
+      elapsedSinceLastEventMs: 12_000,
+      hadJsonEvent: false,
+    },
+    currentFileName: 'Launch.md',
+    requestId: 'import_1',
+    ...overrides,
+  }
+}
+
 function createPlanningSummary(
   overrides: Partial<TextImportSourcePlanningSummary> = {},
 ): TextImportSourcePlanningSummary {
@@ -132,10 +159,26 @@ function createPlanningSummary(
   }
 }
 
+function createProgressEntry(
+  overrides: Partial<TextImportProgressEntry> = {},
+): TextImportProgressEntry {
+  return {
+    id: 'progress_1',
+    timestampMs: Date.now(),
+    stage: 'parsing_markdown',
+    message: 'Parsing local markdown structure...',
+    tone: 'info',
+    source: 'status',
+    attempt: 'local',
+    currentFileName: 'Launch.md',
+    ...overrides,
+  }
+}
+
 function createProps(
   overrides: Partial<ComponentProps<typeof TextImportDialog>> = {},
 ): ComponentProps<typeof TextImportDialog> {
-  const props: ComponentProps<typeof TextImportDialog> = {
+  return {
     open: true,
     sourceName: 'Launch.md',
     sourceType: 'file',
@@ -154,6 +197,8 @@ function createProps(
     statusText: '',
     progress: 0,
     progressIndeterminate: false,
+    progressEntries: [],
+    traceEntries: [],
     modeHint: null,
     error: null,
     isPreviewing: false,
@@ -195,12 +240,21 @@ function createProps(
     onApply: () => {},
     ...overrides,
   }
+}
 
-  if (overrides.planningSummaries !== undefined) {
-    return props
+async function openFirstSkillStatusDetails(user: ReturnType<typeof userEvent.setup>) {
+  const skillStatus = screen.getByRole('region', { name: 'Skill status' })
+  const firstSummary = skillStatus.querySelector('summary')
+  expect(firstSummary).not.toBeNull()
+  await user.click(firstSummary as HTMLElement)
+}
+
+async function openAllSkillStatusDetails(user: ReturnType<typeof userEvent.setup>) {
+  const skillStatus = screen.getByRole('region', { name: 'Skill status' })
+  const summaries = Array.from(skillStatus.querySelectorAll('summary'))
+  for (const summary of summaries) {
+    await user.click(summary as HTMLElement)
   }
-
-  return props
 }
 
 describe('TextImportDialog', () => {
@@ -208,15 +262,26 @@ describe('TextImportDialog', () => {
     vi.useRealTimers()
   })
 
-  it('renders a simplified single-column workspace instead of the old wizard', () => {
-    render(<TextImportDialog {...createProps()} />)
+  it('renders a minimal file-only source panel by default', () => {
+    render(
+      <TextImportDialog
+        {...createProps({
+          sourceName: null,
+          sourceType: null,
+          sourceFiles: [],
+          planningSummaries: [],
+        })}
+      />,
+    )
 
-    expect(screen.getByRole('heading', { name: 'Source' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Prepare import' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Skill status' })).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: 'Review' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'More options' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Import files' })).toBeInTheDocument()
+    expect(screen.getByText('No file imported')).toBeInTheDocument()
+    expect(screen.getByText('Import a file to continue')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'More options' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByLabelText('Import target')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Paste Markdown or plain text here and generate an import preview.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Generate draft' })).not.toBeInTheDocument()
   })
 
   it('shows a compact skill status summary and keeps rationale behind details', async () => {
@@ -261,9 +326,8 @@ describe('TextImportDialog', () => {
     expect(screen.getByRole('checkbox', { name: /Show import internals/i })).toBeInTheDocument()
   })
 
-  it('shows progress, elapsed time and batch metadata while previewing', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-04-09T10:00:00Z'))
+  it('keeps activity logs collapsed by default while previewing', async () => {
+    const user = userEvent.setup()
 
     render(
       <TextImportDialog
@@ -278,6 +342,33 @@ describe('TextImportDialog', () => {
           ],
           statusText: 'Codex is building the logic map...',
           progress: 42,
+          traceEntries: [
+            createTraceEntry({
+              id: 'trace_1',
+              sequence: 1,
+              channel: 'request',
+              eventType: 'request.dispatched',
+              payload: {
+                kind: 'structured',
+                sourceName: 'Launch.md',
+                promptLength: 120,
+                schemaEnabled: true,
+              },
+            }),
+            createTraceEntry({
+              id: 'trace_2',
+              sequence: 2,
+              channel: 'codex',
+              currentFileName: 'Ops.md',
+              eventType: 'item.delta',
+              payload: {
+                item: {
+                  text_delta: 'Thinking through launch order',
+                },
+              },
+              timestampMs: Date.now() - 1_000,
+            }),
+          ],
           isPreviewing: true,
           previewStartedAt: Date.now() - 12_000,
           jobType: 'batch',
@@ -293,17 +384,126 @@ describe('TextImportDialog', () => {
     )
 
     expect(screen.getByText('Codex is building the logic map...')).toBeInTheDocument()
-    expect(screen.getByText('Progress 42% | Elapsed 12s')).toBeInTheDocument()
+    expect(screen.getByText(/Progress 42% \| Elapsed \d+s/)).toBeInTheDocument()
     expect(screen.getByText('Files 2/5 | Current: Ops.md')).toBeInTheDocument()
+    expect(screen.queryByText('Ops.md | Thinking through launch order')).not.toBeInTheDocument()
+    expect(screen.queryByText('Communication trace')).not.toBeInTheDocument()
+    expect(screen.queryByText('View raw JSON')).not.toBeInTheDocument()
     expect(
       screen.getByText(/Semantic stage: Generating semantic candidates \| Candidates 9\/4 \| Fallbacks 2/),
     ).toBeInTheDocument()
 
-    act(() => {
-      vi.advanceTimersByTime(2_000)
-    })
+    await openFirstSkillStatusDetails(user)
+    expect(screen.getByText('Ops.md | Thinking through launch order')).toBeInTheDocument()
+  })
 
-    expect(screen.getByText('Progress 42% | Elapsed 14s')).toBeInTheDocument()
+  it('groups real tool events into command-level activity lines', async () => {
+    const user = userEvent.setup()
+    render(
+      <TextImportDialog
+        {...createProps({
+          isPreviewing: true,
+          previewStartedAt: Date.now() - 15_000,
+          traceEntries: [
+            createTraceEntry({
+              id: 'cmd_1',
+              sequence: 1,
+              channel: 'codex',
+              eventType: 'item.started',
+              payload: {
+                item: {
+                  type: 'command_execution',
+                  command: 'npm config get prefix',
+                },
+              },
+            }),
+            createTraceEntry({
+              id: 'search_1',
+              sequence: 2,
+              timestampMs: Date.now() - 1_000,
+              channel: 'codex',
+              eventType: 'item.completed',
+              payload: {
+                item: {
+                  type: 'web_search',
+                  query: 'shopify cli install',
+                },
+              },
+            }),
+          ],
+        })}
+      />,
+    )
+
+    await openFirstSkillStatusDetails(user)
+    expect(screen.getByText(/npm config get prefix/)).toBeInTheDocument()
+    expect(screen.getByText(/shopify cli install/)).toBeInTheDocument()
+  })
+
+  it('shows the raw event trace only inside internals', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <TextImportDialog
+        {...createProps({
+          preview: createPreview(),
+          draftTree,
+          previewTree: draftTree,
+          previewStartedAt: Date.now() - 18_000,
+          previewFinishedAt: Date.now() - 2_000,
+          traceEntries: [
+            createTraceEntry({
+              id: 'trace_done',
+              sequence: 1,
+              channel: 'codex',
+              eventType: 'item.completed',
+              payload: {
+                item: {
+                  type: 'agent_message',
+                },
+              },
+            }),
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.queryByText('View raw JSON')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'More options' }))
+    await user.click(screen.getByRole('checkbox', { name: /Show import internals/i }))
+    await openAllSkillStatusDetails(user)
+
+    expect(screen.getByText('Launch.md | item.type=agent_message')).toBeInTheDocument()
+    expect(screen.getByText('View raw JSON')).toBeInTheDocument()
+  })
+
+  it('shows local import progress without Codex wording', async () => {
+    const user = userEvent.setup()
+    render(
+      <TextImportDialog
+        {...createProps({
+          jobMode: 'local_markdown',
+          isPreviewing: true,
+          previewStartedAt: Date.now() - 8_000,
+          progressEntries: [
+            createProgressEntry(),
+            createProgressEntry({
+              id: 'progress_2',
+              timestampMs: Date.now() - 1_000,
+              stage: 'analyzing_import',
+              message: 'Parsing local import preview...',
+            }),
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.queryByText(/Codex/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Parsing local import preview...')).not.toBeInTheDocument()
+
+    await openFirstSkillStatusDetails(user)
+    expect(screen.getByText('Parsing local import preview...')).toBeInTheDocument()
   })
 
   it('keeps batch file details collapsed by default and expands them on demand', async () => {
@@ -546,3 +746,5 @@ describe('TextImportDialog', () => {
     expect(onChooseFiles).toHaveBeenCalledWith([file])
   })
 })
+
+

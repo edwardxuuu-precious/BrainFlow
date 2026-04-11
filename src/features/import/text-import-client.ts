@@ -185,6 +185,30 @@ function parseStreamEventLine(
   }
 }
 
+function normalizeStreamEvent(event: TextImportStreamEvent): TextImportStreamEvent {
+  if (event.type === 'progress') {
+    return {
+      ...event,
+      entry: {
+        ...event.entry,
+        requestId: event.entry.requestId ?? event.requestId,
+      },
+    }
+  }
+
+  if (event.type === 'trace') {
+    return {
+      ...event,
+      entry: {
+        ...event.entry,
+        requestId: event.entry.requestId ?? event.requestId,
+      },
+    }
+  }
+
+  return event
+}
+
 export async function adjudicateTextImportCandidates(
   request: TextImportSemanticAdjudicationRequest,
   options?: { signal?: AbortSignal },
@@ -243,9 +267,15 @@ export async function streamCodexTextImportPreview(
   let receivedTerminalEvent = false
 
   const applyEventContext = (event: TextImportStreamEvent): void => {
-    lastRequestId = event.requestId ?? lastRequestId
+    lastRequestId =
+      event.type === 'progress' || event.type === 'trace'
+        ? event.entry.requestId ?? event.requestId ?? lastRequestId
+        : event.requestId ?? lastRequestId
     if ('stage' in event && typeof event.stage === 'string') {
       lastStage = event.stage
+    }
+    if (event.type === 'progress') {
+      lastStage = event.entry.stage
     }
     if (event.type === 'result' || event.type === 'error') {
       receivedTerminalEvent = true
@@ -282,20 +312,20 @@ export async function streamCodexTextImportPreview(
       .map((line) => line.trim())
       .filter(Boolean)
       .forEach((line) => {
-        const event = parseStreamEventLine(line, {
+        const event = normalizeStreamEvent(parseStreamEventLine(line, {
           requestId: lastRequestId,
           stage: lastStage,
-        })
+        }))
         applyEventContext(event)
         onEvent(event)
       })
   }
 
   if (buffer.trim()) {
-    const event = parseStreamEventLine(buffer, {
+    const event = normalizeStreamEvent(parseStreamEventLine(buffer, {
       requestId: lastRequestId,
       stage: lastStage,
-    })
+    }))
     applyEventContext(event)
     onEvent(event)
   }

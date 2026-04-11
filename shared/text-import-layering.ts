@@ -292,6 +292,12 @@ function createSourceLayer(source: ImportLayerSourceInput, sourceId: string): Kn
     type: source.sourceType,
     title: source.sourceName.replace(/\.[^.]+$/, '') || 'Imported source',
     raw_content: source.rawText,
+    source_role: 'canonical_knowledge',
+    canonical_topic_id: `topic_${sourceId}`,
+    same_as_topic_id: null,
+    merge_mode: 'create_new',
+    merge_confidence: 1,
+    semantic_fingerprint: `fingerprint_${sourceId}`,
     metadata: {
       sourceName: source.sourceName,
       headingCount: headings.length,
@@ -1033,6 +1039,21 @@ function collectJudgmentChildren(
   return sortNodesByReorderProposals(sortChildren(parentId, nodesById, edgesByParent))
 }
 
+function shouldHideEmptyJudgmentGroup(
+  node: KnowledgeSemanticNode,
+  nodesById: Map<string, KnowledgeSemanticNode>,
+  edgesByParent: Map<string, KnowledgeSemanticEdge[]>,
+): boolean {
+  if (
+    node.structure_role !== 'judgment_basis_group' &&
+    node.structure_role !== 'potential_action_group'
+  ) {
+    return false
+  }
+
+  return collectJudgmentChildren(node.id, nodesById, edgesByParent).length === 0
+}
+
 function selectThinkingCenter(options: {
   semanticNodes: KnowledgeSemanticNode[]
   nodesById: Map<string, KnowledgeSemanticNode>
@@ -1282,9 +1303,11 @@ function createThinkingProjection(options: {
         }),
       )
 
-      collectJudgmentChildren(node.id, nodesById, edgesByParent).forEach((child, childIndex) => {
-        walkJudgmentBranch(child, node.id, childIndex)
-      })
+      collectJudgmentChildren(node.id, nodesById, edgesByParent)
+        .filter((child) => !shouldHideEmptyJudgmentGroup(child, nodesById, edgesByParent))
+        .forEach((child, childIndex) => {
+          walkJudgmentBranch(child, node.id, childIndex)
+        })
     }
 
     const judgmentModules = collectJudgmentChildren(rootContext.id, nodesById, edgesByParent).filter(

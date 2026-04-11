@@ -339,8 +339,21 @@ function createImportNdjsonResponse(
     new ReadableStream({
       async start(controller) {
         const emit = (event: TextImportStreamEvent) => {
+          const payload =
+            requestId && (event.type === 'progress' || event.type === 'trace')
+              ? {
+                  ...event,
+                  requestId,
+                  entry: {
+                    ...event.entry,
+                    requestId: event.entry.requestId ?? requestId,
+                  },
+                }
+              : requestId
+                ? { ...event, requestId }
+                : event
           controller.enqueue(
-            encoder.encode(`${JSON.stringify(requestId ? { ...event, requestId } : event)}\n`),
+            encoder.encode(`${JSON.stringify(payload)}\n`),
           )
         }
 
@@ -561,6 +574,12 @@ export function createApp(options?: CreateAppOptions) {
               type: 'status',
               stage,
               message,
+            })
+          },
+          onTrace: (entry) => {
+            emit({
+              type: 'trace',
+              entry,
             })
           },
         })

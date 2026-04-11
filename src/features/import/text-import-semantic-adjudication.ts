@@ -1,9 +1,15 @@
 import type {
+  AiImportOperation,
   TextImportRequest,
   TextImportResponse,
   TextImportRunStage,
   TextImportSemanticDecision,
 } from '../../../shared/ai-contract'
+import {
+  compileSemanticLayerViews,
+  deriveSemanticGraphFromPreviewNodes,
+  normalizeDocumentStructureType,
+} from '../../../shared/text-import-layering'
 import type { LocalTextImportBatchRequest, SemanticMergeStage } from './local-text-import-core'
 import { mergeTextImportDiagnostics } from './text-import-diagnostics'
 import { adjudicateTextImportCandidates } from './text-import-client'
@@ -79,6 +85,83 @@ function expandGroupedDecisions(
   return expanded
 }
 
+function mergeOperationsWithSemanticUpdates(
+  projectionOperations: AiImportOperation[],
+  semanticUpdateOperations: AiImportOperation[],
+): AiImportOperation[] {
+  const byId = new Map<string, AiImportOperation>()
+  projectionOperations.forEach((operation) => {
+    byId.set(operation.id, operation)
+  })
+  semanticUpdateOperations.forEach((operation) => {
+    byId.set(operation.id, operation)
+  })
+  return [...byId.values()]
+}
+
+function rebuildSemanticViewsAfterAdjudication(
+  request: TextImportRequest | LocalTextImportBatchRequest,
+  response: TextImportResponse,
+): TextImportResponse {
+  if (!response.bundle) {
+    return response
+  }
+
+  const fallbackInsertionParentTopicId =
+    response.anchorTopicId ?? request.anchorTopicId ?? request.context.rootTopicId
+  const sources = response.sources.length > 0 ? response.sources : response.bundle.sources
+  const semanticGraph = deriveSemanticGraphFromPreviewNodes({
+    previewNodes: response.previewNodes,
+    existingNodes: response.semanticNodes,
+    existingEdges: response.semanticEdges,
+  })
+  const compiled = compileSemanticLayerViews({
+    bundleId: response.bundle.id,
+    bundleTitle: response.bundle.title,
+    sources,
+    semanticNodes: semanticGraph.semanticNodes,
+    semanticEdges: semanticGraph.semanticEdges,
+    fallbackInsertionParentTopicId,
+    documentType: normalizeDocumentStructureType(response.classification.archetype),
+  })
+  const requestedActiveViewId = response.activeViewId
+  const activeViewId =
+    requestedActiveViewId && compiled.viewProjections[requestedActiveViewId]
+      ? requestedActiveViewId
+      : compiled.activeViewId
+  const activeProjection = compiled.viewProjections[activeViewId]
+  const semanticUpdateOperations = response.operations.filter(
+    (operation): operation is AiImportOperation => operation.type === 'update_topic',
+  )
+
+  return {
+    ...response,
+    bundle: {
+      ...response.bundle,
+      defaultViewId: compiled.defaultViewId,
+      activeViewId,
+      sources,
+      semanticNodes: semanticGraph.semanticNodes,
+      semanticEdges: semanticGraph.semanticEdges,
+      views: compiled.views,
+      viewProjections: compiled.viewProjections,
+    },
+    sources,
+    semanticNodes: semanticGraph.semanticNodes,
+    semanticEdges: semanticGraph.semanticEdges,
+    views: compiled.views,
+    viewProjections: compiled.viewProjections,
+    defaultViewId: compiled.defaultViewId,
+    activeViewId,
+    nodePlans: activeProjection?.nodePlans ?? response.nodePlans,
+    previewNodes: activeProjection?.previewNodes ?? response.previewNodes,
+    operations: mergeOperationsWithSemanticUpdates(
+      activeProjection?.operations ?? [],
+      semanticUpdateOperations,
+    ),
+  }
+}
+
 export async function finalizeTextImportSemanticPreview(
   jobId: string,
   request: TextImportRequest | LocalTextImportBatchRequest,
@@ -130,8 +213,9 @@ export async function finalizeTextImportSemanticPreview(
       semanticAdjudicatedCount: 0,
       semanticFallbackCount: 0,
     })
+    const rebuilt = rebuildSemanticViewsAfterAdjudication(request, draftResponse)
     return {
-      ...draftResponse,
+      ...rebuilt,
       semanticMerge: {
         candidateCount: 0,
         adjudicatedCount: 0,
@@ -140,7 +224,7 @@ export async function finalizeTextImportSemanticPreview(
         conflictCount: 0,
         fallbackCount: 0,
       },
-      diagnostics: mergeTextImportDiagnostics(draftResponse.diagnostics, {
+      diagnostics: mergeTextImportDiagnostics(rebuilt.diagnostics, {
         semanticAdjudication: {
           candidateCount: 0,
           representativeCount: 0,
@@ -160,9 +244,10 @@ export async function finalizeTextImportSemanticPreview(
       decisions: [],
       warnings: [],
     })
+    const rebuilt = rebuildSemanticViewsAfterAdjudication(request, applied)
     return {
-      ...applied,
-      diagnostics: mergeTextImportDiagnostics(applied.diagnostics, {
+      ...rebuilt,
+      diagnostics: mergeTextImportDiagnostics(rebuilt.diagnostics, {
         semanticAdjudication: {
           candidateCount,
           representativeCount: 0,
@@ -272,9 +357,10 @@ export async function finalizeTextImportSemanticPreview(
       warnings,
     },
   )
+  const rebuilt = rebuildSemanticViewsAfterAdjudication(request, applied)
   return {
-    ...applied,
-    diagnostics: mergeTextImportDiagnostics(applied.diagnostics, {
+    ...rebuilt,
+    diagnostics: mergeTextImportDiagnostics(rebuilt.diagnostics, {
       semanticAdjudication: {
         candidateCount,
         representativeCount,

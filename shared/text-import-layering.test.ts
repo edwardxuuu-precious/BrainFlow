@@ -12,6 +12,12 @@ function createSource(title: string): KnowledgeSource {
     type: 'paste',
     title,
     raw_content: '',
+    source_role: 'canonical_knowledge',
+    canonical_topic_id: 'topic_source_1',
+    same_as_topic_id: null,
+    merge_mode: 'create_new',
+    merge_confidence: 1,
+    semantic_fingerprint: 'fingerprint_source_1',
     metadata: {},
   }
 }
@@ -598,6 +604,30 @@ describe('text-import-layering', () => {
         task: null,
       },
       {
+        id: 'basis_context_trigger',
+        type: 'question',
+        title: 'Which trigger starts the search for a new solution?',
+        summary: 'Which trigger starts the search for a new solution?',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'basis_item',
+        source_module_id: 'module_context',
+        task: null,
+      },
+      {
+        id: 'basis_context_job',
+        type: 'question',
+        title: 'What concrete job is the segment trying to finish?',
+        summary: 'What concrete job is the segment trying to finish?',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'basis_item',
+        source_module_id: 'module_context',
+        task: null,
+      },
+      {
         id: 'task_segments',
         type: 'task',
         title: '列候选 segment',
@@ -616,6 +646,29 @@ describe('text-import-layering', () => {
           output: '候选 segment 列表',
           inferred_output: true,
           mirrored_task_id: 'execution::task_segments',
+          source_refs: [],
+          definition_of_done: null,
+        },
+      },
+      {
+        id: 'task_context_interview_guide',
+        type: 'task',
+        title: '整理候选 segment 访谈提纲',
+        summary: '整理候选 segment 访谈提纲',
+        detail: 'Turn the trigger and job checks into interview prompts.',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'action_item',
+        source_module_id: 'module_context',
+        task: {
+          status: 'todo',
+          owner: null,
+          due_date: null,
+          priority: null,
+          depends_on: ['task_segments'],
+          output: '候选 segment 访谈提纲',
+          inferred_output: true,
+          mirrored_task_id: 'execution::task_context_interview_guide',
           source_refs: [],
           definition_of_done: null,
         },
@@ -651,8 +704,12 @@ describe('text-import-layering', () => {
       { from: 'module_context_basis', to: 'module_context', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
       { from: 'module_context_actions', to: 'module_context', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
       { from: 'module_scoring_actions', to: 'module_scoring', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'basis_context_trigger', to: 'module_context_basis', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'basis_context_job', to: 'module_context_basis', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
       { from: 'task_segments', to: 'module_context_actions', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'task_context_interview_guide', to: 'module_context_actions', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
       { from: 'task_sheet', to: 'module_scoring_actions', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'task_context_interview_guide', to: 'task_segments', type: 'depends_on', label: null, source_refs: [], confidence: 'high' },
       { from: 'task_sheet', to: 'task_segments', type: 'depends_on', label: null, source_refs: [], confidence: 'high' },
     ]
 
@@ -681,16 +738,122 @@ describe('text-import-layering', () => {
     expect(
       thinkingProjection.previewNodes.filter((node) => node.parentId === 'module_context').map((node) => node.title),
     ).toEqual(['核心判断', '判断依据', '潜在动作'])
+    expect(
+      thinkingProjection.previewNodes.filter((node) => node.parentId === 'module_context_basis').map((node) => node.id),
+    ).toEqual(['basis_context_trigger', 'basis_context_job'])
+    expect(
+      thinkingProjection.previewNodes.filter((node) => node.parentId === 'module_context_actions').map((node) => node.id),
+    ).toEqual(['task_segments', 'task_context_interview_guide'])
     expect(executionProjection.previewNodes[0]).toMatchObject({
       title: '执行汇总',
       structureRole: 'execution_root',
     })
     expect(executionProjection.previewNodes.filter((node) => node.parentId !== null).map((node) => node.title)).toEqual([
       '列候选 segment',
+      '整理候选 segment 访谈提纲',
       '制作筛选表',
     ])
     expect(
       executionProjection.previewNodes.filter((node) => node.parentId !== null).every((node) => node.semanticType === 'task'),
     ).toBe(true)
+  })
+
+  it('hides empty judgment basis and action groups from the thinking projection', () => {
+    const semanticNodes: KnowledgeSemanticNode[] = [
+      {
+        id: 'root_context',
+        type: 'question',
+        title: 'What should we validate first?',
+        summary: 'What should we validate first?',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'root_context',
+        task: null,
+      },
+      {
+        id: 'module_research',
+        type: 'section',
+        title: 'First verify whether the interview evidence is strong enough',
+        summary: 'First verify whether the interview evidence is strong enough',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'judgment_module',
+        task: null,
+      },
+      {
+        id: 'module_research_core',
+        type: 'section',
+        title: '核心判断',
+        summary: '核心判断',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'core_judgment_group',
+        source_module_id: 'module_research',
+        task: null,
+      },
+      {
+        id: 'module_research_basis',
+        type: 'section',
+        title: '判断依据',
+        summary: '判断依据',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'judgment_basis_group',
+        source_module_id: 'module_research',
+        task: null,
+      },
+      {
+        id: 'module_research_actions',
+        type: 'section',
+        title: '潜在动作',
+        summary: '潜在动作',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'potential_action_group',
+        source_module_id: 'module_research',
+        task: null,
+      },
+      {
+        id: 'claim_research',
+        type: 'claim',
+        title: 'The team should not rewrite positioning before the interview signals repeat.',
+        summary: 'The team should not rewrite positioning before the interview signals repeat.',
+        detail: '',
+        source_refs: [],
+        confidence: 'high',
+        structure_role: 'core_judgment',
+        source_module_id: 'module_research',
+        task: null,
+      },
+    ]
+    const semanticEdges: KnowledgeSemanticEdge[] = [
+      { from: 'module_research', to: 'root_context', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'module_research_core', to: 'module_research', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'module_research_basis', to: 'module_research', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'module_research_actions', to: 'module_research', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+      { from: 'claim_research', to: 'module_research_core', type: 'belongs_to', label: null, source_refs: [], confidence: 'high' },
+    ]
+
+    const compiled = compileSemanticLayerViews({
+      bundleId: 'bundle_research_v2',
+      bundleTitle: 'Research',
+      sources: [createSource('Research')],
+      semanticNodes,
+      semanticEdges,
+      fallbackInsertionParentTopicId: 'topic_root',
+      documentType: 'analysis',
+    })
+    const thinkingProjection = compiled.viewProjections[compiled.activeViewId]
+
+    expect(
+      thinkingProjection.previewNodes.filter((node) => node.parentId === 'module_research').map((node) => node.id),
+    ).toEqual(['module_research_core'])
+    expect(thinkingProjection.previewNodes.some((node) => node.id === 'module_research_basis')).toBe(false)
+    expect(thinkingProjection.previewNodes.some((node) => node.id === 'module_research_actions')).toBe(false)
   })
 })

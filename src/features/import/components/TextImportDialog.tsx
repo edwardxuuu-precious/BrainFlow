@@ -4,22 +4,27 @@ import type {
   TextImportCrossFileMergeSuggestion,
   TextImportMergeSuggestion,
   TextImportPreset,
+  TextImportProgressEntry,
   TextImportPreviewNode,
   TextImportPreprocessHint,
   TextImportResponse,
   TextImportSourceType,
+  TextImportTraceEntry,
 } from '../../../../shared/ai-contract'
 import {
   formatTextImportArchetypeLabel,
   formatTextImportClassificationConfidence,
-  resolveTextImportPlanningOptions,
   type TextImportSourcePlanningSummary,
 } from '../../../../shared/text-import-semantics'
-import { Button, IconButton, Input, SurfacePanel, TextArea } from '../../../components/ui'
+import { Button, IconButton, Input, SurfacePanel } from '../../../components/ui'
 import type { SemanticMergeStage } from '../local-text-import-core'
+import {
+  buildTextImportActivityBlocks,
+  formatTextImportActivityLead,
+  type TextImportActivityBlock,
+} from '../text-import-activity'
 import type { TextImportJobMode, TextImportJobType } from '../text-import-job'
 import type { TextImportAnchorMode, TextImportErrorState } from '../text-import-store'
-import { preprocessTextToImportHints } from '../text-import-preprocess'
 import styles from './TextImportDialog.module.css'
 
 interface TextImportSourceFileState {
@@ -47,6 +52,8 @@ interface TextImportDialogProps {
   statusText: string
   progress: number
   progressIndeterminate: boolean
+  progressEntries: TextImportProgressEntry[]
+  traceEntries: TextImportTraceEntry[]
   modeHint: string | null
   error: TextImportErrorState | null
   isPreviewing: boolean
@@ -416,6 +423,226 @@ function countPreviewNodes(nodes: TextImportPreviewNode[]): number {
   return nodes.reduce((total, node) => total + 1 + countPreviewNodes(node.children), 0)
 }
 
+type TraceFeedItem =
+  | {
+      kind: 'event'
+      entry: TextImportTraceEntry
+    }
+  | {
+      kind: 'delta'
+      id: string
+      timestampMs: number
+      attempt: TextImportTraceEntry['attempt']
+      channel: TextImportTraceEntry['channel']
+      eventType: string
+      currentFileName: string | null
+      text: string
+    }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function summarizeTraceText(value: string, maxLength = 220): string {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (!normalized) {
+    return '(empty)'
+  }
+
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized
+}
+
+function extractTraceDelta(payload: unknown): string | null {
+  if (!isRecord(payload)) {
+    return typeof payload === 'string' && payload ? payload : null
+  }
+
+  const item = isRecord(payload.item) ? payload.item : null
+  if (item && typeof item.text_delta === 'string' && item.text_delta) {
+    return item.text_delta
+  }
+
+  if (item && typeof item.delta === 'string' && item.delta) {
+    return item.delta
+  }
+
+  if (typeof payload.delta === 'string' && payload.delta) {
+    return payload.delta
+  }
+
+  if (typeof payload.message === 'string' && payload.message) {
+    return payload.message
+  }
+
+  return null
+}
+
+function formatTraceAttempt(attempt: TextImportTraceEntry['attempt']): string {
+  switch (attempt) {
+    case 'repair':
+      return 'Repair'
+    case 'local':
+      return 'Local'
+    case 'primary':
+    default:
+      return 'Primary'
+  }
+}
+
+function formatTraceChannel(channel: TextImportTraceEntry['channel']): string {
+  switch (channel) {
+    case 'runner':
+      return 'Runner'
+    case 'request':
+      return 'Request'
+    case 'codex':
+    default:
+      return 'Codex'
+  }
+}
+
+function formatTraceLead(
+  currentFileName: string | null | undefined,
+  message: string,
+): string {
+  return currentFileName ? `${currentFileName} | ${message}` : message
+}
+
+function formatActivityKindLabel(kind: TextImportActivityBlock['kind']): string {
+  switch (kind) {
+    case 'attempt_marker':
+      return '修复重试'
+    case 'request':
+      return '请求已发出'
+    case 'tool_group':
+      return '工具步骤'
+    case 'waiting':
+      return '等待返回'
+    case 'local_status':
+      return '本地导入'
+    case 'lifecycle':
+      return '过程事件'
+    case 'commentary':
+    default:
+      return '运行说明'
+  }
+}
+
+function summarizeTracePayload(payload: unknown): string {
+  if (!isRecord(payload)) {
+    return typeof payload === 'string' ? summarizeTraceText(payload) : 'No payload'
+  }
+
+  const errorPayload = isRecord(payload.error) ? payload.error : null
+  const directText =
+    (typeof payload.message === 'string' && payload.message) ||
+    (errorPayload && typeof errorPayload.message === 'string' && errorPayload.message) ||
+    null
+  if (directText) {
+    return summarizeTraceText(directText)
+  }
+
+  const parts: string[] = []
+  for (const key of [
+    'kind',
+    'phase',
+    'sourceName',
+    'promptLength',
+    'elapsedSinceLastEventMs',
+    'exitCode',
+    'stdoutLength',
+    'stderrLength',
+    'hadJsonEvent',
+    'schemaEnabled',
+  ] as const) {
+    const value = payload[key]
+    if (typeof value === 'string' && value) {
+      parts.push(`${key}=${summarizeTraceText(value, 48)}`)
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      parts.push(`${key}=${String(value)}`)
+    }
+  }
+
+  const item = isRecord(payload.item) ? payload.item : null
+  if (item && typeof item.type === 'string') {
+    parts.push(`item.type=${item.type}`)
+  }
+
+  if (parts.length > 0) {
+    return parts.join(' | ')
+  }
+
+  try {
+    return summarizeTraceText(JSON.stringify(payload))
+  } catch {
+    return 'Unable to summarize payload'
+  }
+}
+
+function formatTraceOffset(
+  timestampMs: number,
+  startedAt: number | null,
+): string {
+  if (startedAt === null || timestampMs <= startedAt) {
+    return 'Just now'
+  }
+
+  return `+${formatElapsed(timestampMs - startedAt)}`
+}
+
+function stringifyTracePayload(payload: unknown): string {
+  try {
+    return JSON.stringify(payload, null, 2)
+  } catch {
+    return String(payload)
+  }
+}
+
+function buildTraceFeedItems(traceEntries: TextImportTraceEntry[]): TraceFeedItem[] {
+  const items: TraceFeedItem[] = []
+
+  for (const entry of traceEntries) {
+    const deltaText =
+      entry.channel === 'codex' && entry.eventType === 'item.delta'
+        ? extractTraceDelta(entry.payload)
+        : null
+
+    if (deltaText) {
+      const previous = items.at(-1)
+      if (
+        previous?.kind === 'delta' &&
+        previous.attempt === entry.attempt &&
+        previous.channel === entry.channel &&
+        previous.eventType === entry.eventType &&
+        previous.currentFileName === (entry.currentFileName ?? null)
+      ) {
+        previous.text += deltaText
+        previous.timestampMs = entry.timestampMs
+        continue
+      }
+
+      items.push({
+        kind: 'delta',
+        id: entry.id,
+        timestampMs: entry.timestampMs,
+        attempt: entry.attempt,
+        channel: entry.channel,
+        eventType: entry.eventType,
+        currentFileName: entry.currentFileName ?? null,
+        text: deltaText,
+      })
+      continue
+    }
+
+    items.push({
+      kind: 'event',
+      entry,
+    })
+  }
+
+  return items
+}
+
 function resolveSkillPhase(options: {
   isApplying: boolean
   isPreviewing: boolean
@@ -518,10 +745,7 @@ function EmptyState({
 
 export function TextImportDialog({
   open,
-  sourceType,
   sourceFiles,
-  draftSourceName,
-  draftText,
   preview,
   draftTree,
   draftConfirmed,
@@ -531,6 +755,8 @@ export function TextImportDialog({
   statusText,
   progress,
   progressIndeterminate,
+  progressEntries = [],
+  traceEntries = [],
   modeHint,
   error,
   isPreviewing,
@@ -550,7 +776,6 @@ export function TextImportDialog({
   appliedCount,
   totalOperations,
   currentApplyLabel,
-  presetOverride,
   archetypeOverride = null,
   anchorMode,
   documentRootLabel,
@@ -560,12 +785,8 @@ export function TextImportDialog({
   repairDisabled = false,
   onClose,
   onChooseFiles,
-  onPresetChange,
   onArchetypeChange = () => {},
   onAnchorModeChange,
-  onDraftSourceNameChange,
-  onDraftTextChange,
-  onGenerateFromText,
   onToggleConflict,
   onConfirmDraft,
   onRenamePreviewNode,
@@ -580,6 +801,7 @@ export function TextImportDialog({
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
   const [showInternals, setShowInternals] = useState(false)
+  const [showActivityTimeline, setShowActivityTimeline] = useState(false)
   const [reviewTab, setReviewTab] = useState<ReviewTab>(() => (isApplying ? 'merge' : 'draft'))
   const previousPreviewingRef = useRef(isPreviewing)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -634,6 +856,7 @@ export function TextImportDialog({
       setShowAdvancedSettings(false)
       setShowDetails(false)
       setShowInternals(false)
+      setShowActivityTimeline(false)
       previousPreviewingRef.current = isPreviewing
     }
   }, [open, isPreviewing])
@@ -657,10 +880,6 @@ export function TextImportDialog({
     }
   }, [open, isApplying])
 
-  const isFileImportSource =
-    sourceType === 'file' || (sourceFiles.length > 0 && sourceFiles.every((file) => file.sourceType === 'file'))
-  const showGenerateAction = !isFileImportSource
-  const showSourceEditor = !isFileImportSource
   const elapsedMs =
     previewStartedAt === null
       ? 0
@@ -673,6 +892,43 @@ export function TextImportDialog({
     : progressIndeterminate
       ? `Working | Elapsed ${formatElapsed(elapsedMs)}`
       : `Progress ${displayProgress}% | Elapsed ${formatElapsed(elapsedMs)}`
+  const activityBlocks = useMemo(
+    () =>
+      buildTextImportActivityBlocks({
+        jobMode,
+        jobType,
+        traceEntries,
+        progressEntries,
+        statusText,
+      }),
+    [jobMode, jobType, progressEntries, statusText, traceEntries],
+  )
+  const traceFeedItems = useMemo(() => buildTraceFeedItems(traceEntries), [traceEntries])
+  const showActivitySection = Boolean(activityBlocks.length > 0 || (isPreviewing && !isApplying))
+  const activityHeadline =
+    jobMode === 'local_markdown'
+      ? `本地导入过程 | ${formatElapsed(elapsedMs)}`
+      : `运行过程流 | ${formatElapsed(elapsedMs)}`
+  const activityLead =
+    jobMode === 'local_markdown'
+      ? '显示本地解析与构建步骤。'
+      : '基于真实 Codex 事件派生的运行过程。'
+  const latestActivityId = activityBlocks.at(-1)?.id ?? null
+  const showRawTraceSection = showInternals && traceEntries.length > 0
+  const rawTraceHeadline =
+    jobMode === 'local_markdown'
+      ? `原始事件流 | ${formatElapsed(elapsedMs)}`
+      : `原始事件流 | ${formatElapsed(elapsedMs)}`
+  const rawTraceLead =
+    jobMode === 'local_markdown'
+      ? '显示本地 request / parse 事件。'
+      : '显示 request、runner 与 Codex 的原始事件。'
+  const latestTraceFeedItem = traceFeedItems.at(-1)
+  const latestTraceEntryId = latestTraceFeedItem
+    ? latestTraceFeedItem.kind === 'delta'
+      ? latestTraceFeedItem.id
+      : latestTraceFeedItem.entry.id
+    : null
   const errorDisplay = error ? createErrorDiagnostics(error, currentFileName) : null
   const sourceError = error?.stage === 'applying_changes' ? null : errorDisplay
   const applyError = error?.stage === 'applying_changes' ? errorDisplay : null
@@ -692,34 +948,7 @@ export function TextImportDialog({
   const classificationConfidence = classification
     ? formatTextImportClassificationConfidence(classification.confidence)
     : null
-  const draftPlanningSummary = useMemo(() => {
-    if (planningSummaries.length > 0 || isFileImportSource) {
-      return null
-    }
-
-    const normalizedDraftText = draftText.replace(/\r\n?/g, '\n').trim()
-    if (!normalizedDraftText) {
-      return null
-    }
-
-    const draftSource = draftSourceName.trim() || 'Pasted text'
-    return resolveTextImportPlanningOptions({
-      sourceName: draftSource,
-      sourceType: 'paste',
-      preprocessedHints: preprocessTextToImportHints(normalizedDraftText),
-      presetOverride,
-      archetypeOverride,
-    }).summary
-  }, [
-    planningSummaries,
-    isFileImportSource,
-    draftText,
-    draftSourceName,
-    presetOverride,
-    archetypeOverride,
-  ])
-  const effectivePlanningSummaries =
-    planningSummaries.length > 0 ? planningSummaries : draftPlanningSummary ? [draftPlanningSummary] : []
+  const effectivePlanningSummaries = planningSummaries
   const hasLowConfidencePlanning = effectivePlanningSummaries.some(
     (summary) => !summary.isManual && summary.confidence === 'low',
   )
@@ -761,7 +990,7 @@ export function TextImportDialog({
     progress,
   })
   const activePhaseLabel = SKILL_PHASES.find((phase) => phase.id === activePhaseId)?.label ?? 'Detect type'
-  const hasSourceInput = sourceFiles.length > 0 || draftText.trim().length > 0
+  const hasSourceInput = sourceFiles.length > 0
   const primaryStatusMessage = isApplying
     ? statusText || 'Applying the approved import changes to the canvas.'
     : statusText
@@ -772,23 +1001,19 @@ export function TextImportDialog({
           ? 'The logic map is ready. Review the draft and confirm it before enabling merge review.'
           : hasSourceInput
             ? 'Ready to run the skill-backed import.'
-            : 'Choose files or paste text to start the skill-backed import.'
+            : 'Choose files to start the skill-backed import.'
   const sourceSummaryLabel =
     sourceFiles.length > 1
-      ? `${sourceFiles.length} files selected`
+      ? `Imported ${sourceFiles.length} files`
       : sourceFiles.length === 1
-        ? sourceFiles[0]?.sourceName ?? '1 file selected'
-        : showSourceEditor
-          ? (draftSourceName.trim() || 'Pasted text')
-          : 'No source selected'
+        ? `Imported: ${sourceFiles[0]?.sourceName ?? 'Unknown file'}`
+        : 'No file imported'
   const sourceSummaryMeta =
     sourceFiles.length > 1
-      ? 'Batch import'
+      ? 'Expand to view file list'
       : sourceFiles.length === 1
         ? `${sourceFiles[0]?.textLength ?? 0} chars`
-        : showSourceEditor
-          ? 'Paste import'
-          : 'Waiting for input'
+        : 'Import a file to continue'
   const showStatusProgress = Boolean(isPreviewing || statusText || previewReady || isApplying)
   const draftNodeCount = countPreviewNodes(draftTree)
   const pendingDecisionCount =
@@ -804,8 +1029,6 @@ export function TextImportDialog({
   const statusTypeSummary = archetypeOverride
     ? `Pinned type · ${formatDocumentTypeLabel(archetypeOverride)}`
     : `${detectedDocumentType} · ${detectedConfidence}`
-  void onPresetChange
-
   const handleConfirmDraft = () => {
     onConfirmDraft()
     setReviewTab('merge')
@@ -830,7 +1053,7 @@ export function TextImportDialog({
               Import with skill
             </h2>
             <p className={styles.headerLead}>
-              Turn files or pasted text into a logic map, then review only the decisions that matter.
+              Import files into a logic map, then review only the decisions that matter.
             </p>
           </div>
           <div className={styles.headerActions}>
@@ -840,13 +1063,7 @@ export function TextImportDialog({
 
         <div className={styles.pageViewport}>
           <section className={styles.inputPanel} aria-label="Prepare import">
-            <div className={styles.sectionHeader}>
-              <div className={styles.headerCopy}>
-                <h3 className={styles.sectionTitle}>Source</h3>
-                <p className={styles.sectionIntro}>
-                  Keep the setup minimal. The skill handles the rest.
-                </p>
-              </div>
+            <div className={styles.sourcePrimaryRow}>
               <div className={styles.prepareHeaderActions}>
                 <input
                   ref={fileInputRef}
@@ -861,54 +1078,9 @@ export function TextImportDialog({
                   disabled={isPreviewing || isApplying}
                   size="sm"
                 >
-                  Choose Files
+                  Import files
                 </Button>
               </div>
-            </div>
-
-            <div className={styles.toolbarRow}>
-              <label className={styles.toolbarField} aria-label="Import target">
-                <span className={styles.metaLabel}>Import target</span>
-                <select
-                  className={styles.select}
-                  value={anchorMode}
-                  onChange={(event) => onAnchorModeChange(event.target.value as TextImportAnchorMode)}
-                  disabled={isPreviewing || isApplying}
-                >
-                  <option value="document_root">Document root: {documentRootLabel}</option>
-                  <option value="current_selection">
-                    Current selection: {currentSelectionLabel ?? 'No active topic'}
-                  </option>
-                </select>
-                <span className={styles.selectDescription}>
-                  {anchorMode === 'document_root'
-                    ? 'Default. Each import starts at the document root so repeated imports stay as sibling branches.'
-                    : 'Import under the current topic when you intentionally want to nest the next branch.'}
-                </span>
-              </label>
-
-              <label className={styles.toolbarField}>
-                <span className={styles.metaLabel}>Document type</span>
-                <select
-                  className={styles.select}
-                  value={archetypeOverride ?? 'auto'}
-                  onChange={(event) =>
-                    onArchetypeChange(
-                      event.target.value === 'auto'
-                        ? null
-                        : (event.target.value as TextImportArchetype),
-                    )
-                  }
-                  disabled={isPreviewing || isApplying}
-                >
-                  {ARCHETYPE_OPTIONS.map((option) => (
-                    <option key={option.id ?? 'auto'} value={option.id ?? 'auto'}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
               <button
                 type="button"
                 className={styles.toolbarToggle}
@@ -920,89 +1092,106 @@ export function TextImportDialog({
               </button>
             </div>
 
-            {anchorMode === 'current_selection' ? (
-              <p className={styles.anchorWarning}>
-                The next import will be nested under the currently selected topic instead of the document root.
-              </p>
-            ) : null}
-
-            {showSourceEditor ? (
-              <div className={styles.editorStack}>
-                <Input
-                  value={draftSourceName}
-                  placeholder="Source name"
-                  onChange={(event) => onDraftSourceNameChange(event.target.value)}
-                  disabled={isPreviewing || isApplying || jobType === 'batch'}
-                />
-                <TextArea
-                  className={styles.textArea}
-                  value={draftText}
-                  placeholder="Paste Markdown or plain text here and generate an import preview."
-                  onChange={(event) => onDraftTextChange(event.target.value)}
-                  disabled={isPreviewing || isApplying || jobType === 'batch'}
-                />
-
-                {showGenerateAction ? (
-                  <div className={styles.inputActions}>
-                    <Button
-                      tone="primary"
-                      onClick={onGenerateFromText}
-                      disabled={isPreviewing || isApplying || !draftText.trim() || jobType === 'batch'}
-                    >
-                      {isPreviewing ? 'Generating draft...' : 'Generate draft'}
-                    </Button>
-                  </div>
-                ) : null}
+            <div className={styles.sourceSummaryStrip}>
+              <div className={styles.sourceSummaryCopy}>
+                <strong
+                  className={styles.sourceSummaryTitle}
+                  title={sourceFiles.length === 1 ? sourceFiles[0]?.sourceName : undefined}
+                >
+                  {sourceSummaryLabel}
+                </strong>
+                <span className={styles.sourceSummaryMeta}>{sourceSummaryMeta}</span>
               </div>
-            ) : (
-              <>
-                <div className={styles.sourceSummaryStrip}>
-                  <div className={styles.sourceSummaryCopy}>
-                    <strong className={styles.sourceSummaryTitle}>{sourceSummaryLabel}</strong>
-                    <span className={styles.sourceSummaryMeta}>{sourceSummaryMeta}</span>
-                  </div>
-                  <button
-                    type="button"
-                    className={styles.inlineLinkButton}
-                    onClick={() => setShowFileDetails((value) => !value)}
-                    aria-expanded={showFileDetails}
-                    aria-label={showFileDetails ? 'Hide file details' : 'Show file details'}
-                  >
-                    {showFileDetails ? 'Hide files' : 'View files'}
-                  </button>
-                </div>
-                {showFileDetails ? (
-                  <div className={styles.fileListInline}>
-                    {sourceFiles.map((file) => {
-                      const planningSummary = effectivePlanningSummaries.find(
-                        (summary) => summary.sourceName === file.sourceName,
-                      )
+              {sourceFiles.length > 1 ? (
+                <button
+                  type="button"
+                  className={styles.inlineLinkButton}
+                  onClick={() => setShowFileDetails((value) => !value)}
+                  aria-expanded={showFileDetails}
+                  aria-label={showFileDetails ? 'Hide file details' : 'Show file details'}
+                >
+                  {showFileDetails ? 'Hide files' : 'View files'}
+                </button>
+              ) : null}
+            </div>
+            {showFileDetails && sourceFiles.length > 1 ? (
+              <div className={styles.fileListInline}>
+                {sourceFiles.map((file) => {
+                  const planningSummary = effectivePlanningSummaries.find(
+                    (summary) => summary.sourceName === file.sourceName,
+                  )
 
-                      return (
-                        <div key={file.sourceName} className={styles.fileListItem}>
-                          <div className={styles.fileListCopy}>
-                            <span className={styles.fileName}>{file.sourceName}</span>
-                            {planningSummary ? (
-                              <span className={styles.filePlanningMeta}>
-                                {formatDocumentTypeLabel(planningSummary.resolvedArchetype)}
-                                {' | '}
-                                {planningSummary.isManual
-                                  ? 'Manual override'
-                                  : formatPlanningConfidence(planningSummary.confidence)}
-                              </span>
-                            ) : null}
-                          </div>
-                          <span className={styles.fileLength}>{file.textLength} chars</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                ) : null}
-              </>
-            )}
+                  return (
+                    <div key={file.sourceName} className={styles.fileListItem}>
+                      <div className={styles.fileListCopy}>
+                        <span className={styles.fileName}>{file.sourceName}</span>
+                        {planningSummary ? (
+                          <span className={styles.filePlanningMeta}>
+                            {formatDocumentTypeLabel(planningSummary.resolvedArchetype)}
+                            {' | '}
+                            {planningSummary.isManual
+                              ? 'Manual override'
+                              : formatPlanningConfidence(planningSummary.confidence)}
+                          </span>
+                        ) : null}
+                      </div>
+                      <span className={styles.fileLength}>{file.textLength} chars</span>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
 
             {showAdvancedSettings ? (
               <div className={styles.advancedInline}>
+                <div className={styles.toolbarRow}>
+                  <label className={styles.toolbarField} aria-label="Import target">
+                    <span className={styles.metaLabel}>Import target</span>
+                    <select
+                      className={styles.select}
+                      value={anchorMode}
+                      onChange={(event) => onAnchorModeChange(event.target.value as TextImportAnchorMode)}
+                      disabled={isPreviewing || isApplying}
+                    >
+                      <option value="document_root">Document root: {documentRootLabel}</option>
+                      <option value="current_selection">
+                        Current selection: {currentSelectionLabel ?? 'No active topic'}
+                      </option>
+                    </select>
+                    <span className={styles.selectDescription}>
+                      {anchorMode === 'document_root'
+                        ? 'Default. Each import starts at the document root so repeated imports stay as sibling branches.'
+                        : 'Import under the current topic when you intentionally want to nest the next branch.'}
+                    </span>
+                  </label>
+
+                  <label className={styles.toolbarField}>
+                    <span className={styles.metaLabel}>Document type</span>
+                    <select
+                      className={styles.select}
+                      value={archetypeOverride ?? 'auto'}
+                      onChange={(event) =>
+                        onArchetypeChange(
+                          event.target.value === 'auto'
+                            ? null
+                            : (event.target.value as TextImportArchetype),
+                        )
+                      }
+                      disabled={isPreviewing || isApplying}
+                    >
+                      {ARCHETYPE_OPTIONS.map((option) => (
+                        <option key={option.id ?? 'auto'} value={option.id ?? 'auto'}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {anchorMode === 'current_selection' ? (
+                  <p className={styles.anchorWarning}>
+                    The next import will be nested under the currently selected topic instead of the document root.
+                  </p>
+                ) : null}
                 <p className={styles.prepareMeta}>{selectedArchetypeOption.description}</p>
                 <label className={styles.checkboxField}>
                   <span className={styles.checkboxRow}>
@@ -1071,6 +1260,152 @@ export function TextImportDialog({
                     </p>
                   ) : null}
                 </>
+              ) : null}
+
+              {showActivitySection ? (
+                <details
+                  className={styles.detailsPanel}
+                  open={showActivityTimeline}
+                  onToggle={(event) => {
+                    const nextOpen = event.currentTarget.open
+                    if (nextOpen !== showActivityTimeline) {
+                      setShowActivityTimeline(nextOpen)
+                    }
+                  }}
+                >
+                  <summary className={styles.detailsSummary}>运行过程流</summary>
+                  {showActivityTimeline ? (
+                    <div className={styles.codexFeedSection}>
+                      <div className={styles.codexFeedHeader}>
+                        <div>
+                          <p className={styles.codexFeedTitle}>{activityHeadline}</p>
+                          <p className={styles.codexFeedLead}>{activityLead}</p>
+                        </div>
+                        <div className={styles.codexFeedMetaBlock}>
+                          <span className={styles.codexFeedPill}>
+                            {activityBlocks.length > 0 ? `${activityBlocks.length} 条` : '等待事件'}
+                          </span>
+                        </div>
+                      </div>
+                      {activityBlocks.length > 0 ? (
+                        <ol className={styles.codexFeedList}>
+                          {activityBlocks.map((block) => (
+                            <li
+                              key={block.id}
+                              className={styles.codexFeedItem}
+                              data-active={block.id === latestActivityId}
+                              data-kind={block.kind}
+                            >
+                              <div className={styles.codexFeedItemHeader}>
+                                <div className={styles.treeBadgeRow}>
+                                  <span className={styles.codexFeedType}>
+                                    {formatActivityKindLabel(block.kind)}
+                                  </span>
+                                </div>
+                                <span className={styles.timelineDuration}>
+                                  {formatTraceOffset(block.timestampMs, previewStartedAt)}
+                                </span>
+                              </div>
+                              <p className={styles.codexFeedSummary}>
+                                {formatTextImportActivityLead(
+                                  block.currentFileName,
+                                  block.kind === 'tool_group' ? block.summary : block.message,
+                                  jobType === 'batch',
+                                )}
+                              </p>
+                              {block.kind === 'tool_group' ? (
+                                <ul className={styles.activityToolList}>
+                                  {block.lines.map((line, index) => (
+                                    <li key={`${block.id}_${index}`} className={styles.activityToolItem}>
+                                      {line}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ol>
+                      ) : (
+                        <p
+                          className={styles.codexFeedEmpty}
+                          data-empty-copy={
+                            jobMode === 'local_markdown'
+                              ? '本地解析步骤会显示在这里。'
+                              : '真实 Codex 过程事件到达后会显示在这里。'
+                          }
+                        />
+                      )}
+                    </div>
+                  ) : null}
+                </details>
+              ) : null}
+
+              {showRawTraceSection ? (
+                <details className={styles.detailsPanel}>
+                  <summary className={styles.detailsSummary}>原始事件流</summary>
+                  <div className={styles.codexFeedSection}>
+                    <div className={styles.codexFeedHeader}>
+                      <div>
+                        <p className={styles.codexFeedTitle}>{rawTraceHeadline}</p>
+                        <p className={styles.codexFeedLead}>{rawTraceLead}</p>
+                      </div>
+                      <div className={styles.codexFeedMetaBlock}>
+                        <span className={styles.codexFeedPill}>
+                          {traceEntries.length > 0 ? `${traceEntries.length} 条事件` : '等待事件'}
+                        </span>
+                      </div>
+                    </div>
+                    {traceFeedItems.length > 0 ? (
+                      <ol className={styles.codexFeedList}>
+                        {traceFeedItems.map((item) => (
+                          <li
+                            key={item.kind === 'delta' ? item.id : item.entry.id}
+                            className={styles.codexFeedItem}
+                            data-active={
+                              (item.kind === 'delta' ? item.id : item.entry.id) === latestTraceEntryId
+                            }
+                          >
+                            <div className={styles.codexFeedItemHeader}>
+                              <div className={styles.treeBadgeRow}>
+                                <span className={styles.codexFeedType}>
+                                  {formatTraceAttempt(item.kind === 'delta' ? item.attempt : item.entry.attempt)}
+                                </span>
+                                <span className={styles.codexFeedType}>
+                                  {formatTraceChannel(item.kind === 'delta' ? item.channel : item.entry.channel)}
+                                </span>
+                                <span className={styles.codexFeedType}>
+                                  {item.kind === 'delta' ? item.eventType : item.entry.eventType}
+                                </span>
+                              </div>
+                              <span className={styles.timelineDuration}>
+                                {formatTraceOffset(
+                                  item.kind === 'delta' ? item.timestampMs : item.entry.timestampMs,
+                                  previewStartedAt,
+                                )}
+                              </span>
+                            </div>
+                            <p className={styles.codexFeedSummary}>
+                              {item.kind === 'delta'
+                                ? formatTraceLead(item.currentFileName, item.text)
+                                : formatTraceLead(
+                                    item.entry.currentFileName,
+                                    summarizeTracePayload(item.entry.payload),
+                                  )}
+                            </p>
+                            {item.kind === 'event' ? (
+                              <details className={styles.codexFeedRaw}>
+                                <summary>View raw JSON</summary>
+                                <pre>{stringifyTracePayload(item.entry.payload)}</pre>
+                              </details>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className={styles.codexFeedEmpty} data-empty-copy="原始事件到达后会显示在这里。" />
+                    )}
+                  </div>
+                </details>
               ) : null}
 
               {sourceError ? (
@@ -1200,7 +1535,7 @@ export function TextImportDialog({
                   ) : showStructuredEmptyState ? (
                     <EmptyState
                       title="No draft yet"
-                      description="Choose files or paste text, then run the import to review a generated logic map here."
+                      description="Choose files, then run the import to review a generated logic map here."
                     />
                   ) : (
                     <EditablePreviewTree

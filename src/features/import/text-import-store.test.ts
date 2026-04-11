@@ -119,6 +119,23 @@ describe('text-import-store', () => {
 
     vi.mocked(startTextImportJob).mockImplementation((_request, onEvent) => {
       onEvent({
+        type: 'progress',
+        entry: {
+          id: 'progress_waiting',
+          timestampMs: 100,
+          stage: 'waiting_codex_primary',
+          message: '我正在等待 Codex 返回主导入结果。已等待 12s，仍在运行。',
+          tone: 'waiting',
+          source: 'observation',
+          attempt: 'primary',
+          replaceKey: 'progress:waiting_codex_primary',
+          currentFileName: 'GTM_main.md',
+          requestId: 'import_123',
+        },
+        mode: 'codex_import',
+        jobType: 'single',
+      })
+      onEvent({
         type: 'status',
         stage: 'parsing_markdown',
         message: 'Parsing Markdown structure...',
@@ -180,6 +197,16 @@ describe('text-import-store', () => {
     expect(useTextImportStore.getState().draftConfirmed).toBe(false)
     expect(useTextImportStore.getState().progress).toBe(100)
     expect(useTextImportStore.getState().progressIndeterminate).toBe(false)
+    expect(useTextImportStore.getState().progressEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'progress_waiting',
+          source: 'observation',
+          attempt: 'primary',
+          currentFileName: 'GTM_main.md',
+        }),
+      ]),
+    )
     expect(useTextImportStore.getState().modeHint).toContain('skill-backed import pipeline')
     expect(useTextImportStore.getState().isPreviewing).toBe(false)
     expect(useTextImportStore.getState().previewFinishedAt).not.toBeNull()
@@ -235,6 +262,7 @@ describe('text-import-store', () => {
       stage: 'waiting_codex_primary',
       status: 504,
     })
+    expect(useTextImportStore.getState().progressEntries.length).toBeGreaterThan(0)
     expect(useTextImportStore.getState().currentFileName).toBe('GTM_main.md')
     expect(useTextImportStore.getState().isPreviewing).toBe(false)
   })
@@ -412,6 +440,7 @@ describe('text-import-store', () => {
     expect(useTextImportStore.getState().fileCount).toBe(2)
     expect(useTextImportStore.getState().completedFileCount).toBe(1)
     expect(useTextImportStore.getState().currentFileName).toBe('GTM_step1.md')
+    expect(useTextImportStore.getState().progressEntries.length).toBeGreaterThan(0)
   })
 
   it('clears the import session after a successful import cycle reset', async () => {
@@ -534,6 +563,7 @@ describe('text-import-store', () => {
     expect(useTextImportStore.getState().statusText).toBe('')
     expect(useTextImportStore.getState().modeHint).toBeNull()
     expect(useTextImportStore.getState().progress).toBe(0)
+    expect(useTextImportStore.getState().progressEntries).toEqual([])
     expect(useTextImportStore.getState().isPreviewing).toBe(false)
     expect(useTextImportStore.getState().isApplying).toBe(false)
     expect(useTextImportStore.getState().presetOverride).toBeNull()

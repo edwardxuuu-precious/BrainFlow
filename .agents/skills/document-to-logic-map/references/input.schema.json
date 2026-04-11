@@ -22,7 +22,11 @@
       "properties": {
         "name": { "type": "string" },
         "type": { "type": "string", "enum": ["file", "paste"] },
-        "raw_text": { "type": "string" }
+        "raw_text": { "type": "string" },
+        "source_role_hint": {
+          "type": ["string", "null"],
+          "enum": ["canonical_knowledge", "context_record", "supporting_material", null]
+        }
       }
     },
     "document_context": {
@@ -125,7 +129,9 @@
           "enum": ["analysis", "process", "plan", "notes", null]
         },
         "max_total_nodes": { "type": ["integer", "null"] },
-        "max_depth": { "type": ["integer", "null"] }
+        "max_depth": { "type": ["integer", "null"] },
+        "canonical_topic_id_hint": { "type": ["string", "null"] },
+        "same_as_topic_id_hint": { "type": ["string", "null"] }
       }
     }
   }

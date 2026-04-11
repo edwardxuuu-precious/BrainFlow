@@ -353,6 +353,23 @@ describe('codex app', () => {
           message: 'Loaded the system prompt for import analysis.',
           durationMs: 12,
         })
+        options?.onTrace?.({
+          id: 'trace_1',
+          sequence: 1,
+          timestampMs: 10,
+          channel: 'request',
+          eventType: 'request.dispatched',
+          payload: {
+            kind: 'structured',
+            promptLength: 120,
+            schemaEnabled: true,
+            sourceName: 'plan.txt',
+            requestId: options?.requestId,
+            attempt: 'primary',
+          },
+          attempt: 'primary',
+          currentFileName: 'plan.txt',
+        })
         options?.onStatus?.({
           stage: 'starting_codex_primary',
           message: 'Starting the Codex import analysis.',
@@ -384,6 +401,7 @@ describe('codex app', () => {
     expect(payload).toContain('"stage":"extracting_input"')
     expect(payload).toContain('"stage":"analyzing_source"')
     expect(payload).toContain('"stage":"loading_prompt"')
+    expect(payload).toContain('"type":"trace"')
     expect(payload).toContain('"stage":"starting_codex_primary"')
     expect(payload).toContain('"stage":"waiting_codex_primary"')
     expect(payload).toContain('"stage":"parsing_primary_result"')
@@ -392,6 +410,18 @@ describe('codex app', () => {
     expect(payload).toContain('"type":"result"')
     expect(events.length).toBeGreaterThan(0)
     expect(events.every((event) => typeof event.requestId === 'string')).toBe(true)
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'trace',
+        requestId: expect.stringMatching(/^import_/),
+        entry: expect.objectContaining({
+          id: 'trace_1',
+          requestId: expect.stringMatching(/^import_/),
+          currentFileName: 'plan.txt',
+          eventType: 'request.dispatched',
+        }),
+      }),
+    )
     expect(events.at(-1)).toEqual(
       expect.objectContaining({
         type: 'result',
@@ -404,6 +434,7 @@ describe('codex app', () => {
         archetypeMode: 'auto',
       }),
       expect.objectContaining({
+        onTrace: expect.any(Function),
         onStatus: expect.any(Function),
         requestId: expect.stringMatching(/^import_/),
       }),

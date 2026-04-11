@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+  TextImportBatchFileSummary,
   TextImportRequest,
   TextImportResponse,
 } from '../../../shared/ai-contract'
@@ -260,6 +261,22 @@ describe('text-import-job', () => {
 
     vi.mocked(streamCodexTextImportPreview).mockImplementation(async (_request, onEvent) => {
       onEvent({
+        type: 'progress',
+        entry: {
+          id: 'progress_1',
+          timestampMs: 100,
+          stage: 'waiting_codex_primary',
+          message: '我正在等待 Codex 返回主导入结果。已等待 12s，仍在运行。',
+          tone: 'waiting',
+          source: 'observation',
+          attempt: 'primary',
+          replaceKey: 'progress:waiting_codex_primary',
+          currentFileName: 'conversation.md',
+          requestId: 'import_123',
+        },
+        requestId: 'import_123',
+      })
+      onEvent({
         type: 'status',
         stage: 'waiting_codex_primary',
         message: 'Waiting for Codex',
@@ -284,6 +301,16 @@ describe('text-import-job', () => {
       expect(events.some((event) => event.type === 'error')).toBe(true)
     })
 
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'progress',
+        entry: expect.objectContaining({
+          id: 'progress_1',
+          requestId: 'import_123',
+          currentFileName: 'conversation.md',
+        }),
+      }),
+    )
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'status',
@@ -461,15 +488,31 @@ describe('text-import-job', () => {
         ],
       }),
     )
-    expect(resultEvent.data.crossFileMergeSuggestions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          sourceName: 'GTM_main.md',
-          matchedSourceName: 'GTM_step1.md',
-          kind: 'partial_overlap',
-        }),
-      ]),
-    )
+    const batchFiles: TextImportBatchFileSummary[] = resultEvent.data.batch?.files ?? []
+    const mainFile = batchFiles.find((file: TextImportBatchFileSummary) => file.sourceName === 'GTM_main.md')
+    const stepFile = batchFiles.find((file: TextImportBatchFileSummary) => file.sourceName === 'GTM_step1.md')
+    expect(mainFile).toMatchObject({
+      sourceRole: 'canonical_knowledge',
+      mergeMode: 'create_new',
+    })
+    expect(stepFile).toMatchObject({
+      sourceRole: 'context_record',
+      mergeMode: 'merge_into_existing',
+    })
+    expect(stepFile?.canonicalTopicId).toBe(mainFile?.canonicalTopicId)
+    expect(stepFile?.sameAsTopicId).toBe(mainFile?.canonicalTopicId)
+
+    const thinkingRoots = resultEvent.data.previewNodes.filter((node: TextImportResponse['previewNodes'][number]) => node.parentId === null)
+    expect(thinkingRoots).toHaveLength(1)
+    expect(thinkingRoots[0]?.title).toBe('GTM_main')
+    const emptyJudgmentGroups = resultEvent.data.previewNodes.filter((node: TextImportResponse['previewNodes'][number]) => {
+      if (node.structureRole !== 'judgment_basis_group' && node.structureRole !== 'potential_action_group') {
+        return false
+      }
+      const hasChildren = resultEvent.data.previewNodes.some((child: TextImportResponse['previewNodes'][number]) => child.parentId === node.id)
+      return !hasChildren && !(node.note?.trim())
+    })
+    expect(emptyJudgmentGroups).toHaveLength(0)
   })
 
   it('fails fast on batch markdown errors and includes the failing file name', async () => {

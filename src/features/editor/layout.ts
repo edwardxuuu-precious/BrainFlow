@@ -23,20 +23,19 @@ const ROOT_HORIZONTAL_PADDING = 40
 const NODE_HORIZONTAL_PADDING = 28
 const ROOT_VERTICAL_PADDING = 32
 const NODE_VERTICAL_PADDING = 20
-const CONTENT_ROW_GAP = 4
-const STATUS_BAR_HEIGHT = 22
-const META_ROW_HEIGHT = 22
+const CONTENT_ROW_GAP = 8
+const TITLE_BLOCK_GAP = 6
+const TITLE_STATUS_GAP = 10
+const STATUS_ICON_SIZE = 20
+const STATUS_ICON_GAP = 6
+const META_ROW_HEIGHT = 18
 const DETAIL_PREVIEW_FONT_SIZE = 12
 const DETAIL_PREVIEW_ROOT_FONT_SIZE = 13
 const DETAIL_PREVIEW_LINE_HEIGHT = 1.45
 const DETAIL_PREVIEW_LINE_LIMIT = 2
 const DETAIL_PREVIEW_ROOT_LINE_LIMIT = 3
-const DETAIL_PREVIEW_VERTICAL_PADDING = 14
-const DETAIL_PREVIEW_ROOT_VERTICAL_PADDING = 18
-const DETAIL_PREVIEW_HORIZONTAL_PADDING = 20
-const DETAIL_PREVIEW_ROOT_HORIZONTAL_PADDING = 24
-const DETAIL_PREVIEW_WIDTH_BOOST = 24
-const DETAIL_PREVIEW_ROOT_WIDTH_BOOST = 18
+const DETAIL_PREVIEW_WIDTH_BOOST = 12
+const DETAIL_PREVIEW_ROOT_WIDTH_BOOST = 10
 
 interface NodeMetrics {
   width: number
@@ -79,8 +78,14 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max))
 }
 
-function hasTopicStatusBar(topic: TopicNode): boolean {
-  return topic.aiLocked || (!!topic.metadata.type && topic.metadata.type !== 'normal')
+function getTopicStatusIconCount(topic: TopicNode): number {
+  let count = topic.aiLocked ? 1 : 0
+
+  if (topic.metadata.type === 'milestone' || topic.metadata.type === 'task') {
+    count += 1
+  }
+
+  return count
 }
 
 function hasTopicMetaRow(metadata: TopicMetadata): boolean {
@@ -111,6 +116,12 @@ function measureNode(
   const titleTypography = getTopicTitleTypography(topic.title, titleKind)
   const horizontalPadding = isRoot ? ROOT_HORIZONTAL_PADDING : NODE_HORIZONTAL_PADDING
   const verticalPadding = isRoot ? ROOT_VERTICAL_PADDING : NODE_VERTICAL_PADDING
+  const statusIconCount = getTopicStatusIconCount(topic)
+  const statusGroupWidth =
+    statusIconCount > 0
+      ? statusIconCount * STATUS_ICON_SIZE + Math.max(0, statusIconCount - 1) * STATUS_ICON_GAP
+      : 0
+  const titleColumnWidthPenalty = statusGroupWidth > 0 ? statusGroupWidth + TITLE_STATUS_GAP : 0
   const detailWidthBoost = hasDetailPreview
     ? isRoot
       ? DETAIL_PREVIEW_ROOT_WIDTH_BOOST
@@ -122,44 +133,36 @@ function measureNode(
       topic.title,
       titleTypography.fontSize,
       titleTypography.letterSpacing,
-    ) + horizontalPadding
+    ) +
+    horizontalPadding +
+    titleColumnWidthPenalty
   const width = clamp(Math.ceil(Math.max(minimumWidth, estimatedTitleWidth)), baseWidth, maxWidth)
+  const titleAvailableWidth = Math.max(1, width - horizontalPadding - titleColumnWidthPenalty)
   const titleMeasurement = measureTopicTitle(topic.title, {
     kind: titleKind,
-    availableWidth: width - horizontalPadding,
+    availableWidth: titleAvailableWidth,
   })
-  const hasStatusBar = hasTopicStatusBar(topic)
   const hasMetaRow = hasTopicMetaRow(topic.metadata)
   const detailFontSize = isRoot ? DETAIL_PREVIEW_ROOT_FONT_SIZE : DETAIL_PREVIEW_FONT_SIZE
   const detailLineLimit = isRoot ? DETAIL_PREVIEW_ROOT_LINE_LIMIT : DETAIL_PREVIEW_LINE_LIMIT
-  const detailVerticalPadding = isRoot
-    ? DETAIL_PREVIEW_ROOT_VERTICAL_PADDING
-    : DETAIL_PREVIEW_VERTICAL_PADDING
-  const detailHorizontalPadding = isRoot
-    ? DETAIL_PREVIEW_ROOT_HORIZONTAL_PADDING
-    : DETAIL_PREVIEW_HORIZONTAL_PADDING
   const detailMeasurement = hasDetailPreview
     ? Math.min(
         detailLineLimit,
         Math.max(
           1,
           Math.ceil(
-            measureWeightedTitleWidth(notePreview, detailFontSize) /
-              Math.max(1, width - horizontalPadding - detailHorizontalPadding),
+            measureWeightedTitleWidth(notePreview, detailFontSize) / titleAvailableWidth,
           ),
         ),
       ) *
         detailFontSize *
-        DETAIL_PREVIEW_LINE_HEIGHT +
-      detailVerticalPadding
+        DETAIL_PREVIEW_LINE_HEIGHT
     : 0
-  const contentRowCount = 1 + Number(hasStatusBar) + Number(hasDetailPreview) + Number(hasMetaRow)
+  const titleBlockHeight =
+    titleMeasurement.height + (hasDetailPreview ? TITLE_BLOCK_GAP + detailMeasurement : 0)
+  const titleRowHeight = Math.max(titleBlockHeight, statusIconCount > 0 ? STATUS_ICON_SIZE : 0)
   const contentHeight =
-    titleMeasurement.height +
-    (hasStatusBar ? STATUS_BAR_HEIGHT : 0) +
-    detailMeasurement +
-    (hasMetaRow ? META_ROW_HEIGHT : 0) +
-    Math.max(0, contentRowCount - 1) * CONTENT_ROW_GAP
+    titleRowHeight + (hasMetaRow ? CONTENT_ROW_GAP + META_ROW_HEIGHT : 0)
 
   return {
     width,

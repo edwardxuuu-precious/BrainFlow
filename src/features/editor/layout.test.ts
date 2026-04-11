@@ -106,4 +106,53 @@ describe('layoutMindMap', () => {
     expect(branchNode?.data.notePreview).toContain('准是痛点，要看现实代价')
     expect(Number(branchNode?.style?.height ?? 0)).toBeGreaterThan(54)
   })
+
+  it('keeps sibling spacing stable when a node shows a multi-line inline preview', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    const withFirstChild = addChild(document, branchId).document
+    const firstChildId = withFirstChild.topics[branchId].childIds[0]
+    const withSecondChild = addChild(withFirstChild, branchId).document
+    const secondChildId = withSecondChild.topics[branchId].childIds[1]
+
+    withSecondChild.topics[firstChildId].note =
+      '这段详细内容会被压成多行正文预览，所以必须确认它增加高度之后，下面的兄弟节点仍然会被正常推开，不会和它挤在一起。'
+
+    const layout = layoutMindMap(withSecondChild)
+    const firstChild = layout.renderNodes.find((node) => node.id === firstChildId)
+    const secondChild = layout.renderNodes.find((node) => node.id === secondChildId)
+    const firstChildHeight = Number(firstChild?.style?.height ?? 0)
+
+    expect(firstChild?.data.notePreview).toContain('这段详细内容会被压成多行正文预览')
+    expect(firstChildHeight).toBeGreaterThan(54)
+    expect((secondChild?.position.y ?? 0)).toBeGreaterThanOrEqual(
+      (firstChild?.position.y ?? 0) + firstChildHeight + 30,
+    )
+  })
+
+  it('does not add a full extra status row when task and lock markers are present', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    document.topics[branchId].aiLocked = true
+    document.topics[branchId].metadata.type = 'task'
+    document.topics[branchId].note = '状态图标和正文会共用同一层级。'
+
+    const branchNode = layoutMindMap(document).renderNodes.find((node) => node.id === branchId)
+    const branchHeight = Number(branchNode?.style?.height ?? 0)
+
+    expect(branchNode?.data.notePreview).toContain('状态图标和正文会共用同一层级')
+    expect(branchHeight).toBeGreaterThan(54)
+    expect(branchHeight).toBeLessThan(96)
+  })
+
+  it('keeps the root preview inline while still expanding the root height', () => {
+    const document = createMindMapDocument()
+    document.topics[document.rootTopicId].note =
+      '根节点的详细内容也应该作为标题下的正文出现，同时保持中心节点应有的体量感和高度。'
+
+    const rootNode = layoutMindMap(document).renderNodes.find((node) => node.id === document.rootTopicId)
+
+    expect(rootNode?.data.notePreview).toContain('根节点的详细内容也应该作为标题下的正文出现')
+    expect(Number(rootNode?.style?.height ?? 0)).toBeGreaterThan(82)
+  })
 })

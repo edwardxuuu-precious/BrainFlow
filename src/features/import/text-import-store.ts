@@ -4,12 +4,16 @@ import type {
   CodexApiError,
   TextImportArchetype,
   TextImportCrossFileMergeSuggestion,
+  TextImportProgressAttempt,
+  TextImportProgressEntry,
+  TextImportProgressTone,
   TextImportPreset,
   TextImportPreprocessHint,
   TextImportPreviewNode,
   TextImportResponse,
   TextImportRunStage,
   TextImportSourceType,
+  TextImportTraceEntry,
 } from '../../../shared/ai-contract'
 import {
   formatTextImportClassificationConfidence,
@@ -105,6 +109,8 @@ interface TextImportState {
   statusText: string
   progress: number
   progressIndeterminate: boolean
+  progressEntries: TextImportProgressEntry[]
+  traceEntries: TextImportTraceEntry[]
   modeHint: string | null
   error: TextImportErrorState | null
   isPreviewing: boolean
@@ -191,6 +197,8 @@ const INITIAL_STATE = {
   statusText: '',
   progress: 0,
   progressIndeterminate: false,
+  progressEntries: [] as TextImportProgressEntry[],
+  traceEntries: [] as TextImportTraceEntry[],
   modeHint: null as string | null,
   error: null as TextImportErrorState | null,
   isPreviewing: false,
@@ -244,6 +252,8 @@ function createResetSessionState(): Partial<TextImportState> {
     statusText: INITIAL_STATE.statusText,
     progress: INITIAL_STATE.progress,
     progressIndeterminate: INITIAL_STATE.progressIndeterminate,
+    progressEntries: [],
+    traceEntries: [],
     modeHint: INITIAL_STATE.modeHint,
     error: INITIAL_STATE.error,
     isPreviewing: INITIAL_STATE.isPreviewing,
@@ -321,6 +331,122 @@ function createErrorState(
 
 function isCodexWaitingStage(stage: TextImportRunStage): boolean {
   return stage === 'waiting_codex_primary' || stage === 'waiting_codex_repair'
+}
+
+function resolveProgressToneFromStage(stage: TextImportRunStage): TextImportProgressTone {
+  if (stage === 'repairing_structure') {
+    return 'warning'
+  }
+
+  if (isCodexWaitingStage(stage)) {
+    return 'waiting'
+  }
+
+  return 'info'
+}
+
+function resolveProgressAttempt(
+  mode: TextImportJobMode,
+  stage: TextImportRunStage,
+): TextImportProgressAttempt {
+  if (mode === 'local_markdown') {
+    return 'local'
+  }
+
+  if (
+    stage === 'repairing_structure' ||
+    stage === 'starting_codex_repair' ||
+    stage === 'waiting_codex_repair' ||
+    stage === 'parsing_repair_result'
+  ) {
+    return 'repair'
+  }
+
+  return 'primary'
+}
+
+function buildStatusProgressEntry(
+  event: Extract<TextImportJobEvent, { type: 'status' }>,
+): TextImportProgressEntry {
+  const replaceKey = isCodexWaitingStage(event.stage) ? `progress:${event.stage}` : undefined
+  return {
+    id: replaceKey ?? `status_${event.stage}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    timestampMs: Date.now(),
+    stage: event.stage,
+    message: event.message,
+    tone: resolveProgressToneFromStage(event.stage),
+    source: 'status',
+    attempt: resolveProgressAttempt(event.mode, event.stage),
+    replaceKey,
+    currentFileName: event.currentFileName ?? null,
+    requestId: event.requestId,
+  }
+}
+
+function mergeProgressEntries(
+  current: TextImportProgressEntry[],
+  nextEntry: TextImportProgressEntry,
+): TextImportProgressEntry[] {
+  const entries = [...current]
+  const replaceKey = nextEntry.replaceKey?.trim()
+  const replaceIndex =
+    replaceKey ? entries.findIndex((entry) => entry.replaceKey === replaceKey) : -1
+
+  if (replaceIndex >= 0) {
+    const previous = entries[replaceIndex]
+    entries[replaceIndex] = {
+      ...previous,
+      ...nextEntry,
+      id: previous.id,
+      replaceKey: previous.replaceKey ?? nextEntry.replaceKey,
+    }
+  } else {
+    const existingIndex = entries.findIndex((entry) => entry.id === nextEntry.id)
+    if (existingIndex >= 0) {
+      entries[existingIndex] = nextEntry
+    } else {
+      entries.push(nextEntry)
+    }
+  }
+
+  return entries
+    .sort((left, right) => left.timestampMs - right.timestampMs)
+    .slice(-12)
+}
+
+function mergeTraceEntries(
+  current: TextImportTraceEntry[],
+  nextEntry: TextImportTraceEntry,
+): TextImportTraceEntry[] {
+  const entries = [...current]
+  const replaceKey = nextEntry.replaceKey?.trim()
+  const replaceIndex =
+    replaceKey ? entries.findIndex((entry) => entry.replaceKey === replaceKey) : -1
+
+  if (replaceIndex >= 0) {
+    const previous = entries[replaceIndex]
+    entries[replaceIndex] = {
+      ...previous,
+      ...nextEntry,
+      id: previous.id,
+      replaceKey: previous.replaceKey ?? nextEntry.replaceKey,
+    }
+  } else {
+    const existingIndex = entries.findIndex((entry) => entry.id === nextEntry.id)
+    if (existingIndex >= 0) {
+      entries[existingIndex] = nextEntry
+    } else {
+      entries.push(nextEntry)
+    }
+  }
+
+  return entries
+    .sort((left, right) =>
+      left.sequence === right.sequence
+        ? left.timestampMs - right.timestampMs
+        : left.sequence - right.sequence,
+    )
+    .slice(-200)
 }
 
 function confidenceRank(value: TextImportSourcePlanningSummary['confidence']): number {
@@ -514,8 +640,22 @@ async function startSinglePreview(
       return
     }
 
+    if (event.type === 'progress') {
+      set((state) => ({
+        progressEntries: mergeProgressEntries(state.progressEntries, event.entry),
+      }))
+      return
+    }
+
+    if (event.type === 'trace') {
+      set((state) => ({
+        traceEntries: mergeTraceEntries(state.traceEntries, event.entry),
+      }))
+      return
+    }
+
     if (event.type === 'status') {
-      set({
+      set((state) => ({
         activeJobMode: event.mode,
         activeJobType: event.jobType,
         runStage: event.stage,
@@ -530,7 +670,11 @@ async function startSinglePreview(
         semanticCandidateCount: event.semanticCandidateCount ?? 0,
         semanticAdjudicatedCount: event.semanticAdjudicatedCount ?? 0,
         semanticFallbackCount: event.semanticFallbackCount ?? 0,
-      })
+        progressEntries:
+          event.requestId === undefined
+            ? mergeProgressEntries(state.progressEntries, buildStatusProgressEntry(event))
+            : state.progressEntries,
+      }))
       return
     }
 
@@ -658,6 +802,20 @@ async function startSinglePreview(
     statusText: initialStatusText,
     progress: 4,
     progressIndeterminate: false,
+    progressEntries: [
+      buildStatusProgressEntry({
+        type: 'status',
+        stage: 'extracting_input',
+        message: initialStatusText,
+        progress: 4,
+        mode: jobHandle.mode,
+        jobType: jobHandle.jobType,
+        currentFileName: sourceName,
+        completedFileCount: 0,
+        fileCount: 1,
+      }),
+    ],
+    traceEntries: [],
     modeHint: createModeHint(jobHandle.mode, jobHandle.jobType),
     error: null,
     isPreviewing: true,
@@ -716,6 +874,20 @@ async function startBatchPreview(
     statusText: 'Reading selected text files...',
     progress: 2,
     progressIndeterminate: false,
+    progressEntries: [
+      buildStatusProgressEntry({
+        type: 'status',
+        stage: 'extracting_input',
+        message: 'Reading selected text files...',
+        progress: 2,
+        mode: 'codex_import',
+        jobType: 'batch',
+        fileCount: files.length,
+        completedFileCount: 0,
+        currentFileName: 'name' in files[0] ? files[0].name : files[0]?.sourceName ?? null,
+      }),
+    ],
+    traceEntries: [],
     runStage: 'extracting_input',
     semanticMergeStage: 'idle',
     preview: null,
@@ -795,8 +967,22 @@ async function startBatchPreview(
       return
     }
 
+    if (event.type === 'progress') {
+      set((state) => ({
+        progressEntries: mergeProgressEntries(state.progressEntries, event.entry),
+      }))
+      return
+    }
+
+    if (event.type === 'trace') {
+      set((state) => ({
+        traceEntries: mergeTraceEntries(state.traceEntries, event.entry),
+      }))
+      return
+    }
+
     if (event.type === 'status') {
-      set({
+      set((state) => ({
         activeJobMode: event.mode,
         activeJobType: event.jobType,
         runStage: event.stage,
@@ -811,7 +997,11 @@ async function startBatchPreview(
         semanticCandidateCount: event.semanticCandidateCount ?? 0,
         semanticAdjudicatedCount: event.semanticAdjudicatedCount ?? 0,
         semanticFallbackCount: event.semanticFallbackCount ?? 0,
-      })
+        progressEntries:
+          event.requestId === undefined
+            ? mergeProgressEntries(state.progressEntries, buildStatusProgressEntry(event))
+            : state.progressEntries,
+      }))
       return
     }
 
@@ -936,6 +1126,7 @@ async function startBatchPreview(
     draftSourceName: `${sortedFiles.length} files`,
     draftText: '',
     preprocessedHints: sortedFiles.flatMap((file) => file.preprocessedHints),
+    traceEntries: [],
     planningSummaries: sortedFiles.map((file) => file.planningSummary),
     activeJobId: jobHandle.jobId,
     activeJobMode: jobHandle.mode,

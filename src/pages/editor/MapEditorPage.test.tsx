@@ -99,6 +99,7 @@ const textImportTesting = vi.hoisted(() => ({
     statusText: '',
     progress: 0,
     progressIndeterminate: false,
+    progressEntries: [],
     activeJobMode: null,
     activeJobType: null,
     fileCount: 0,
