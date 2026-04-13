@@ -17,6 +17,13 @@ output/choose-files/
 output/e2e/
 backups/
 
+# Local tool artifacts
+.claude/
+.playwright-mcp/
+.stfolder/
+*.bak
+ai-settings-*.png
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
