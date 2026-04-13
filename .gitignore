@@ -10,12 +10,15 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+server/dist
 *.local
 playwright-report
 test-results
-output/choose-files/
-output/e2e/
+output/
 backups/
+design_reference/
+package-lock.json
+Work_Progress/
 
 # Local tool artifacts
 .claude/
@@ -23,6 +26,7 @@ backups/
 .stfolder/
 *.bak
 ai-settings-*.png
+brainflow-*.png
 
 # Editor directories and files
 .vscode/*
