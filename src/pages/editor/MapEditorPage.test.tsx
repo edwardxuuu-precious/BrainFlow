@@ -358,8 +358,8 @@ vi.mock('../../features/import/components/TextImportDialog', () => ({
 
 vi.mock('../../features/import/text-import-store', () => {
   return {
-    useTextImportStore: <T,>(selector: (store: typeof textImportTesting.state) => T) =>
-      selector(textImportTesting.state),
+    useTextImportStore: <T,>(selector?: (store: typeof textImportTesting.state) => T) =>
+      selector ? selector(textImportTesting.state) : textImportTesting.state,
   }
 })
 

@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { type CSSProperties, useEffect, useRef, useState } from 'react'
+import { type CSSProperties, memo, useEffect, useRef, useState } from 'react'
 import {
   topicMarkerLabels,
   topicStickerGlyphs,
@@ -35,7 +35,7 @@ function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ')
 }
 
-export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
+export const TopicNode = memo(function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
   const activeTopicId = useEditorStore((state) => state.activeTopicId)
   const editingTopicId = useEditorStore((state) => state.editingTopicId)
   const editingSurface = useEditorStore((state) => state.editingSurface)
@@ -310,4 +310,4 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
       ) : null}
     </div>
   )
-}
+})

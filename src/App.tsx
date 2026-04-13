@@ -26,7 +26,7 @@ const AiSettingsPage = lazy(async () => {
 function AuthenticatedApp() {
   return (
     <BrowserRouter>
-      <Suspense fallback={null}>
+      <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#888' }}>正在加载…</div>}>
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/map/:documentId" element={<MapEditorPage />} />

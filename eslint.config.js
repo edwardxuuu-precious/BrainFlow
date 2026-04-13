@@ -22,5 +22,11 @@ export default defineConfig([
         ...globals.node,
       },
     },
+    rules: {
+      '@typescript-eslint/consistent-type-imports': ['warn', {
+        prefer: 'type-imports',
+        fixStyle: 'inline-type-imports',
+      }],
+    },
   },
 ])

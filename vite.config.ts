@@ -20,6 +20,24 @@ export default defineConfig({
       'decode-named-character-reference': decodeNamedCharacterReferenceEntry,
     },
   },
+  build: {
+    chunkSizeWarningLimit: 500,
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (id.includes('node_modules/react-dom/') || id.includes('node_modules/react/') || id.includes('node_modules/react-router')) {
+            return 'react-vendor'
+          }
+          if (id.includes('node_modules/@xyflow/')) {
+            return 'xyflow'
+          }
+          if (id.includes('node_modules/jszip/') || id.includes('node_modules/fflate/')) {
+            return 'storage-vendor'
+          }
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': {
