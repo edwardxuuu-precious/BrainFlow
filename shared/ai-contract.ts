@@ -841,6 +841,8 @@ export type CodexBridgeIssueCode =
   | 'login_required'
   | 'verification_required'
   | 'subscription_required'
+  | 'authentication_failed'
+  | 'provider_unavailable'
   | 'schema_invalid'
   | 'request_failed'
 
@@ -926,6 +928,7 @@ export interface AiExecutionError {
   code?: CodexApiError['code']
   message: string
   stage?: AiRunStage
+  providerType?: AiProviderType
 }
 
 export interface AiStatusFeedback {
@@ -1025,3 +1028,41 @@ export type TextImportStreamEvent =
     }
 
 export type MarkdownImportStreamEvent = TextImportStreamEvent
+
+// ============================================
+// AI Provider 相关类型（新增）
+// ============================================
+
+export type AiProviderType = 'codex' | 'deepseek' | 'kimi-code'
+
+export interface AiProviderInfo {
+  type: AiProviderType
+  name: string
+  description: string
+  ready: boolean
+  requiresApiKey: boolean
+  features: {
+    streaming: boolean
+    structuredOutput: boolean
+    contextInjection: boolean
+  }
+}
+
+export interface AiProviderConfig {
+  type: AiProviderType
+  model?: string
+  customBaseUrl?: string
+}
+
+export interface AiProviderStatus {
+  type: AiProviderType
+  ready: boolean
+  issues: CodexBridgeIssue[]
+  metadata: Record<string, unknown>
+}
+
+export interface AiProviderValidationResult {
+  valid: boolean
+  error?: string
+  models?: string[]
+}

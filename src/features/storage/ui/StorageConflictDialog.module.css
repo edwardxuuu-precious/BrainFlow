@@ -14,7 +14,7 @@
   display: grid;
   gap: 18px;
   padding: 24px;
-  border-radius: 24px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.94);
 }
 
@@ -59,14 +59,33 @@
   display: grid;
   gap: 8px;
   padding: 16px;
-  border-radius: 18px;
+  border-radius: 12px;
   background: #f8fafc;
   border: 1px solid rgba(148, 163, 184, 0.28);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .cardLabel {
   font-weight: 600;
   color: #0f172a;
+}
+
+.cardBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: rgba(219, 234, 254, 0.96);
 }
 
 .cardMeta {
@@ -79,7 +98,7 @@
   display: grid;
   gap: 14px;
   padding: 16px;
-  border-radius: 20px;
+  border-radius: 12px;
   background: linear-gradient(180deg, rgba(241, 245, 249, 0.9), rgba(248, 250, 252, 0.96));
   border: 1px solid rgba(148, 163, 184, 0.22);
 }
@@ -174,6 +193,77 @@
   display: grid;
   gap: 8px;
   color: #334155;
+}
+
+.diffPanel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.diffHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.diffLabel {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #0f172a;
+}
+
+.diffMeta {
+  font-size: 13px;
+  color: #475569;
+}
+
+.diffList {
+  display: grid;
+  gap: 10px;
+}
+
+.diffRow {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.diffPath {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.diffValueLocal,
+.diffValueCloud,
+.diffEmpty,
+.diffNote {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #475569;
+  word-break: break-word;
+}
+
+.diffValueLocal {
+  color: #0f172a;
+}
+
+.diffValueCloud {
+  color: #1d4ed8;
+}
+
+.diffNote {
+  color: #64748b;
 }
 
 .errorPanel {

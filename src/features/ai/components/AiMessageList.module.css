@@ -37,6 +37,7 @@
   gap: 12px;
   padding: 16px;
   overflow-y: auto;
+  overflow-anchor: none;
   flex: 1;
   min-height: 0;
   max-height: 100%;
@@ -58,7 +59,7 @@
 .bubble {
   max-width: 80%;
   padding: 10px 14px;
-  border-radius: 18px;
+  border-radius: 12px;
   font-size: var(--font-size-body-md);
   line-height: 1.5;
   word-wrap: break-word;

@@ -11,6 +11,7 @@ function createTopicNodeProps(
   document = createMindMapDocument(),
   options?: {
     selected?: boolean
+    dropTarget?: boolean
   },
 ): NodeProps<MindMapFlowNode> {
   const node = layoutMindMap(document).renderNodes.find((entry) => entry.id === topicId)
@@ -21,7 +22,10 @@ function createTopicNodeProps(
 
   return {
     id: node.id,
-    data: node.data,
+    data: {
+      ...node.data,
+      dropTarget: options?.dropTarget ?? false,
+    },
     type: node.type,
     selected: options?.selected ?? false,
     dragging: false,
@@ -215,5 +219,23 @@ describe('TopicNode', () => {
 
     const measuredNode = layoutMindMap(document).renderNodes.find((entry) => entry.id === branchId)
     expect(Number(measuredNode?.style?.height ?? 0)).toBeGreaterThan(54)
+  })
+
+  it('shows a distinct drop target preview state without relying on selection', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    const branchTitle = document.topics[branchId].title
+
+    useEditorStore.getState().setDocument(document)
+    renderTopicNode(createTopicNodeProps(branchId, document, { dropTarget: true }))
+
+    expect(screen.getByText(branchTitle).closest('[data-drop-target]')).toHaveAttribute(
+      'data-drop-target',
+      'true',
+    )
+    expect(screen.getByText(branchTitle).closest('[data-selected]')).toHaveAttribute(
+      'data-selected',
+      'false',
+    )
   })
 })

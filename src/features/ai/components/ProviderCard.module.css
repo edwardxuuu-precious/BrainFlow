@@ -1,0 +1,191 @@
+.card {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px;
+  background: var(--surface);
+  border: 2px solid transparent;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.card.selected {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 5%, var(--surface));
+}
+
+.icon {
+  font-size: 32px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.description {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+}
+
+.features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.feature {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--surface-container-low);
+  border-radius: 4px;
+  color: var(--color-text-secondary);
+}
+
+.testSection {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.testButton {
+  padding: 6px 12px;
+  font-size: 13px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.testButton:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.testButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.testSuccess {
+  font-size: 13px;
+  color: var(--success, #22c55e);
+  font-weight: 500;
+  animation: fadeIn 0.2s ease;
+}
+
+.testError {
+  font-size: 13px;
+  color: var(--error, #ef4444);
+  font-weight: 500;
+}
+
+.errorSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+  animation: fadeIn 0.2s ease;
+}
+
+.errorDetails {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.errorDetails summary {
+  cursor: pointer;
+  padding: 4px 0;
+  user-select: none;
+}
+
+.errorDetails summary:hover {
+  color: var(--color-text);
+}
+
+.errorContent {
+  margin: 8px 0 0 0;
+  padding: 8px 12px;
+  background: var(--surface-container-low);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--error, #ef4444);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.clearErrorBtn {
+  align-self: flex-start;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.clearErrorBtn:hover {
+  background: var(--surface-container-low);
+  color: var(--color-text);
+}
+
+.checkmark {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.checkmark svg {
+  width: 16px;
+  height: 16px;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

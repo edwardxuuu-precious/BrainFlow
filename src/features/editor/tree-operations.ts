@@ -577,6 +577,12 @@ export function moveTopic(
   nextParent.childIds.splice(clampedIndex, 0, topicId)
   nextParent.isCollapsed = false
   currentTopic.parentId = targetParentId
+  currentTopic.layout = {
+    offsetX: 0,
+    offsetY: 0,
+    semanticGroupKey: currentTopic.layout?.semanticGroupKey ?? null,
+    priority: currentTopic.layout?.priority ?? null,
+  }
 
   if (targetParentId !== doc.rootTopicId) {
     currentTopic.branchSide = 'auto'
@@ -612,9 +618,10 @@ export function updateViewport(doc: MindMapDocument, viewport: MindMapViewport):
     return doc
   }
 
-  const nextDoc = cloneDocument(doc)
-  nextDoc.viewport = viewport
-  return nextDoc
+  return {
+    ...doc,
+    viewport,
+  }
 }
 
 export function updateWorkspaceSelection(
@@ -625,9 +632,13 @@ export function updateWorkspaceSelection(
     return doc
   }
 
-  const nextDoc = cloneDocument(doc)
-  nextDoc.workspace.selectedTopicId = selectedTopicId
-  return nextDoc
+  return {
+    ...doc,
+    workspace: {
+      ...doc.workspace,
+      selectedTopicId,
+    },
+  }
 }
 
 export function updateWorkspaceChrome(
@@ -639,9 +650,16 @@ export function updateWorkspaceChrome(
     return doc
   }
 
-  const nextDoc = cloneDocument(doc)
-  nextDoc.workspace.chrome[side] = open
-  return nextDoc
+  return {
+    ...doc,
+    workspace: {
+      ...doc.workspace,
+      chrome: {
+        ...doc.workspace.chrome,
+        [side]: open,
+      },
+    },
+  }
 }
 
 export function updateWorkspaceHierarchyCollapsed(
@@ -662,9 +680,13 @@ export function updateWorkspaceHierarchyCollapsed(
     return doc
   }
 
-  const nextDoc = cloneDocument(doc)
-  nextDoc.workspace.hierarchyCollapsedTopicIds = normalizedTopicIds
-  return nextDoc
+  return {
+    ...doc,
+    workspace: {
+      ...doc.workspace,
+      hierarchyCollapsedTopicIds: normalizedTopicIds,
+    },
+  }
 }
 
 export function toggleHierarchyBranch(doc: MindMapDocument, topicId: string): MindMapDocument {

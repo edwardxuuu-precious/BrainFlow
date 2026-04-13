@@ -64,6 +64,7 @@ export interface TopicRenderData extends Record<string, unknown> {
   childCount: number
   branchColor: string
   side: ResolvedBranchSide
+  dropTarget?: boolean
 }
 
 export type MindMapFlowNode = Node<TopicRenderData, 'topic'>

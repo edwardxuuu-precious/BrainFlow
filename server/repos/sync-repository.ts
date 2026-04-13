@@ -64,6 +64,12 @@ export interface WorkspaceFullResult<TPayload> {
   cursor: number
 }
 
+export interface AiProviderConfigRecord {
+  apiKey?: string
+  model?: string
+  baseUrl?: string
+}
+
 export interface SyncRepository<TPayload> {
   initialize(): Promise<void>
   getOrCreateWorkspace(userId: string, workspaceName?: string, targetWorkspaceId?: string): Promise<SyncWorkspaceSummary>

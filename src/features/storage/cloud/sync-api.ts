@@ -13,6 +13,7 @@ import type {
   WorkspaceRestoreRequest,
   WorkspaceRestoreResponse,
 } from '../../../../shared/sync-contract'
+import { dispatchAuthInvalidEvent } from '../../auth/auth-events'
 
 export class SyncApiError extends Error {
   readonly status: number
@@ -28,6 +29,9 @@ export class SyncApiError extends Error {
 async function parseJson<T>(response: Response): Promise<T> {
   const payload = await response.json().catch(() => null) as T | { message?: string } | null
   if (!response.ok) {
+    if (response.status === 401) {
+      dispatchAuthInvalidEvent()
+    }
     const message =
       typeof payload === 'object' && payload && 'message' in payload && payload.message
         ? String(payload.message)
@@ -56,6 +60,7 @@ export class SyncApiClient<TPayload> {
   async bootstrap(request: SyncBootstrapRequest<TPayload>): Promise<SyncBootstrapResponse<TPayload>> {
     const response = await fetch(`${this.baseUrl}/api/sync/bootstrap`, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(request),
     })
@@ -65,6 +70,7 @@ export class SyncApiClient<TPayload> {
   async push(request: SyncPushRequest<TPayload>): Promise<SyncPushResponse<TPayload>> {
     const response = await fetch(`${this.baseUrl}/api/sync/push`, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(request),
     })
@@ -84,7 +90,9 @@ export class SyncApiClient<TPayload> {
     if (typeof limit === 'number') {
       params.set('limit', String(limit))
     }
-    const response = await fetch(`${this.baseUrl}/api/sync/pull?${params.toString()}`)
+    const response = await fetch(`${this.baseUrl}/api/sync/pull?${params.toString()}`, {
+      credentials: 'same-origin',
+    })
     return parseJson<SyncPullResponse<TPayload>>(response)
   }
 
@@ -93,6 +101,7 @@ export class SyncApiClient<TPayload> {
   ): Promise<SyncResolveConflictResponse<TPayload>> {
     const response = await fetch(`${this.baseUrl}/api/sync/resolve-conflict`, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(request),
     })
@@ -104,6 +113,7 @@ export class SyncApiClient<TPayload> {
   ): Promise<SyncAnalyzeConflictResponse<TPayload>> {
     const response = await fetch(`${this.baseUrl}/api/sync/analyze-conflict`, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(request),
     })
@@ -113,6 +123,9 @@ export class SyncApiClient<TPayload> {
   async getWorkspaceFull(workspaceId: string): Promise<WorkspaceFullResponse<TPayload>> {
     const response = await fetch(
       `${this.baseUrl}/api/workspace/full?${new URLSearchParams({ workspaceId }).toString()}`,
+      {
+        credentials: 'same-origin',
+      },
     )
     return parseJson<WorkspaceFullResponse<TPayload>>(response)
   }
@@ -122,6 +135,7 @@ export class SyncApiClient<TPayload> {
   ): Promise<WorkspaceRestoreResponse<TPayload>> {
     const response = await fetch(`${this.baseUrl}/api/workspace/restore`, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(request),
     })

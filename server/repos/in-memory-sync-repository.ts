@@ -15,6 +15,7 @@ import type {
   SyncRepository,
   WorkspaceFullResult,
 } from './sync-repository.js'
+import { buildSaveLocalCopyRecord } from './sync-copy-record.js'
 
 interface StoredWorkspace {
   summary: SyncWorkspaceSummary
@@ -344,14 +345,13 @@ export class InMemorySyncRepository<TPayload> implements SyncRepository<TPayload
       if (!conflict.localRecord) {
         throw new Error('Local record is missing.')
       }
-      const copyRecord: SyncEnvelope<TPayload> = {
-        ...conflict.localRecord,
-        id: `${conflict.localRecord.id}_copy_${Math.random().toString(36).slice(2, 7)}`,
-        version: 1,
-        baseVersion: null,
-        updatedAt: Date.now(),
-        contentHash: computeStableContentHash(conflict.localRecord.payload),
-      }
+      const copyRecord = buildSaveLocalCopyRecord(
+        conflict.entityType,
+        conflict.localRecord,
+        {
+          deviceId: input.deviceId,
+        },
+      )
       const cursor = await this.writeHead({
         workspaceId: input.workspaceId,
         entityType: conflict.entityType,

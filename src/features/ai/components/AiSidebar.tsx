@@ -13,6 +13,7 @@ import { AiComposer } from './AiComposer'
 import { AiContextTray } from './AiContextTray'
 import { AiMessageList } from './AiMessageList'
 import { AiSettingsDialog } from './AiSettingsDialog'
+import { ProviderSwitcher } from './ProviderSwitcher'
 
 import styles from './AiSidebar.module.css'
 
@@ -42,6 +43,7 @@ interface AiSidebarProps {
   sessionList: AiSessionSummary[]
   activeSessionId: string | null
   archivedSessions: AiSessionSummary[]
+  currentProviderType?: string
   status: CodexStatus | null
   statusError: string | null
   statusFailureKind?: 'bridge_unavailable' | 'bridge_internal_error' | null
@@ -86,6 +88,18 @@ function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ')
 }
 
+function getProviderDisplayName(type?: string): string {
+  switch (type) {
+    case 'deepseek':
+      return 'DeepSeek'
+    case 'kimi-code':
+      return 'Kimi Code'
+    case 'codex':
+    default:
+      return 'Codex'
+  }
+}
+
 export function AiSidebar({
   effectiveTopics = [],
   manualTopics = [],
@@ -101,6 +115,7 @@ export function AiSidebar({
   sessionList,
   activeSessionId,
   archivedSessions,
+  currentProviderType = 'codex',
   status,
   statusError,
   statusFailureKind = null,
@@ -144,6 +159,7 @@ export function AiSidebar({
     manualTopics.length > 0 ? manualTopics : selectedTopics.filter((topic) => !canvasTopics.some((canvasTopic) => canvasTopic.topicId === topic.topicId))
   const resolvedCanvasTopics = canvasTopics
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isProviderSwitcherOpen, setIsProviderSwitcherOpen] = useState(false)
   const [settingsDraft, setSettingsDraft] = useState('')
   const [hasEditedSettingsDraft, setHasEditedSettingsDraft] = useState(false)
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
@@ -156,6 +172,8 @@ export function AiSidebar({
 
   const statusIssues = status?.issues ?? []
   const isReady = status?.ready ?? false
+  const providerName = getProviderDisplayName(currentProviderType)
+  const isCodexProvider = currentProviderType === 'codex'
   const hasRequestFailedIssue = statusIssues.some((issue) => issue.code === 'request_failed')
   const hasInternalStatusFailure =
     statusFailureKind === 'bridge_internal_error' || hasRequestFailedIssue
@@ -171,19 +189,29 @@ export function AiSidebar({
   const statusDetailsId = `${id ?? 'ai-sidebar'}-status-details`
   const composerDisabled = !isReady
   const composerDisabledHint = isServiceDisconnected
-    ? '本机 Codex 服务未连接，请先运行 pnpm dev 或 pnpm dev:web。'
+    ? isCodexProvider
+      ? '本机 Codex 服务未连接，请先运行 pnpm dev 或 pnpm dev:web。'
+      : '本机 AI bridge 服务未连接，请先运行 pnpm dev 或 pnpm dev:server。'
     : hasInternalStatusFailure
-      ? '本机 Codex bridge 在线，但状态检查失败，请查看 bridge 日志并重新检查状态。'
+      ? isCodexProvider
+        ? '本机 Codex bridge 在线，但状态检查失败，请查看 bridge 日志并重新检查状态。'
+        : `本机 AI bridge 在线，但 ${providerName} 状态检查失败，请查看 bridge 日志后重试。`
       : hasCliMissingIssue
         ? '当前 bridge 未解析到本机 Codex CLI，请确认安装后重新运行 pnpm dev 或 pnpm dev:server。'
-        : '当前 Codex 需要重新验证，请运行 codex login --device-auth 后再试。'
+        : isCodexProvider
+          ? '当前 Codex 需要重新验证，请运行 codex login --device-auth 后再试。'
+          : `${providerName} 当前不可用，请先完成配置或测试连接。`
   const composerDisabledPlaceholder = isServiceDisconnected
-    ? '当前无法发送，请先启动本机 Codex 服务。'
+    ? isCodexProvider
+      ? '当前无法发送，请先启动本机 Codex 服务。'
+      : '当前无法发送，请先启动本机 AI bridge 服务。'
     : hasInternalStatusFailure
       ? '当前无法发送，请先修复状态检查失败的问题。'
       : hasCliMissingIssue
         ? '当前无法发送，请先让 bridge 识别本机 Codex CLI。'
-        : '当前无法发送，请先完成 Codex 重新验证。'
+        : isCodexProvider
+          ? '当前无法发送，请先完成 Codex 重新验证。'
+          : `当前无法发送，请先修复 ${providerName} 配置。`
   const statusButtonActionLabel = isCheckingStatus
     ? '检查中'
     : isReady
@@ -194,7 +222,9 @@ export function AiSidebar({
           ? '重新检查状态'
           : hasCliMissingIssue
             ? '重新检查 CLI'
-            : '重新验证'
+            : isCodexProvider
+              ? '重新验证'
+              : '重新检查配置'
 
   const activeSession = useMemo(
     () => sessionList.find((session) => session.sessionId === activeSessionId) ?? null,
@@ -223,7 +253,11 @@ export function AiSidebar({
     if (hasCliMissingIssue) {
       return { label: 'CLI 不可用', tone: 'primary' as const, icon: 'error' as const }
     }
-    return { label: '需要验证', tone: 'primary' as const, icon: 'warning' as const }
+    return {
+      label: isCodexProvider ? '需要验证' : '需要配置',
+      tone: 'primary' as const,
+      icon: 'warning' as const,
+    }
   }
 
   const statusButtonState = getStatusButtonState()
@@ -460,6 +494,7 @@ export function AiSidebar({
             </Button>
 
             <IconButton label="AI 设置" icon="settings" tone="primary" size="sm" onClick={handleOpenSettings} />
+            <IconButton label="切换 AI Provider" icon="spark" tone="primary" size="sm" onClick={() => setIsProviderSwitcherOpen(true)} />
           </div>
 
           {isStatusExpanded ? (
@@ -484,9 +519,11 @@ export function AiSidebar({
                           ? '状态检查失败'
                           : hasCliMissingIssue
                             ? 'CLI 不可用'
-                            : '需要验证'}
+                            : isCodexProvider
+                              ? '需要验证'
+                              : '需要配置'}
                   </span>
-                  <span className={styles.statusVersion}>Prompt {status?.systemPromptVersion ?? '未加载'}</span>
+                  <span className={styles.statusVersion}>系统 Prompt {status?.systemPromptVersion ?? '未加载'}</span>
                 </div>
                 <button
                   type="button"
@@ -516,18 +553,24 @@ export function AiSidebar({
                 <div className={styles.statusIssues}>
                   <p className={styles.statusText}>
                     {isServiceDisconnected
-                      ? '当前未连接到本机 Codex 服务，AI 发送能力已暂停。'
+                      ? isCodexProvider
+                        ? '当前未连接到本机 Codex 服务，AI 发送能力已暂停。'
+                        : '当前未连接到本机 AI bridge 服务，AI 发送能力已暂停。'
                       : hasInternalStatusFailure
-                        ? '本机 Codex bridge 在线，但状态检查失败；修复 bridge 内部错误后才能继续发送。'
+                        ? isCodexProvider
+                          ? '本机 Codex bridge 在线，但状态检查失败；修复 bridge 内部错误后才能继续发送。'
+                          : `本机 AI bridge 在线，但 ${providerName} 状态检查失败；修复后才能继续发送。`
                         : hasCliMissingIssue
                           ? '当前 bridge 没有解析到可用的本机 Codex CLI，修复命令解析后才能继续发送。'
-                          : '当前 Codex 验证信息不可用，修复登录或订阅后才能继续发送。'}
+                          : isCodexProvider
+                            ? '当前 Codex 验证信息不可用，修复登录或订阅后才能继续发送。'
+                            : `${providerName} 当前不可用，修复配置后才能继续发送。`}
                   </p>
 
                   {isServiceDisconnected ? (
                     <ol className={styles.issueList}>
                       <li>
-                        优先运行 <code>pnpm dev</code>，同时启动前端和本机 Codex bridge。
+                        优先运行 <code>pnpm dev</code>，同时启动前端和本机 AI bridge。
                       </li>
                       <li>
                         如果你是从 VS Code 或命令面板启动开发环境，也可以直接运行 <code>pnpm dev:web</code>。
@@ -542,14 +585,14 @@ export function AiSidebar({
                         如果当前是在预览 <code>dist</code>，请额外启动 <code>pnpm start:server</code>。
                       </li>
                       <li>
-                        访问 <code>http://127.0.0.1:8787/api/codex/status</code> 确认 bridge 已恢复可达。
+                        访问 <code>http://127.0.0.1:8787/api/ai/status</code> 确认 bridge 已恢复可达。
                       </li>
                     </ol>
                   ) : hasInternalStatusFailure ? (
                     <ol className={styles.issueList}>
                       <li>bridge 进程仍在线，但状态检查失败；请优先查看本地启动终端或 bridge 输出。</li>
                       <li>
-                        重新点击“重新检查状态”，确认 <code>/api/codex/status</code> 是否已恢复为 <code>200</code> JSON 响应。
+                        重新点击“重新检查状态”，确认 <code>/api/ai/status</code> 是否已恢复为 <code>200</code> JSON 响应。
                       </li>
                       <li>
                         如果反复失败，先停止当前开发进程，再重新运行 <code>pnpm dev</code>。
@@ -571,13 +614,23 @@ export function AiSidebar({
                     </ol>
                   ) : (
                     <ol className={styles.issueList}>
-                      <li>
-                        确认本机已经安装并可执行 <code>codex</code> 命令。
-                      </li>
-                      <li>
-                        运行 <code>codex login --device-auth</code>，并使用可用的 ChatGPT 订阅账号完成登录。
-                      </li>
-                      <li>完成后回到这里点击“重新验证”。</li>
+                      {isCodexProvider ? (
+                        <>
+                          <li>
+                            确认本机已经安装并可执行 <code>codex</code> 命令。
+                          </li>
+                          <li>
+                            运行 <code>codex login --device-auth</code>，并使用可用的 ChatGPT 订阅账号完成登录。
+                          </li>
+                          <li>完成后回到这里点击“重新验证”。</li>
+                        </>
+                      ) : (
+                        <>
+                          <li>确认当前工作区已经保存了可用的 API Key。</li>
+                          <li>如果你配置的是 Kimi Code 会员 Key，请改用受支持的 Coding Agent 或本地 CLI 桥接。</li>
+                          <li>完成修复后回到这里点击“重新检查配置”。</li>
+                        </>
+                      )}
                     </ol>
                   )}
 
@@ -591,7 +644,9 @@ export function AiSidebar({
                 </div>
               ) : (
                 <p className={styles.statusText}>
-                  已检测到本机 Codex CLI 与 ChatGPT 登录状态，可以直接基于当前脑图发起对话。
+                  {isCodexProvider
+                    ? '已检测到本机 Codex CLI 与 ChatGPT 登录状态，可以直接基于当前脑图发起对话。'
+                    : `已检测到 ${providerName} 配置状态可用，可以直接基于当前脑图发起对话。`}
                 </p>
               )}
 
@@ -661,6 +716,7 @@ export function AiSidebar({
                 streamingText={streamingText}
                 error={error}
                 executionError={lastExecutionError}
+                providerType={currentProviderType}
               />
             </div>
 
@@ -706,6 +762,19 @@ export function AiSidebar({
         onRestoreArchivedSession={(documentId, sessionId) => void onRestoreArchivedSession(documentId, sessionId)}
         onDeleteArchivedSession={(documentId, sessionId) => void onDeleteArchivedSession(documentId, sessionId)}
       />
+      
+      {/* Provider 切换弹窗 */}
+      {isProviderSwitcherOpen && (
+        <div className={styles.providerOverlay} onClick={() => setIsProviderSwitcherOpen(false)}>
+          <div className={styles.providerDialog} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.providerDialogHeader}>
+              <h3>切换 AI Provider</h3>
+              <button className={styles.providerDialogClose} onClick={() => setIsProviderSwitcherOpen(false)}>✕</button>
+            </div>
+            <ProviderSwitcher />
+          </div>
+        </div>
+      )}
     </>
   )
 }

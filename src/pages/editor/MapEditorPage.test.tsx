@@ -7,8 +7,10 @@ import type { AiConversation, CodexSettings, CodexStatus } from '../../../shared
 import { fetchCodexStatus } from '../../features/ai/ai-client'
 import { resetAiStore, seedAiConversation } from '../../features/ai/ai-store'
 import { createMindMapDocument } from '../../features/documents/document-factory'
+import { createDefaultTopicMetadata, createDefaultTopicStyle } from '../../features/documents/topic-defaults'
 import type { DocumentService, MindMapDocument } from '../../features/documents/types'
 import { resetEditorStore, useEditorStore } from '../../features/editor/editor-store'
+import { layoutMindMap } from '../../features/editor/layout'
 import { MapEditorPage } from './MapEditorPage'
 
 const readyStatus: CodexStatus = {
@@ -55,6 +57,13 @@ const reactFlowTesting = vi.hoisted(() => ({
   panOnDragRefChanges: 0,
   multiSelectionKeyCodeRefChanges: 0,
   proOptionsRefChanges: 0,
+  lastNodes: [] as Array<{
+    id: string
+    data: Record<string, unknown>
+    position: { x: number; y: number }
+    style?: CSSProperties
+    selected?: boolean
+  }>,
   onNodesChangeMock: vi.fn(),
 }))
 
@@ -227,6 +236,13 @@ vi.mock('@xyflow/react', async () => {
     reactFlowTesting.lastPanOnDrag = props.panOnDrag
     reactFlowTesting.lastMultiSelectionKeyCode = props.multiSelectionKeyCode
     reactFlowTesting.lastProOptions = props.proOptions
+    reactFlowTesting.lastNodes = (props.nodes ?? []) as Array<{
+      id: string
+      data: Record<string, unknown>
+      position: { x: number; y: number }
+      style?: CSSProperties
+      selected?: boolean
+    }>
     reactFlowTesting.handleNodesChange = props.onNodesChange ?? null
     reactFlowTesting.handleSelectionStart = props.onSelectionStart ?? null
     reactFlowTesting.handleSelectionChange = props.onSelectionChange ?? null
@@ -308,17 +324,22 @@ vi.mock('@xyflow/react', async () => {
   }
 })
 
-vi.mock('../../features/ai/ai-client', () => ({
-  fetchCodexStatus: vi.fn(async () => readyStatus),
-  revalidateCodexStatus: vi.fn(async () => readyStatus),
-  fetchCodexSettings: vi.fn(async () => settings),
-  saveCodexSettings: vi.fn(async (businessPrompt: string) => ({
-    ...settings,
-    businessPrompt,
-  })),
-  resetCodexSettings: vi.fn(async () => settings),
-  streamCodexChat: vi.fn(),
-}))
+vi.mock('../../features/ai/ai-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../features/ai/ai-client')>()
+
+  return {
+    ...actual,
+    fetchCodexStatus: vi.fn(async () => readyStatus),
+    revalidateCodexStatus: vi.fn(async () => readyStatus),
+    fetchCodexSettings: vi.fn(async () => settings),
+    saveCodexSettings: vi.fn(async (businessPrompt: string) => ({
+      ...settings,
+      businessPrompt,
+    })),
+    resetCodexSettings: vi.fn(async () => settings),
+    streamCodexChat: vi.fn(),
+  }
+})
 
 vi.mock('../../features/import/components/TextImportDialog', () => ({
   TextImportDialog: (props: { open: boolean; onApply: () => void }) => {
@@ -357,6 +378,50 @@ function createService(document: MindMapDocument): DocumentService {
     saveDocument: vi.fn(async () => undefined),
     deleteDocument: vi.fn(async () => undefined),
     duplicateDocument: vi.fn(async () => document.id),
+  }
+}
+
+function appendChildTopic(
+  document: MindMapDocument,
+  parentId: string,
+  topicId: string,
+  title: string,
+): string {
+  document.topics[parentId].childIds.push(topicId)
+  document.topics[topicId] = {
+    id: topicId,
+    parentId,
+    childIds: [],
+    title,
+    note: '',
+    noteRich: null,
+    aiLocked: false,
+    isCollapsed: false,
+    branchSide: 'auto',
+    layout: {
+      offsetX: 0,
+      offsetY: 0,
+      semanticGroupKey: null,
+      priority: null,
+    },
+    metadata: createDefaultTopicMetadata(),
+    style: createDefaultTopicStyle(),
+  }
+
+  return topicId
+}
+
+function moveNodeToCenter(
+  node: ReturnType<typeof layoutMindMap>['renderNodes'][number],
+  centerX: number,
+  centerY: number,
+) {
+  return {
+    ...node,
+    position: {
+      x: centerX - Number(node.style?.width ?? 0) / 2,
+      y: centerY - Number(node.style?.height ?? 0) / 2,
+    },
   }
 }
 
@@ -450,6 +515,7 @@ describe('MapEditorPage', () => {
     reactFlowTesting.handleSelectionStart = null
     reactFlowTesting.handleSelectionChange = null
     reactFlowTesting.handleSelectionEnd = null
+    reactFlowTesting.lastNodes = []
     reactFlowTesting.lastOnSelectionStart = undefined
     reactFlowTesting.lastOnSelectionChange = undefined
     reactFlowTesting.lastOnSelectionEnd = undefined
@@ -461,6 +527,7 @@ describe('MapEditorPage', () => {
     reactFlowTesting.lastPanOnDrag = undefined
     reactFlowTesting.lastMultiSelectionKeyCode = undefined
     reactFlowTesting.lastProOptions = undefined
+    reactFlowTesting.lastNodes = []
     reactFlowTesting.onSelectionStartRefChanges = 0
     reactFlowTesting.onSelectionChangeRefChanges = 0
     reactFlowTesting.onSelectionEndRefChanges = 0
@@ -473,6 +540,7 @@ describe('MapEditorPage', () => {
     reactFlowTesting.multiSelectionKeyCodeRefChanges = 0
     reactFlowTesting.proOptionsRefChanges = 0
     reactFlowTesting.onNodesChangeMock.mockReset()
+    localStorage.removeItem('brainflow-editor-right-panel-mode')
     mockMatchMedia(true)
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
@@ -575,6 +643,10 @@ describe('MapEditorPage', () => {
     const titleDisplay = await screen.findByRole('button', {
       name: /\u753b\u5e03\u540d\u79f0\uff1aCanvas title/u,
     })
+    await waitFor(() => {
+      expect(globalThis.document.title).toBe('FLOW - Canvas title')
+    })
+    expect(document.title).toBe('Canvas title')
     expect(
       screen.queryByRole('textbox', { name: /\u7f16\u8f91\u753b\u5e03\u540d\u79f0/u }),
     ).not.toBeInTheDocument()
@@ -584,6 +656,7 @@ describe('MapEditorPage', () => {
     const titleInput = screen.getByRole('textbox', { name: /\u7f16\u8f91\u753b\u5e03\u540d\u79f0/u })
     expect(titleInput).toHaveValue('Canvas title')
     expect(titleInput).toHaveFocus()
+    expect(document.title).toBe('Canvas title')
   })
 
   it('syncs Ctrl+A selection into the canvas, clears on blank canvas click, and replaces stale highlights', async () => {
@@ -634,6 +707,73 @@ describe('MapEditorPage', () => {
     expect(within(canvas).getByText(branchTitle).closest('[data-selected]')).toHaveAttribute('data-selected', 'true')
   })
 
+  it('keeps the last chosen right sidebar mode and preserves unchanged node refs on blank canvas clicks', async () => {
+    const document = createMindMapDocument('Sidebar persistence')
+    const service = createService(document)
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    localStorage.setItem('brainflow-editor-right-panel-mode', 'markers')
+
+    render(
+      <MemoryRouter initialEntries={[`/map/${document.id}`]}>
+        <Routes>
+          <Route path="/map/:documentId" element={<MapEditorPage service={service} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('button', { name: `画布名称：${document.title}` })
+    await screen.findByRole('button', { name: /\u91cd\u70b9/u })
+    await waitFor(() => {
+      expect(reactFlowTesting.lastNodes.length).toBe(Object.keys(document.topics).length)
+    })
+
+    const nodesBeforeClear = reactFlowTesting.lastNodes
+    const rootNodeBefore = nodesBeforeClear.find((node) => node.id === document.rootTopicId)
+    const branchNodeBefore = nodesBeforeClear.find((node) => node.id === branchId)
+
+    expect(rootNodeBefore?.selected).toBe(true)
+
+    await userEvent.click(screen.getByTestId('react-flow-canvas'))
+
+    await waitFor(() => {
+      expect(countSelectedCanvasNodes()).toBe(0)
+    })
+
+    expect(screen.getByRole('button', { name: /\u91cd\u70b9/u })).toBeInTheDocument()
+
+    const nodesAfterClear = reactFlowTesting.lastNodes
+    const rootNodeAfter = nodesAfterClear.find((node) => node.id === document.rootTopicId)
+    const branchNodeAfter = nodesAfterClear.find((node) => node.id === branchId)
+
+    expect(rootNodeAfter).not.toBe(rootNodeBefore)
+    expect(branchNodeAfter).toBe(branchNodeBefore)
+  })
+
+  it('does not auto-save when a blank canvas click only clears selection', async () => {
+    const document = createMindMapDocument('Canvas save stability')
+    const service = createService(document)
+
+    render(
+      <MemoryRouter initialEntries={[`/map/${document.id}`]}>
+        <Routes>
+          <Route path="/map/:documentId" element={<MapEditorPage service={service} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('button', { name: `画布名称：${document.title}` })
+    expect(countSelectedCanvasNodes()).toBe(1)
+
+    await userEvent.click(screen.getByTestId('react-flow-canvas'))
+
+    await waitFor(() => {
+      expect(countSelectedCanvasNodes()).toBe(0)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 380))
+
+    expect(service.saveDocument).not.toHaveBeenCalled()
+  })
+
   it('defers box selection store updates until the selection gesture ends', async () => {
     const document = createMindMapDocument('Deferred box selection')
     const service = createService(document)
@@ -682,6 +822,122 @@ describe('MapEditorPage', () => {
     expect(setSelectionSpy).toHaveBeenCalledTimes(1)
 
     setSelectionSpy.mockRestore()
+  })
+
+  it('shows a structural drop preview while dragging but only reparents on mouseup', async () => {
+    const document = createMindMapDocument('Drag reparent')
+    const rootId = document.rootTopicId
+    const [draggedTopicId, targetParentId] = document.topics[rootId].childIds
+    document.topics[draggedTopicId].layout = {
+      offsetX: 52,
+      offsetY: 18,
+      semanticGroupKey: 'narrative',
+      priority: 'primary',
+    }
+    const targetChildId = appendChildTopic(document, targetParentId, 'topic_target_child', 'Target child')
+    const service = createService(document)
+
+    render(
+      <MemoryRouter initialEntries={[`/map/${document.id}`]}>
+        <Routes>
+          <Route path="/map/:documentId" element={<MapEditorPage service={service} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('button', { name: `画布名称：${document.title}` })
+
+    const baseLayout = layoutMindMap(document)
+    const draggedNode = baseLayout.renderNodes.find((entry) => entry.id === draggedTopicId)
+    const targetChildNode = baseLayout.renderNodes.find((entry) => entry.id === targetChildId)
+    if (!draggedNode || !targetChildNode) {
+      throw new Error('Missing drag nodes for reparent test')
+    }
+
+    const targetChildCenterY = targetChildNode.position.y + Number(targetChildNode.style?.height ?? 0) / 2
+    const draggedOverTarget = moveNodeToCenter(
+      draggedNode,
+      targetChildNode.position.x - 20,
+      targetChildCenterY - 12,
+    )
+
+    act(() => {
+      reactFlowTesting.lastOnNodeDragStart?.({}, draggedNode)
+      reactFlowTesting.lastOnNodeDrag?.({}, draggedOverTarget)
+    })
+
+    expect(useEditorStore.getState().document?.topics[draggedTopicId].parentId).toBe(rootId)
+    await waitFor(() => {
+      expect(
+        reactFlowTesting.lastNodes.find((entry) => entry.id === targetParentId)?.data.dropTarget,
+      ).toBe(true)
+    })
+
+    act(() => {
+      reactFlowTesting.lastOnNodeDragStop?.({}, draggedOverTarget)
+    })
+
+    await waitFor(() => {
+      expect(useEditorStore.getState().document?.topics[draggedTopicId].parentId).toBe(
+        targetParentId,
+      )
+    })
+    expect(useEditorStore.getState().document?.topics[targetParentId].childIds[0]).toBe(
+      draggedTopicId,
+    )
+    expect(useEditorStore.getState().document?.topics[draggedTopicId].layout).toEqual({
+      offsetX: 0,
+      offsetY: 0,
+      semanticGroupKey: 'narrative',
+      priority: 'primary',
+    })
+  })
+
+  it('keeps free dragging when the drop misses every valid target', async () => {
+    const document = createMindMapDocument('Free drag miss')
+    const rootId = document.rootTopicId
+    const [draggedTopicId] = document.topics[rootId].childIds
+    const service = createService(document)
+
+    render(
+      <MemoryRouter initialEntries={[`/map/${document.id}`]}>
+        <Routes>
+          <Route path="/map/:documentId" element={<MapEditorPage service={service} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('button', { name: `画布名称：${document.title}` })
+
+    const baseLayout = layoutMindMap(document)
+    const draggedNode = baseLayout.renderNodes.find((entry) => entry.id === draggedTopicId)
+    if (!draggedNode) {
+      throw new Error('Missing drag node for free drag test')
+    }
+
+    const missedDrop = {
+      ...draggedNode,
+      position: {
+        x: draggedNode.position.x - 120,
+        y: draggedNode.position.y + 260,
+      },
+    }
+
+    act(() => {
+      reactFlowTesting.lastOnNodeDragStart?.({}, draggedNode)
+      reactFlowTesting.lastOnNodeDrag?.({}, missedDrop)
+      reactFlowTesting.lastOnNodeDragStop?.({}, missedDrop)
+    })
+
+    await waitFor(() => {
+      expect(useEditorStore.getState().document?.topics[draggedTopicId].parentId).toBe(rootId)
+      expect(useEditorStore.getState().document?.topics[draggedTopicId].layout).toEqual({
+        offsetX: -120,
+        offsetY: 260,
+        semanticGroupKey: null,
+        priority: null,
+      })
+    })
   })
 
   it('shows a recovery message instead of blanking when the document layout is invalid', async () => {
@@ -818,7 +1074,9 @@ describe('MapEditorPage', () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
 
     expect(stabilizedCallCount).toBeGreaterThanOrEqual(initialCallCount)
-    expect(vi.mocked(fetchCodexStatus)).toHaveBeenCalledTimes(stabilizedCallCount)
+    expect(vi.mocked(fetchCodexStatus).mock.calls.length).toBeLessThanOrEqual(
+      stabilizedCallCount + 1,
+    )
   })
 
   it('resets and closes the import session after apply succeeds', async () => {

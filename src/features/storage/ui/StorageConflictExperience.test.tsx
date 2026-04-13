@@ -2,7 +2,6 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import type {
-  SyncAnalyzeConflictResponse,
   SyncConflictRecord,
   SyncEnvelope,
   SyncPullResponse,
@@ -77,7 +76,7 @@ function buildDocumentFixture(
     conflictId: string
     ready: boolean
     cloudMissing?: boolean
-    mergedRecommended?: boolean
+    localNewer?: boolean
   },
 ): DocumentConflictFixture {
   const workspace = buildWorkspace()
@@ -87,7 +86,7 @@ function buildDocumentFixture(
   const localPayload = {
     ...structuredClone(baseContent),
     title: `${options.title} Local`,
-    updatedAt: 200,
+    updatedAt: options.localNewer ? 400 : 200,
   }
   const cloudPayload = {
     ...structuredClone(baseContent),
@@ -152,25 +151,27 @@ function buildDocumentFixture(
     ? ({
         ...baseConflict,
         analysisStatus: 'ready',
-        analysisSource: options.cloudMissing ? 'heuristic' : 'ai',
+        analysisSource: 'heuristic',
         recommendedResolution: options.cloudMissing
           ? 'save_local_copy'
-          : options.mergedRecommended
+          : options.localNewer
             ? 'merged_payload'
             : 'use_cloud',
         confidence: 'high',
         summary: options.cloudMissing
           ? 'Cloud copy is missing, so the local copy should be preserved.'
-          : options.mergedRecommended
-            ? 'AI recommends applying the merged version for this document.'
+          : options.localNewer
+            ? 'Local content is newer, so the latest local version should be applied.'
             : 'Cloud content should win for this conflict.',
         reasons: options.cloudMissing
           ? ['The cloud version is missing for this entity.']
-          : ['Both local and cloud contain meaningful edits.'],
+          : ['The recommendation is chosen directly from the latest timestamp.'],
         actionableResolutions: options.cloudMissing
           ? ['save_local_copy']
-          : ['merged_payload', 'use_cloud', 'save_local_copy'],
-        mergedPayload: options.mergedRecommended ? mergedPayload : null,
+          : options.localNewer
+            ? ['merged_payload', 'use_cloud', 'save_local_copy']
+            : ['use_cloud', 'save_local_copy'],
+        mergedPayload: options.localNewer ? localPayload : null,
         analyzedAt: 700,
         analysisNote: null,
       } as StorageConflictRecord)
@@ -183,7 +184,7 @@ function buildDocumentFixture(
     localRecord,
     cloudRecord,
     conflict,
-    mergedPayload,
+    mergedPayload: options.localNewer ? localPayload : mergedPayload,
   }
 }
 
@@ -217,9 +218,7 @@ async function seedDocumentConflict(modules: TestModules, fixture: DocumentConfl
 }
 
 function installSyncFetchMock(options: {
-  analyzeResponse?: SyncAnalyzeConflictResponse<unknown>
   resolveResponse?: SyncResolveConflictResponse<unknown>
-  analyzeDelayMs?: number
 }) {
   const calls = {
     analyze: 0,
@@ -236,6 +235,65 @@ function installSyncFetchMock(options: {
           : input.url
     const url = new URL(requestUrl, 'http://127.0.0.1')
 
+    if (url.pathname === '/api/auth/session') {
+      return createJsonResponse({
+        authMode: 'stub',
+        authenticated: true,
+        userId: 'user_stub_default',
+        username: 'admin',
+        canonicalOrigin: null,
+      })
+    }
+
+    if (url.pathname === '/api/auth/logout') {
+      return createJsonResponse({
+        session: {
+          authMode: 'stub',
+          authenticated: true,
+          userId: 'user_stub_default',
+          username: 'admin',
+          canonicalOrigin: null,
+        },
+      })
+    }
+
+    if (url.pathname === '/api/storage/status') {
+      return createJsonResponse({
+        mode: 'local_postgres',
+        checkedAt: 1000,
+        api: {
+          reachable: true,
+          checkedAt: 1000,
+        },
+        database: {
+          driver: 'postgres',
+          configured: true,
+          reachable: true,
+          label: '本机 Postgres / brainflow',
+          lastError: null,
+          backupFormat: 'custom',
+          lastBackupAt: 900,
+        },
+        backup: {
+          available: true,
+          directory: 'backups/postgres',
+          lastError: null,
+        },
+        auth: {
+          mode: 'stub',
+          authenticated: true,
+          username: 'admin',
+        },
+        workspace: {
+          id: 'workspace_conflict_test',
+          name: 'Conflict Test Workspace',
+        },
+        runtime: {
+          canonicalOrigin: null,
+        },
+      })
+    }
+
     if (url.pathname === '/api/sync/pull') {
       calls.pull += 1
       const payload: SyncPullResponse<unknown> = {
@@ -244,17 +302,6 @@ function installSyncFetchMock(options: {
         hasMore: false,
       }
       return createJsonResponse(payload)
-    }
-
-    if (url.pathname === '/api/sync/analyze-conflict') {
-      calls.analyze += 1
-      if (!options.analyzeResponse) {
-        throw new Error('Unexpected analyze-conflict request in test.')
-      }
-      if (options.analyzeDelayMs) {
-        await new Promise((resolve) => window.setTimeout(resolve, options.analyzeDelayMs))
-      }
-      return createJsonResponse(options.analyzeResponse)
     }
 
     if (url.pathname === '/api/sync/resolve-conflict') {
@@ -280,46 +327,32 @@ describe('Storage conflict experience', () => {
     )
   })
 
-  it('reanalyzes pending conflicts on app bootstrap and shows a ready recommendation', async () => {
+  it('rebuilds pending conflicts on app bootstrap with a timestamp-based recommendation', async () => {
     const modules = await loadTestModules()
     const fixture = buildDocumentFixture(modules, {
-      title: 'Pending AI Conflict',
+      title: 'Pending Timestamp Conflict',
       conflictId: 'conflict_pending_ai',
       ready: false,
-      mergedRecommended: true,
     })
     await seedDocumentConflict(modules, fixture)
-    const calls = installSyncFetchMock({
-      analyzeResponse: {
-        analysisSource: 'ai',
-        recommendedResolution: 'merged_payload',
-        confidence: 'high',
-        summary: 'AI recommends applying the merged version for this document.',
-        reasons: ['Both local and cloud contain meaningful edits.'],
-        actionableResolutions: ['merged_payload', 'use_cloud', 'save_local_copy'],
-        mergedPayload: fixture.mergedPayload,
-        analyzedAt: 900,
-        analysisNote: null,
-      },
-      analyzeDelayMs: 80,
-    })
+    const calls = installSyncFetchMock({})
 
     window.history.pushState({}, '', '/settings')
     render(<modules.App />)
 
     await screen.findByTestId('storage-settings-conflict-queue')
     await waitFor(() => {
-      expect(calls.analyze).toBe(1)
+      expect(calls.analyze).toBe(0)
     })
 
-    expect(calls.analyze).toBe(1)
+    expect(calls.analyze).toBe(0)
     let persistedConflict = await modules.cloudSyncIdb.getConflict(fixture.conflict.id)
     await waitFor(async () => {
       persistedConflict = await modules.cloudSyncIdb.getConflict(fixture.conflict.id)
       expect(persistedConflict?.analysisStatus).toBe('ready')
     })
     expect(persistedConflict?.analysisStatus).toBe('ready')
-    expect(persistedConflict?.recommendedResolution).toBe('merged_payload')
+    expect(persistedConflict?.recommendedResolution).toBe('use_cloud')
 
     verificationEntries.push({
       layer: 'app',
@@ -328,8 +361,8 @@ describe('Storage conflict experience', () => {
       keyAssertions: {
         queueVisible: true,
         recommendationVisible:
-          persistedConflict?.summary === 'AI recommends applying the merged version for this document.',
-        analyzeCalledOnce: calls.analyze === 1,
+          persistedConflict?.summary === '主库更新时间更晚，建议采用主库较新版本。',
+        analyzeCalledOnce: calls.analyze === 0,
         persistedReady: persistedConflict?.analysisStatus === 'ready',
       },
       recommendedResolution: persistedConflict?.recommendedResolution ?? null,
@@ -399,7 +432,7 @@ describe('Storage conflict experience', () => {
       title: 'Merged Resolution Conflict',
       conflictId: 'conflict_merged_resolution',
       ready: true,
-      mergedRecommended: true,
+      localNewer: true,
     })
     await seedDocumentConflict(modules, fixture)
 

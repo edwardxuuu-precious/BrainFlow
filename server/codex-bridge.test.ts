@@ -917,12 +917,12 @@ describe('createCodexBridge', () => {
       'Build a discount exception table',
     ])
     expect(
-      result.warnings.some((warning) =>
+      (result.warnings ?? []).some((warning) =>
         warning.includes('[auto-filled] Judgment group "判断依据" in module "First verify whether pricing is the real blocker"'),
       ),
     ).toBe(true)
     expect(
-      result.warnings.some((warning) =>
+      (result.warnings ?? []).some((warning) =>
         warning.includes('[auto-filled] Judgment group "潜在动作" in module "First verify whether pricing is the real blocker"'),
       ),
     ).toBe(true)

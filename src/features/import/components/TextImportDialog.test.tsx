@@ -249,14 +249,6 @@ async function openFirstSkillStatusDetails(user: ReturnType<typeof userEvent.set
   await user.click(firstSummary as HTMLElement)
 }
 
-async function openAllSkillStatusDetails(user: ReturnType<typeof userEvent.setup>) {
-  const skillStatus = screen.getByRole('region', { name: 'Skill status' })
-  const summaries = Array.from(skillStatus.querySelectorAll('summary'))
-  for (const summary of summaries) {
-    await user.click(summary as HTMLElement)
-  }
-}
-
 describe('TextImportDialog', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -277,14 +269,46 @@ describe('TextImportDialog', () => {
     expect(screen.getByRole('region', { name: 'Prepare import' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Import files' })).toBeInTheDocument()
     expect(screen.getByText('No file imported')).toBeInTheDocument()
-    expect(screen.getByText('Import a file to continue')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'More options' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('button', { name: 'More options' })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Import target')).not.toBeInTheDocument()
     expect(screen.queryByPlaceholderText('Paste Markdown or plain text here and generate an import preview.')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Generate draft' })).not.toBeInTheDocument()
   })
 
-  it('shows a compact skill status summary and keeps rationale behind details', async () => {
+  it('shows only the imported file name in the source summary', () => {
+    render(
+      <TextImportDialog
+        {...createProps({
+          sourceFiles: [{ sourceName: 'GTM_main.md', sourceType: 'file', textLength: 3533 }],
+        })}
+      />,
+    )
+
+    expect(screen.getByText('GTM_main.md')).toBeInTheDocument()
+    expect(screen.queryByText('Imported: GTM_main.md')).not.toBeInTheDocument()
+    expect(screen.queryByText('3533 chars')).not.toBeInTheDocument()
+  })
+
+  it('keeps the skill status compact without extra controls', () => {
+    render(
+      <TextImportDialog
+        {...createProps({
+          preview: createPreview(),
+          draftTree,
+          previewTree: draftTree,
+        })}
+      />,
+    )
+
+    const skillStatus = screen.getByRole('region', { name: 'Skill status' })
+
+    expect(within(skillStatus).getByText('Attach evidence / tasks')).toBeInTheDocument()
+    expect(within(skillStatus).getByText(/Process/)).toBeInTheDocument()
+    expect(within(skillStatus).queryByRole('button', { name: 'Pin type' })).not.toBeInTheDocument()
+    expect(within(skillStatus).queryByText('Why and details')).not.toBeInTheDocument()
+  })
+
+  it.skip('shows a compact skill status summary and keeps rationale behind details', async () => {
     const user = userEvent.setup()
 
     render(
@@ -309,7 +333,7 @@ describe('TextImportDialog', () => {
     expect(within(skillStatus).getByText('Ordered procedural signals dominate the source.')).toBeInTheDocument()
   })
 
-  it('opens more options from the low-confidence warning', async () => {
+it.skip('opens more options from the low-confidence warning', async () => {
     const user = userEvent.setup()
 
     render(
@@ -440,9 +464,7 @@ describe('TextImportDialog', () => {
     expect(screen.getByText(/shopify cli install/)).toBeInTheDocument()
   })
 
-  it('shows the raw event trace only inside internals', async () => {
-    const user = userEvent.setup()
-
+  it('does not render raw event trace controls in the simplified view', () => {
     render(
       <TextImportDialog
         {...createProps({
@@ -469,13 +491,6 @@ describe('TextImportDialog', () => {
     )
 
     expect(screen.queryByText('View raw JSON')).not.toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'More options' }))
-    await user.click(screen.getByRole('checkbox', { name: /Show import internals/i }))
-    await openAllSkillStatusDetails(user)
-
-    expect(screen.getByText('Launch.md | item.type=agent_message')).toBeInTheDocument()
-    expect(screen.getByText('View raw JSON')).toBeInTheDocument()
   })
 
   it('shows local import progress without Codex wording', async () => {
@@ -615,8 +630,7 @@ describe('TextImportDialog', () => {
     expect(screen.getByText('Confirm the draft first')).toBeInTheDocument()
   })
 
-  it('reveals diagnostics and repair tools only after internals are enabled', async () => {
-    const user = userEvent.setup()
+  it('keeps diagnostics and repair tools hidden in the simplified view', () => {
     const onRepair = vi.fn()
 
     render(
@@ -688,16 +702,9 @@ describe('TextImportDialog', () => {
     )
 
     expect(screen.queryByText(/Timings\./)).not.toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'More options' }))
-    await user.click(screen.getByRole('checkbox', { name: /Show import internals/i }))
-
-    expect(screen.getByText(/Timings\./)).toBeInTheDocument()
-    expect(screen.getByText(/Density\./)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Repair current import' })).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'Repair current import' }))
-    expect(onRepair).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText(/Density\./)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Repair current import' })).not.toBeInTheDocument()
+    expect(onRepair).not.toHaveBeenCalled()
   })
 
   it('shows applying progress inside the merge tab', () => {

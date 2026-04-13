@@ -1,4 +1,8 @@
 import { createMindMapDocument } from '../../../documents/document-factory'
+import {
+  buildDerivedDocumentTitle,
+  normalizeDocumentTitle,
+} from '../../../documents/document-title'
 import { defaultTheme, normalizeMindMapTheme } from '../../../documents/theme'
 import { normalizeTopicMetadata, normalizeTopicStyle } from '../../../documents/topic-defaults'
 import {
@@ -98,7 +102,7 @@ function topicCount(doc: MindMapDocument): number {
 function toSummary(doc: MindMapDocument): DocumentSummary {
   return {
     id: doc.id,
-    title: doc.title,
+    title: normalizeDocumentTitle(doc.title),
     updatedAt: doc.updatedAt,
     topicCount: topicCount(doc),
     previewColor: normalizeDocument(doc).theme.accent,
@@ -123,6 +127,7 @@ async function listAllDocumentsFromDatabase(): Promise<MindMapDocument[]> {
 function normalizeSummary(summary: DocumentSummary): DocumentSummary {
   return {
     ...summary,
+    title: normalizeDocumentTitle(summary.title),
     previewColor: defaultTheme.accent,
   }
 }
@@ -975,6 +980,7 @@ export function normalizeDocument(doc: MindMapDocument): MindMapDocument {
 
   return {
     ...doc,
+    title: normalizeDocumentTitle(doc.title),
     rootTopicId: repairedTree.rootTopicId,
     topics: repairedTree.topics,
     knowledgeImports,
@@ -1058,6 +1064,7 @@ export const documentService: DocumentService = {
       ...structuredClone(original),
       id: createMindMapDocument().id,
       title: `${original.title} 副本`,
+      ...( { title: buildDerivedDocumentTitle(original.title, ' 副本') } ),
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }

@@ -147,6 +147,11 @@ export class SyncService<TPayload> {
   }
 
   async pull(workspaceId: string, afterCursor: number, limit?: number): Promise<SyncPullResponse<TPayload>> {
+    const workspace = await this.repository.getWorkspaceFull(workspaceId)
+    if (!workspace) {
+      throw new SyncApiError('Workspace not found.', 404)
+    }
+
     const changes = await this.repository.listChanges(
       workspaceId,
       afterCursor,

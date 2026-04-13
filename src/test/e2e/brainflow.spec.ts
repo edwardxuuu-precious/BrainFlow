@@ -379,8 +379,8 @@ async function mockCodexStatus(
     version: 'settings-test-v1',
   },
 ): Promise<void> {
-  await page.route('**/api/codex/status', (route) => fulfillJson(route, status))
-  await page.route('**/api/codex/revalidate', (route) => fulfillJson(route, status))
+  await page.route('**/api/ai/status', (route) => fulfillJson(route, status))
+  await page.route('**/api/ai/revalidate', (route) => fulfillJson(route, status))
   await page.route('**/api/codex/settings', async (route) => {
     if (route.request().method() === 'PUT') {
       await fulfillJson(route, settings)
@@ -408,8 +408,8 @@ async function mockCodexBridgeUnavailable(
     })
   }
 
-  await page.route('**/api/codex/status', fulfillUnavailable)
-  await page.route('**/api/codex/revalidate', fulfillUnavailable)
+  await page.route('**/api/ai/status', fulfillUnavailable)
+  await page.route('**/api/ai/revalidate', fulfillUnavailable)
   await page.route('**/api/codex/settings', async (route) => {
     if (route.request().method() === 'PUT') {
       await fulfillJson(route, settings)
@@ -426,7 +426,7 @@ async function mockCodexChat(
   response: AiChatResponse,
   onRequest?: (request: AiChatRequest) => void,
 ): Promise<void> {
-  await page.route('**/api/codex/chat', async (route) => {
+  await page.route('**/api/ai/chat', async (route) => {
     const request = route.request().postDataJSON() as AiChatRequest
     onRequest?.(request)
 
@@ -482,7 +482,7 @@ async function mockCodexChatError(
   },
   onRequest?: (request: AiChatRequest) => void,
 ): Promise<void> {
-  await page.route('**/api/codex/chat', async (route) => {
+  await page.route('**/api/ai/chat', async (route) => {
     const request = route.request().postDataJSON() as AiChatRequest
     onRequest?.(request)
 
@@ -749,7 +749,7 @@ test('shows remediation and disables sending when local Codex verification is un
   })
 
   await mockCodexStatus(page, unavailableStatus)
-  await page.route('**/api/codex/revalidate', async (route) => {
+  await page.route('**/api/ai/revalidate', async (route) => {
     revalidateRequests += 1
     await fulfillJson(route, unavailableStatus)
   })
@@ -962,8 +962,8 @@ test('uses the full graph as context and applies Codex changes directly to the c
     'assistant',
   ])
 
-  expect(requests.some((url) => url.includes('/api/codex/status'))).toBe(true)
-  expect(requests.some((url) => url.includes('/api/codex/chat'))).toBe(true)
+  expect(requests.some((url) => url.includes('/api/ai/status'))).toBe(true)
+  expect(requests.some((url) => url.includes('/api/ai/chat'))).toBe(true)
   expect(requests.some((url) => url.includes('api.openai.com'))).toBe(false)
 
   await page.getByRole('button', { name: '撤销' }).click()

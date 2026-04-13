@@ -1,6 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { pathToFileURL } from 'node:url'
+import { loadBrainFlowEnv } from './load-env.js'
+
+loadBrainFlowEnv()
 
 export const API_STABLE_UPTIME_MS = 30_000
 export const API_RESTART_BASE_DELAY_MS = 1_000

@@ -210,6 +210,21 @@ describe('AiSidebar', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('shows provider-specific ready copy for kimi code', async () => {
+    renderSidebar({
+      currentProviderType: 'kimi-code',
+      status: {
+        ...readyStatus,
+        authProvider: 'kimi-code',
+      },
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: '检查状态' }))
+    expect(
+      screen.getByText('已检测到 Kimi Code 配置状态可用，可以直接基于当前脑图发起对话。'),
+    ).toBeInTheDocument()
+  })
+
   it('shows the last applied summary and supports undo', async () => {
     const props = renderSidebar({
       lastAppliedSummary: '已新增 5 个 GTM 子主题',

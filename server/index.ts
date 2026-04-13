@@ -1,5 +1,8 @@
 import { serve } from '@hono/node-server'
 import { createApp } from './app.js'
+import { loadBrainFlowEnv } from './load-env.js'
+
+loadBrainFlowEnv()
 
 const port = Number(process.env.AI_SERVER_PORT ?? 8787)
 

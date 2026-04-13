@@ -74,7 +74,7 @@
   gap: 10px;
   min-width: 0;
   padding: 12px 14px;
-  border-radius: 16px;
+  border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
   background: var(--dialog-panel);
   color: var(--document-muted);
@@ -128,7 +128,7 @@
   width: 100%;
   padding: 14px 16px;
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
-  border-radius: 18px;
+  border-radius: 12px;
   background: var(--dialog-panel);
   color: var(--document-text);
   text-align: left;
@@ -271,7 +271,7 @@
   min-height: 36px;
   padding: 0 14px;
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
-  border-radius: 14px;
+  border-radius: 12px;
   background: transparent;
   color: var(--document-text);
   font-size: 13px;
@@ -348,7 +348,7 @@
   display: grid;
   gap: 6px;
   padding: 14px 16px;
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--dialog-surface);
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 56%, white 44%);
 }
@@ -429,7 +429,7 @@
   display: grid;
   gap: 10px;
   padding: 14px 16px;
-  border-radius: 16px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--dialog-surface) 90%, var(--dialog-panel) 10%);
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
 }
@@ -451,7 +451,7 @@
   display: grid;
   gap: 12px;
   padding: 16px 18px;
-  border-radius: 18px;
+  border-radius: 12px;
   background: var(--dialog-surface);
   border: 1px solid color-mix(in srgb, var(--document-accent) 14%, white 86%);
 }
@@ -503,7 +503,7 @@
   width: 100%;
   padding: 12px 14px;
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--dialog-panel);
   color: var(--document-text);
   font-size: 13px;
@@ -515,7 +515,7 @@
   display: grid;
   gap: 12px;
   padding: 14px;
-  border-radius: 16px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--dialog-surface) 86%, var(--dialog-panel) 14%);
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
 }
@@ -525,7 +525,7 @@
   min-height: 42px;
   padding: 0 40px 0 14px;
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
-  border-radius: 14px;
+  border-radius: 12px;
   background-color: var(--dialog-surface);
   color: var(--document-text);
   font-size: 13px;
@@ -554,7 +554,7 @@
   gap: 4px;
   padding: 12px 14px;
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--dialog-surface);
   color: var(--document-text);
   text-align: left;
@@ -638,7 +638,7 @@
 
 .fileListInline {
   padding: 10px;
-  border-radius: 14px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--dialog-surface) 78%, var(--dialog-panel) 22%);
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
   display: grid;
@@ -689,7 +689,7 @@
 
 .metaCard {
   padding: 14px 16px;
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--dialog-surface);
 }
 
@@ -703,7 +703,7 @@
 .error {
   margin: 0;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: 12px;
 }
 
 .sourceTypeValue,
@@ -716,7 +716,7 @@
   display: grid;
   gap: 12px;
   padding: 16px 18px;
-  border-radius: 18px;
+  border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
 }
 
@@ -733,7 +733,7 @@
   flex-direction: column;
   gap: 12px;
   padding: 18px;
-  border-radius: 18px;
+  border-radius: 12px;
   background: var(--dialog-panel);
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 60%, white 40%);
 }
@@ -840,7 +840,7 @@
   display: grid;
   gap: 12px;
   padding: 14px 16px;
-  border-radius: 16px;
+  border-radius: 12px;
   background:
     linear-gradient(
       135deg,
@@ -973,7 +973,7 @@
   display: grid;
   gap: 8px;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--dialog-panel);
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 58%, white 42%);
 }
@@ -1033,7 +1033,7 @@
 .codexFeedEmpty {
   margin: 0;
   padding: 14px 16px;
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--dialog-panel);
   font-size: 0;
   line-height: 1.5;
@@ -1103,7 +1103,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 14px 16px;
-  border-radius: 16px;
+  border-radius: 12px;
   border: 1px solid color-mix(in srgb, #b45309 22%, white 78%);
   background: color-mix(in srgb, #f59e0b 10%, var(--dialog-surface) 90%);
 }
@@ -1170,7 +1170,7 @@
   display: grid;
   gap: 8px;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--dialog-panel);
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 58%, white 42%);
 }
@@ -1219,7 +1219,7 @@
   display: grid;
   gap: 4px;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--dialog-panel);
   border: 1px solid color-mix(in srgb, var(--document-panel, #f2f4f6) 58%, white 42%);
 }
@@ -1412,7 +1412,7 @@
   place-items: center;
   min-height: 240px;
   padding: 28px 24px;
-  border-radius: 16px;
+  border-radius: 12px;
   border: 1px dashed color-mix(in srgb, var(--document-panel, #f2f4f6) 64%, white 36%);
   background: var(--dialog-surface);
   text-align: center;
@@ -1446,7 +1446,7 @@
   display: grid;
   gap: 8px;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid transparent;
   background: var(--dialog-surface);
 }
@@ -1529,7 +1529,7 @@
   display: grid;
   gap: 12px;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--dialog-surface);
 }
 

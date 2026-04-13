@@ -16,10 +16,78 @@ import type {
   SyncRepository,
   WorkspaceFullResult,
 } from './sync-repository.js'
+import { buildSaveLocalCopyRecord } from './sync-copy-record.js'
 
 interface PostgresSyncRepositoryOptions {
   connectionString: string
   ssl?: boolean
+}
+
+const GENERATED_COPY_DEVICE_ID = 'server_copy_cleanup'
+const DEFAULT_DOCUMENT_TITLE = '未命名脑图'
+const MAX_DOCUMENT_TITLE_LENGTH = 50
+const DUPLICATE_TITLE_SUFFIX_PATTERN = /\s*\((\d+)\)$/
+
+function normalizeDocumentTitle(title: string | null | undefined): string {
+  const trimmed = typeof title === 'string' ? title.trim().slice(0, MAX_DOCUMENT_TITLE_LENGTH).trim() : ''
+  return trimmed || DEFAULT_DOCUMENT_TITLE
+}
+
+function stripGeneratedDuplicateTitle(title: string | null | undefined): string {
+  const normalized = normalizeDocumentTitle(title)
+  return normalized.replace(DUPLICATE_TITLE_SUFFIX_PATTERN, '').trim() || normalized
+}
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function generateUniqueTitle(desiredTitle: string | null | undefined, existingTitles: string[]): string {
+  const normalizedDesired = normalizeDocumentTitle(desiredTitle)
+  const normalizedExistingTitles = existingTitles.map((title) => normalizeDocumentTitle(title))
+  if (!normalizedExistingTitles.includes(normalizedDesired)) {
+    return normalizedDesired
+  }
+
+  const baseTitle = stripGeneratedDuplicateTitle(normalizedDesired)
+  const baseTitlePattern = new RegExp(`^${escapeRegExp(baseTitle)}\\s*\\((\\d+)\\)$`)
+  let maxIndex = 1
+
+  for (const existingTitle of normalizedExistingTitles) {
+    if (existingTitle === baseTitle) {
+      maxIndex = Math.max(maxIndex, 1)
+      continue
+    }
+
+    const match = existingTitle.match(baseTitlePattern)
+    if (match) {
+      maxIndex = Math.max(maxIndex, Number.parseInt(match[1] ?? '1', 10))
+    }
+  }
+
+  const suffix = ` (${maxIndex + 1})`
+  const maxBaseLength = Math.max(0, MAX_DOCUMENT_TITLE_LENGTH - suffix.length)
+  return `${baseTitle.slice(0, maxBaseLength).trimEnd()}${suffix}`
+}
+
+function getCopyRootId(id: string): string {
+  return id.split('_copy_')[0]
+}
+
+function getCopyDepth(id: string): number {
+  return id.includes('_copy_') ? id.split('_copy_').length - 1 : 0
+}
+
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function getConversationDocumentIdFromEnvelope<TPayload>(record: SyncEnvelope<TPayload> | null): string | null {
+  if (!record || !isRecordObject(record.payload) || typeof record.payload.documentId !== 'string') {
+    return null
+  }
+
+  return record.payload.documentId
 }
 
 function mapWorkspace(row: Record<string, unknown>): SyncWorkspaceSummary {
@@ -149,7 +217,250 @@ export class PostgresSyncRepository<TPayload> implements SyncRepository<TPayload
         detected_at bigint not null,
         resolved_at bigint
       );
+      create table if not exists ai_provider_configs (
+        workspace_id text not null,
+        provider_type text not null,
+        config jsonb not null,
+        updated_at timestamp not null default now(),
+        primary key (workspace_id, provider_type)
+      );
+      create table if not exists system_prompts (
+        id text primary key default 'default',
+        business_prompt text not null,
+        updated_at bigint not null
+      );
     `)
+    await this.cleanupGeneratedCopyChains()
+  }
+
+  async close(): Promise<void> {
+    await this.pool.end()
+  }
+
+  private shouldCollapseGeneratedCopyGroup(
+    documents: Array<SyncEnvelope<TPayload>>,
+    conflicts: Array<SyncConflictRecord<TPayload>>,
+  ): boolean {
+    const hasGeneratedId =
+      documents.some((record) => record.id.includes('_copy_')) ||
+      conflicts.some((conflict) => conflict.entityId.includes('_copy_'))
+
+    if (!hasGeneratedId) {
+      return false
+    }
+
+    const activeDocuments = documents.filter((record) => record.deletedAt === null)
+    const activeGeneratedCopies = activeDocuments.filter((record) => record.id.includes('_copy_'))
+
+    return (
+      conflicts.length > 0 ||
+      activeGeneratedCopies.length > 1 ||
+      activeGeneratedCopies.some((record) => getCopyDepth(record.id) > 1)
+    )
+  }
+
+  private buildCanonicalCopyTitle(
+    keepRecord: SyncEnvelope<TPayload>,
+    allDocuments: Array<SyncEnvelope<TPayload>>,
+    removedIds: Set<string>,
+  ): string {
+    const currentTitle =
+      isRecordObject(keepRecord.payload) && typeof keepRecord.payload.title === 'string'
+        ? keepRecord.payload.title
+        : null
+    const baseTitle = stripGeneratedDuplicateTitle(currentTitle)
+    const existingTitles = allDocuments
+      .filter(
+        (record) =>
+          record.deletedAt === null &&
+          record.id !== keepRecord.id &&
+          !removedIds.has(record.id) &&
+          isRecordObject(record.payload) &&
+          typeof record.payload.title === 'string',
+      )
+      .map((record) => String((record.payload as { title: string }).title))
+
+    return generateUniqueTitle(baseTitle, existingTitles)
+  }
+
+  private async writeMaintenanceDelete(
+    workspaceId: string,
+    entityType: SyncEntityType,
+    record: SyncEnvelope<TPayload>,
+  ): Promise<void> {
+    const deletedAt = Date.now()
+    await this.writeHead(workspaceId, entityType, 'delete', {
+      ...record,
+      deviceId: GENERATED_COPY_DEVICE_ID,
+      version: record.version + 1,
+      baseVersion: record.version,
+      contentHash: computeStableContentHash({ deleted: true, entityId: record.id }),
+      updatedAt: deletedAt,
+      deletedAt,
+      syncStatus: 'synced',
+    })
+  }
+
+  private async writeMaintenanceDocumentUpsert(
+    workspaceId: string,
+    record: SyncEnvelope<TPayload>,
+    title: string,
+  ): Promise<void> {
+    if (!isRecordObject(record.payload)) {
+      return
+    }
+
+    const updatedAt = Date.now()
+    const payload = {
+      ...record.payload,
+      id: record.id,
+      title,
+      updatedAt,
+    } as TPayload
+
+    await this.writeHead(workspaceId, 'document', 'upsert', {
+      ...record,
+      deviceId: GENERATED_COPY_DEVICE_ID,
+      version: record.version + 1,
+      baseVersion: record.version,
+      contentHash: computeStableContentHash(payload),
+      updatedAt,
+      deletedAt: null,
+      syncStatus: 'synced',
+      payload,
+    })
+  }
+
+  private async markConflictResolved(conflictId: string): Promise<void> {
+    await this.pool.query(
+      `update sync_conflicts
+          set resolved_at = $2
+        where id = $1 and resolved_at is null`,
+      [conflictId, Date.now()],
+    )
+  }
+
+  private async cleanupGeneratedCopyChains(): Promise<void> {
+    const workspaceResult = await this.pool.query(`select id from workspaces order by updated_at asc`)
+
+    for (const row of workspaceResult.rows) {
+      const workspaceId = String((row as Record<string, unknown>).id)
+      const full = await this.getWorkspaceFull(workspaceId)
+      if (!full) {
+        continue
+      }
+
+      const conflicts = await this.listConflicts(workspaceId)
+      const documentGroups = new Map<
+        string,
+        {
+          documents: Array<SyncEnvelope<TPayload>>
+          conflicts: Array<SyncConflictRecord<TPayload>>
+        }
+      >()
+
+      for (const document of full.documents) {
+        const rootId = getCopyRootId(document.id)
+        const current = documentGroups.get(rootId) ?? { documents: [], conflicts: [] }
+        current.documents.push(document)
+        documentGroups.set(rootId, current)
+      }
+
+      for (const conflict of conflicts) {
+        if (conflict.entityType !== 'document') {
+          continue
+        }
+
+        const rootId = getCopyRootId(conflict.entityId)
+        const current = documentGroups.get(rootId) ?? { documents: [], conflicts: [] }
+        current.conflicts.push(conflict)
+        documentGroups.set(rootId, current)
+      }
+
+      const cleanedRoots = new Set<string>()
+
+      for (const [rootId, group] of documentGroups.entries()) {
+        if (!this.shouldCollapseGeneratedCopyGroup(group.documents, group.conflicts)) {
+          continue
+        }
+
+        const activeDocuments = group.documents
+          .filter((record) => record.deletedAt === null)
+          .sort((left, right) => right.updatedAt - left.updatedAt)
+        const keepRecord = activeDocuments[0] ?? null
+        const removedRecords = activeDocuments.filter((record) => record.id !== keepRecord?.id)
+        const removedIds = new Set(removedRecords.map((record) => record.id))
+
+        for (const record of removedRecords) {
+          await this.writeMaintenanceDelete(workspaceId, 'document', record)
+        }
+
+        if (keepRecord) {
+          const nextTitle = this.buildCanonicalCopyTitle(keepRecord, full.documents, removedIds)
+          const currentTitle =
+            isRecordObject(keepRecord.payload) && typeof keepRecord.payload.title === 'string'
+              ? keepRecord.payload.title
+              : ''
+          if (normalizeDocumentTitle(currentTitle) !== nextTitle) {
+            await this.writeMaintenanceDocumentUpsert(workspaceId, keepRecord, nextTitle)
+          }
+        }
+
+        cleanedRoots.add(rootId)
+
+        for (const conflict of group.conflicts) {
+          await this.markConflictResolved(conflict.id)
+        }
+      }
+
+      const refreshedWorkspace = await this.getWorkspaceFull(workspaceId)
+      if (!refreshedWorkspace) {
+        continue
+      }
+
+      const activeDocumentIds = new Set(
+        refreshedWorkspace.documents
+          .filter((record) => record.deletedAt === null)
+          .map((record) => record.id),
+      )
+      const deletedConversationIds = new Set<string>()
+
+      for (const conversation of refreshedWorkspace.conversations) {
+        if (conversation.deletedAt !== null) {
+          continue
+        }
+
+        const documentId = getConversationDocumentIdFromEnvelope(conversation)
+        if (documentId && !activeDocumentIds.has(documentId)) {
+          await this.writeMaintenanceDelete(workspaceId, 'conversation', conversation)
+          deletedConversationIds.add(conversation.id)
+        }
+      }
+
+      const remainingConflicts = await this.listConflicts(workspaceId)
+      for (const conflict of remainingConflicts) {
+        if (conflict.entityType === 'document') {
+          if (cleanedRoots.has(getCopyRootId(conflict.entityId)) || !activeDocumentIds.has(conflict.entityId)) {
+            await this.markConflictResolved(conflict.id)
+          }
+          continue
+        }
+
+        const localDocumentId = getConversationDocumentIdFromEnvelope(conflict.localRecord)
+        const cloudDocumentId = getConversationDocumentIdFromEnvelope(conflict.cloudRecord)
+        const referencesMissingDocument =
+          (localDocumentId !== null && !activeDocumentIds.has(localDocumentId)) ||
+          (cloudDocumentId !== null && !activeDocumentIds.has(cloudDocumentId))
+
+        if (
+          deletedConversationIds.has(conflict.entityId) ||
+          conflict.entityId.includes('_copy_') ||
+          referencesMissingDocument
+        ) {
+          await this.markConflictResolved(conflict.id)
+        }
+      }
+    }
   }
 
   async getOrCreateWorkspace(
@@ -165,6 +476,25 @@ export class PostgresSyncRepository<TPayload> implements SyncRepository<TPayload
       if (existing.rowCount) {
         return mapWorkspace(existing.rows[0] as Record<string, unknown>)
       }
+
+      const targetWorkspace: SyncWorkspaceSummary = {
+        id: targetWorkspaceId,
+        userId,
+        name: workspaceName?.trim() || 'Default Workspace',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }
+      await this.pool.query(
+        `insert into workspaces (id, user_id, name, created_at, updated_at) values ($1, $2, $3, $4, $5)`,
+        [
+          targetWorkspace.id,
+          targetWorkspace.userId,
+          targetWorkspace.name,
+          targetWorkspace.createdAt,
+          targetWorkspace.updatedAt,
+        ],
+      )
+      return targetWorkspace
     }
 
     const name = workspaceName?.trim() || 'Default Workspace'
@@ -476,14 +806,13 @@ export class PostgresSyncRepository<TPayload> implements SyncRepository<TPayload
       if (!conflict.localRecord) {
         throw new Error('Local record is missing.')
       }
-      const copyRecord: SyncEnvelope<TPayload> = {
-        ...conflict.localRecord,
-        id: `${conflict.localRecord.id}_copy_${Math.random().toString(36).slice(2, 7)}`,
-        version: 1,
-        baseVersion: null,
-        updatedAt: Date.now(),
-        contentHash: computeStableContentHash(conflict.localRecord.payload),
-      }
+      const copyRecord = buildSaveLocalCopyRecord(
+        conflict.entityType,
+        conflict.localRecord,
+        {
+          deviceId: input.deviceId,
+        },
+      )
       const cursor = await this.writeHead(input.workspaceId, conflict.entityType, 'upsert', copyRecord)
       await this.pool.query(`update sync_conflicts set resolved_at = $2 where id = $1`, [input.conflictId, Date.now()])
       return {
@@ -598,5 +927,78 @@ export class PostgresSyncRepository<TPayload> implements SyncRepository<TPayload
       [workspaceId, Date.now()],
     )
     return Number(changeResult.rows[0]?.cursor ?? 0)
+  }
+
+  // AI Provider Config methods
+  async getAiProviderConfig(workspaceId: string, providerType: string): Promise<{ apiKey?: string; model?: string; baseUrl?: string } | null> {
+    const result = await this.pool.query(
+      `SELECT config FROM ai_provider_configs 
+       WHERE workspace_id = $1 AND provider_type = $2`,
+      [workspaceId, providerType]
+    )
+    
+    if (result.rows.length === 0) {
+      return null
+    }
+    
+    return result.rows[0].config as { apiKey?: string; model?: string; baseUrl?: string }
+  }
+
+  async setAiProviderConfig(
+    workspaceId: string, 
+    providerType: string, 
+    config: { apiKey?: string; model?: string; baseUrl?: string }
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO ai_provider_configs (workspace_id, provider_type, config, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (workspace_id, provider_type) 
+       DO UPDATE SET config = $3, updated_at = NOW()`,
+      [workspaceId, providerType, JSON.stringify(config)]
+    )
+  }
+
+  async deleteAiProviderConfig(workspaceId: string, providerType: string): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM ai_provider_configs 
+       WHERE workspace_id = $1 AND provider_type = $2`,
+      [workspaceId, providerType]
+    )
+  }
+
+  // System Prompt methods
+  async getSystemPrompt(): Promise<{ businessPrompt: string; updatedAt: number } | null> {
+    const result = await this.pool.query(
+      `SELECT business_prompt, updated_at FROM system_prompts WHERE id = 'default'`
+    )
+    
+    if (result.rows.length === 0) {
+      return null
+    }
+    
+    return {
+      businessPrompt: result.rows[0].business_prompt,
+      updatedAt: Number(result.rows[0].updated_at),
+    }
+  }
+
+  async saveSystemPrompt(businessPrompt: string): Promise<{ businessPrompt: string; updatedAt: number }> {
+    const updatedAt = Date.now()
+    
+    await this.pool.query(
+      `INSERT INTO system_prompts (id, business_prompt, updated_at)
+       VALUES ('default', $1, $2)
+       ON CONFLICT (id) 
+       DO UPDATE SET business_prompt = $1, updated_at = $2`,
+      [businessPrompt, updatedAt]
+    )
+    
+    return { businessPrompt, updatedAt }
+  }
+
+  async deleteSystemPrompt(): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM system_prompts WHERE id = 'default'`
+    )
   }
 }

@@ -17,15 +17,19 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
+import { StorageSaveIndicator } from '../../components/StorageSaveIndicator'
 import { TopicNode } from '../../components/topic-node/TopicNode'
 import { IconButton, ToolbarGroup } from '../../components/ui'
-import { SaveIndicator } from '../../components/SaveIndicator'
 import { AiSidebar } from '../../features/ai/components/AiSidebar'
 import { useAiStore } from '../../features/ai/ai-store'
 import {
   documentService,
   setRecentDocumentId,
 } from '../../features/documents/document-service'
+import {
+  buildDocumentWindowTitle,
+  normalizeDocumentTitle,
+} from '../../features/documents/document-title'
 import type {
   DocumentService,
   MindMapDocument,
@@ -46,13 +50,14 @@ import { PropertiesPanel } from '../../features/editor/components/PropertiesPane
 import { SidebarRail } from '../../features/editor/components/SidebarRail'
 import { getEditorSnapshot, useEditorStore } from '../../features/editor/editor-store'
 import { exportCanvasAsPng, exportDocumentAsJson } from '../../features/editor/exporters'
+import {
+  findTopicDropPreview,
+  getFlowNodeRect,
+  type TopicDropPreview,
+} from '../../features/editor/drag-drop-preview'
 import { layoutMindMap, type MindMapFlowNode } from '../../features/editor/layout'
 import { getTopicAncestorIds, getTopicLayout } from '../../features/editor/tree-operations'
 import { useEditorShortcuts } from '../../features/editor/use-editor-shortcuts'
-import {
-  workspaceStorageService,
-  type WorkspaceStorageStatus,
-} from '../../features/storage/services/workspace-storage-service'
 import styles from './MapEditorPage.module.css'
 import revertIcon from '/revert.png'
 import contentIcon from '/content.png'
@@ -70,6 +75,7 @@ const DESKTOP_BREAKPOINT = 1200
 const TABLET_BREAKPOINT = 780
 const HOVER_SUBMENU_MEDIA_QUERY = '(hover: hover) and (pointer: fine)'
 const RIGHT_SIDEBAR_ID = 'editor-right-sidebar'
+const RIGHT_PANEL_MODE_STORAGE_KEY = 'brainflow-editor-right-panel-mode'
 const nodeTypes = { topic: TopicNode }
 const reactFlowProOptions = { hideAttribution: true }
 const reactFlowMultiSelectionKeyCode = ['Meta', 'Control', 'Shift']
@@ -79,6 +85,7 @@ interface DragSnapshot {
   topicId: string
   positions: Map<string, { x: number; y: number }>
   movingIds: Set<string>
+  dropPreview: TopicDropPreview | null
 }
 
 interface RenameDraft {
@@ -101,39 +108,32 @@ type RightPanelMode = 'outline' | 'details' | 'markers' | 'format' | 'ai'
 type MarkerSubtab = 'markers' | 'stickers'
 type FormatSubtab = 'topic' | 'canvas'
 
-function createEmptyStorageStatus(): WorkspaceStorageStatus {
-  return {
-    mode: 'local-only',
-    workspaceName: null,
-    localSavedAt: null,
-    cloudSyncedAt: null,
-    isOnline: true,
-    isSyncing: false,
-    conflicts: [],
-    pendingImportReport: null,
-    migrationAvailable: true,
-    lastSyncError: null,
-  }
-}
-
 function areFlowNodesEquivalent(
   currentNode: MindMapFlowNode,
   nextNode: MindMapFlowNode,
 ): boolean {
   return (
     currentNode.id === nextNode.id &&
+    currentNode.type === nextNode.type &&
     currentNode.selected === nextNode.selected &&
     currentNode.position.x === nextNode.position.x &&
     currentNode.position.y === nextNode.position.y &&
     currentNode.draggable === nextNode.draggable &&
+    currentNode.sourcePosition === nextNode.sourcePosition &&
+    currentNode.targetPosition === nextNode.targetPosition &&
     currentNode.style?.width === nextNode.style?.width &&
     currentNode.style?.height === nextNode.style?.height &&
+    currentNode.data.topicId === nextNode.data.topicId &&
     currentNode.data.title === nextNode.data.title &&
     currentNode.data.note === nextNode.data.note &&
+    currentNode.data.notePreview === nextNode.data.notePreview &&
     currentNode.data.isCollapsed === nextNode.data.isCollapsed &&
     currentNode.data.childCount === nextNode.data.childCount &&
     currentNode.data.branchColor === nextNode.data.branchColor &&
     currentNode.data.side === nextNode.data.side &&
+    currentNode.data.depth === nextNode.data.depth &&
+    currentNode.data.isRoot === nextNode.data.isRoot &&
+    currentNode.data.dropTarget === nextNode.data.dropTarget &&
     currentNode.data.aiLocked === nextNode.data.aiLocked &&
     JSON.stringify(currentNode.data.metadata) === JSON.stringify(nextNode.data.metadata) &&
     JSON.stringify(currentNode.data.style) === JSON.stringify(nextNode.data.style)
@@ -223,12 +223,17 @@ function canUseHoverSubmenu(): boolean {
   )
 }
 
-function buildLayoutCacheKey(document: MindMapDocument): string {
-  return JSON.stringify({
-    rootTopicId: document.rootTopicId,
-    topics: document.topics,
-    theme: document.theme,
-  })
+function isRightPanelMode(value: string | null): value is RightPanelMode {
+  return value === 'outline' || value === 'details' || value === 'markers' || value === 'format' || value === 'ai'
+}
+
+function getStoredRightPanelMode(): RightPanelMode {
+  if (typeof localStorage === 'undefined') {
+    return 'details'
+  }
+
+  const storedValue = localStorage.getItem(RIGHT_PANEL_MODE_STORAGE_KEY)
+  return isRightPanelMode(storedValue) ? storedValue : 'details'
 }
 
 function collectSubtreeIds(document: MindMapDocument, topicId: string) {
@@ -260,7 +265,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const dragSnapshotRef = useRef<DragSnapshot | null>(null)
   const nodesRef = useRef<MindMapFlowNode[]>([])
   const boxSelectionSessionRef = useRef<BoxSelectionSession | null>(null)
-  const layoutCacheRef = useRef<{ key: string; layout: ReturnType<typeof layoutMindMap> } | null>(null)
   const documentTitleInputRef = useRef<HTMLInputElement>(null)
   const skipDocumentTitleBlurRef = useRef(false)
   const [isSpacePressed, setIsSpacePressed] = useState(false)
@@ -268,7 +272,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const [documentTitleDraft, setDocumentTitleDraft] = useState('')
   const [isEditingDocumentTitle, setIsEditingDocumentTitle] = useState(false)
   const [aiDraft, setAiDraft] = useState('')
-  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('details')
+  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>(() => getStoredRightPanelMode())
   const [markerSubtab, setMarkerSubtab] = useState<MarkerSubtab>('markers')
   const [formatSubtab, setFormatSubtab] = useState<FormatSubtab>('topic')
   const [rightSidebarWidth, setRightSidebarWidth] = useState(300)
@@ -278,9 +282,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const mainMenuDropdownRef = useRef<HTMLDivElement>(null)
   const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(null)
   const [supportsHoverSubmenu, setSupportsHoverSubmenu] = useState(() => canUseHoverSubmenu())
-  const [storageStatus, setStorageStatus] = useState<WorkspaceStorageStatus>(() =>
-    typeof window === 'undefined' ? createEmptyStorageStatus() : workspaceStorageService.getStatus(),
-  )
 
   useEffect(() => {
     setPortalContainer(window.document.body)
@@ -324,7 +325,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const history = useEditorStore((state) => state.history)
   const future = useEditorStore((state) => state.future)
   const isDirty = useEditorStore((state) => state.isDirty)
-  const hasPendingWorkspaceSave = useEditorStore((state) => state.hasPendingWorkspaceSave)
   const setDocument = useEditorStore((state) => state.setDocument)
   const setSelection = useEditorStore((state) => state.setSelection)
   const toggleTopicSelection = useEditorStore((state) => state.toggleTopicSelection)
@@ -334,6 +334,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const renameDocument = useEditorStore((state) => state.renameDocument)
   const renameTopic = useEditorStore((state) => state.renameTopic)
   const addChild = useEditorStore((state) => state.addChild)
+  const moveTopic = useEditorStore((state) => state.moveTopic)
   const updateNoteRich = useEditorStore((state) => state.updateNoteRich)
   const updateTopicMetadata = useEditorStore((state) => state.updateTopicMetadata)
   const updateTopicStyle = useEditorStore((state) => state.updateTopicStyle)
@@ -370,6 +371,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const aiStatusError = useAiStore((state) => state.statusError)
   const aiStatusFailureKind = useAiStore((state) => state.statusFailureKind)
   const aiStatusFeedback = useAiStore((state) => state.statusFeedback)
+  const aiCurrentProvider = useAiStore((state) => state.currentProvider)
   const aiLastExecutionError = useAiStore((state) => state.lastExecutionError)
   const aiSettings = useAiStore((state) => state.settings)
   const aiSettingsError = useAiStore((state) => state.settingsError)
@@ -482,19 +484,8 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     }
 
     try {
-      const layoutCacheKey = buildLayoutCacheKey(document)
-      if (layoutCacheRef.current?.key === layoutCacheKey) {
-        return { layout: layoutCacheRef.current.layout, layoutError: null as Error | null }
-      }
-
-      const nextLayout = layoutMindMap(document)
-      layoutCacheRef.current = {
-        key: layoutCacheKey,
-        layout: nextLayout,
-      }
-      return { layout: nextLayout, layoutError: null as Error | null }
+      return { layout: layoutMindMap(document), layoutError: null as Error | null }
     } catch (error) {
-      layoutCacheRef.current = null
       const resolvedError = error instanceof Error ? error : new Error('Unknown layout error')
       console.error('Failed to render mind map layout.', {
         documentId: document.id,
@@ -502,7 +493,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
       })
       return { layout: null, layoutError: resolvedError }
     }
-  }, [document])
+  }, [document?.rootTopicId, document?.topics, document?.theme])
   const selectedTopic = activeTopicId && document ? document.topics[activeTopicId] ?? null : null
   const textImportRootLabel = document ? document.topics[document.rootTopicId]?.title ?? 'Document root' : 'Document root'
   const textImportCurrentSelectionLabel = selectedTopic?.title ?? null
@@ -719,10 +710,6 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   )
 
   useEffect(() => {
-    return workspaceStorageService.subscribe(setStorageStatus)
-  }, [])
-
-  useEffect(() => {
     if (!documentId) {
       navigate('/', { replace: true })
       return
@@ -763,6 +750,10 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
       setAiDraft('')
     })
   }, [aiHydrate, document?.id, document?.title])
+
+  useEffect(() => {
+    window.document.title = document?.title ? buildDocumentWindowTitle(document.title) : 'FLOW'
+  }, [document?.title])
 
   useEffect(() => {
     if (isEditingDocumentTitle) {
@@ -822,7 +813,15 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   }, [mainMenuOpen])
 
   useEffect(() => {
-    if (!document || (!isDirty && !hasPendingWorkspaceSave)) {
+    if (typeof localStorage === 'undefined') {
+      return
+    }
+
+    localStorage.setItem(RIGHT_PANEL_MODE_STORAGE_KEY, rightPanelMode)
+  }, [rightPanelMode])
+
+  useEffect(() => {
+    if (!document || !isDirty) {
       return
     }
 
@@ -832,7 +831,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     }, SAVE_DEBOUNCE_MS)
 
     return () => window.clearTimeout(timeoutId)
-  }, [document, hasPendingWorkspaceSave, isDirty, markDocumentSaved, service])
+  }, [document, isDirty, markDocumentSaved, service])
 
   useEffect(() => {
     if (!layout || dragSnapshotRef.current) {
@@ -843,20 +842,51 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
       const currentNodeLookup = new Map(currentNodes.map((node) => [node.id, node]))
       const selectedSet = new Set(selectedTopicIds)
       const isBoxSelecting = boxSelectionSessionRef.current?.isBoxSelecting ?? false
-      const nextNodes = layout.renderNodes.map((node) => ({
-        ...node,
-        draggable: !(editingSurface === 'canvas' && node.id === editingTopicId),
-        selected: isBoxSelecting
-          ? currentNodeLookup.get(node.id)?.selected ?? false
-          : selectedSet.has(node.id),
-      }))
+      let didChange = currentNodes.length !== layout.renderNodes.length
+      const nextNodes = layout.renderNodes.map((layoutNode, index) => {
+        if (currentNodes[index]?.id !== layoutNode.id) {
+          didChange = true
+        }
 
-      if (
-        currentNodes.length === nextNodes.length &&
-        currentNodes.every((currentNode, index) =>
-          areFlowNodesEquivalent(currentNode, nextNodes[index]),
-        )
-      ) {
+        const currentNode = currentNodeLookup.get(layoutNode.id)
+        const nextSelected = isBoxSelecting
+          ? currentNode?.selected ?? false
+          : selectedSet.has(layoutNode.id)
+        const nextNodeData = {
+          ...layoutNode.data,
+          dropTarget: false,
+        }
+        const nextDraggable = !(editingSurface === 'canvas' && layoutNode.id === editingTopicId)
+
+        if (!currentNode) {
+          didChange = true
+          return {
+            ...layoutNode,
+            data: nextNodeData,
+            draggable: nextDraggable,
+            selected: nextSelected,
+          }
+        }
+
+        const nextNode: MindMapFlowNode = {
+          ...currentNode,
+          ...layoutNode,
+          data: nextNodeData,
+          draggable: nextDraggable,
+          selected: nextSelected,
+          position: layoutNode.position,
+          style: layoutNode.style,
+        }
+
+        if (areFlowNodesEquivalent(currentNode, nextNode)) {
+          return currentNode
+        }
+
+        didChange = true
+        return nextNode
+      })
+
+      if (!didChange) {
         return currentNodes
       }
 
@@ -954,7 +984,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isAnyDrawerOpen, isRightDrawerOpen, isTablet, setSidebarOpen])
 
-  const layoutRenderNodes = layout?.renderNodes ?? []
+  const layoutRenderNodes = useMemo(() => layout?.renderNodes ?? [], [layout])
 
   const handleNodeClick = useCallback<NodeMouseHandler<MindMapFlowNode>>((event, node) => {
     // If in canvas picking mode for AI context, add the node to context
@@ -1113,6 +1143,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         topicId: node.id,
         positions: new Map(layoutRenderNodes.map((item) => [item.id, { ...item.position }])),
         movingIds: collectSubtreeIds(document!, node.id),
+        dropPreview: null,
       }
       setSelection([node.id], node.id)
     },
@@ -1122,7 +1153,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   const handleCanvasNodeDrag = useCallback(
     (_: React.MouseEvent, node: MindMapFlowNode) => {
       const snapshot = dragSnapshotRef.current
-      if (!snapshot || snapshot.topicId !== node.id) {
+      if (!snapshot || snapshot.topicId !== node.id || !document || !layout) {
         return
       }
 
@@ -1133,6 +1164,18 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
 
       const deltaX = node.position.x - origin.x
       const deltaY = node.position.y - origin.y
+      const draggedRect = getFlowNodeRect({
+        position: node.position,
+        style: node.style,
+      } as Pick<MindMapFlowNode, 'position' | 'style'>)
+      const nextDropPreview = findTopicDropPreview({
+        document,
+        layout,
+        topicId: node.id,
+        topicRect: draggedRect,
+      })
+
+      snapshot.dropPreview = nextDropPreview
 
       setNodes((currentNodes) =>
         currentNodes.map((currentNode) => {
@@ -1141,6 +1184,12 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
 
           return {
             ...currentNode,
+            data: {
+              ...currentNode.data,
+              dropTarget:
+                nextDropPreview?.isStructuralMove === true &&
+                currentNode.id === nextDropPreview.targetParentId,
+            },
             position: isMovingNode
               ? {
                   x: basePosition.x + deltaX,
@@ -1151,7 +1200,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         }),
       )
     },
-    [setNodes],
+    [document, layout, setNodes],
   )
 
   const handleCanvasNodeDragStop = useCallback(
@@ -1159,7 +1208,22 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
       const snapshot = dragSnapshotRef.current
       dragSnapshotRef.current = null
 
-      if (!snapshot || snapshot.topicId !== node.id) {
+      setNodes((currentNodes) =>
+        currentNodes.map((currentNode) => ({
+          ...currentNode,
+          data: {
+            ...currentNode.data,
+            dropTarget: false,
+          },
+        })),
+      )
+
+      if (!snapshot || snapshot.topicId !== node.id || !document) {
+        return
+      }
+
+      if (snapshot.dropPreview?.isStructuralMove) {
+        moveTopic(node.id, snapshot.dropPreview.targetParentId, snapshot.dropPreview.targetIndex)
         return
       }
 
@@ -1176,7 +1240,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
 
       setTopicOffset(node.id, currentOffset.offsetX + deltaX, currentOffset.offsetY + deltaY)
     },
-    [document, setTopicOffset],
+    [document, moveTopic, setNodes, setTopicOffset],
   )
 
   const handleCanvasMoveEnd = useCallback(
@@ -1366,7 +1430,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
   }
 
   const commitDocumentTitle = () => {
-    renameDocument(documentTitleDraft)
+    renameDocument(normalizeDocumentTitle(documentTitleDraft))
     setIsEditingDocumentTitle(false)
   }
 
@@ -1476,6 +1540,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
         sessionList={aiSessionList}
         activeSessionId={aiActiveSessionId}
         archivedSessions={aiArchivedSessions}
+        currentProviderType={aiCurrentProvider}
         status={aiStatus}
         statusError={aiStatusError}
         statusFailureKind={aiStatusFailureKind}
@@ -1657,6 +1722,16 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
                     className={styles.menuItem}
                     onClick={() => {
                       closeMainMenu()
+                      navigate('/ai-settings')
+                    }}
+                  >
+                    AI 服务
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.menuItem}
+                    onClick={() => {
+                      closeMainMenu()
                       navigate('/settings')
                     }}
                   >
@@ -1668,7 +1743,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
             )}
           </div>
           <button type="button" className={styles.brandBlock} onClick={() => navigate('/')}>
-            <span className={styles.wordmark}>BrainFlow</span>
+            <span className={styles.wordmark}>FLOW</span>
           </button>
           <div className={styles.titleWrap}>
             {isEditingDocumentTitle ? (
@@ -1676,6 +1751,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
                 ref={documentTitleInputRef}
                 className={styles.titleInput}
                 value={documentTitleDraft}
+                maxLength={50}
                 aria-label="编辑画布名称"
                 onBlur={() => {
                   if (skipDocumentTitleBlurRef.current) {
@@ -1717,13 +1793,7 @@ export function MapEditorPage({ service = documentService }: MapEditorPageProps)
                 {document.title}
               </div>
             )}
-            <SaveIndicator
-              localSavedAt={storageStatus.localSavedAt}
-              cloudSyncedAt={storageStatus.cloudSyncedAt}
-              isDirty={isDirty}
-              isSyncing={storageStatus.isSyncing}
-              hasConflict={storageStatus.conflicts.length > 0}
-            />
+            <StorageSaveIndicator isDirty={isDirty} />
           </div>
         </div>
 

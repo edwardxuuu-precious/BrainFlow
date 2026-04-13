@@ -6,7 +6,12 @@ import type {
   TextImportRunStage,
   TextImportStreamEvent,
 } from '../../../shared/ai-contract'
-import { CodexRequestError, type CodexRequestFailureKind } from '../ai/ai-client'
+import {
+  CodexRequestError,
+  getStoredProvider,
+  getStoredWorkspaceId,
+  type CodexRequestFailureKind,
+} from '../ai/ai-client'
 
 const IMPORT_CONNECT_TIMEOUT_MS = 180000
 const IMPORT_BRIDGE_UNAVAILABLE_MESSAGE =
@@ -23,6 +28,20 @@ const IMPORT_STREAM_INTERRUPTED_MESSAGE =
   'The import preview stream was interrupted before completion. Retry after the local Codex bridge finishes the current request.'
 const IMPORT_STREAM_INVALID_MESSAGE =
   'The local Codex bridge returned an invalid import stream. Review the bridge logs and retry.'
+
+function buildAiRequestHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-AI-Provider': getStoredProvider(),
+  }
+
+  const workspaceId = getStoredWorkspaceId()
+  if (workspaceId) {
+    headers['X-Workspace-Id'] = workspaceId
+  }
+
+  return headers
+}
 
 interface ImportRequestError extends CodexRequestError {
   stage?: TextImportRunStage
@@ -215,9 +234,7 @@ export async function adjudicateTextImportCandidates(
 ): Promise<TextImportSemanticAdjudicationResponse> {
   const response = await fetchWithTimeout('/api/codex/import/adjudicate', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: buildAiRequestHeaders(),
     body: JSON.stringify(request),
     signal: options?.signal,
   })
@@ -248,9 +265,7 @@ export async function streamCodexTextImportPreview(
 ): Promise<void> {
   const response = await fetchWithTimeout('/api/codex/import/preview', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: buildAiRequestHeaders(),
     body: JSON.stringify(request),
     signal: options?.signal,
   })

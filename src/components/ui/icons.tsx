@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode, SVGProps } from 'react'
 
 export type IconName =
   | 'add'
+  | 'ai'
   | 'archive'
   | 'attachment'
   | 'back'
@@ -67,6 +68,16 @@ type IconDefinition =
 
 const iconDefinitions: Record<IconName, IconDefinition> = {
   add: { paths: ['M12 5v14', 'M5 12h14'] },
+  ai: {
+    render: () => (
+      <>
+        <rect x="7" y="9" width="10" height="8" rx="2" />
+        <path d="M9 9V7a3 3 0 0 1 6 0v2" />
+        <circle cx="12" cy="13" r="2" fill="currentColor" stroke="none" fillOpacity="0.7" />
+        <path d="M10 19l1-2h2l1 2" />
+      </>
+    ),
+  },
   archive: { paths: ['M4 7h16l-1 12H5L4 7Z', 'M9 11h6', 'M9 4h6l1 3H8l1-3Z'] },
   attachment: { paths: ['M12 4v10a3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a5 5 0 0 0-10 0v10a7 7 0 0 0 7 7 7 7 0 0 0 7-7v-3'] },
   back: { paths: ['M15 18l-6-6 6-6', 'M9 12h10'] },

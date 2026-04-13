@@ -1,6 +1,9 @@
 // @vitest-environment node
 
-import { describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   AiChatRequest,
   AiChatResponse,
@@ -10,11 +13,16 @@ import type {
   TextImportRequest,
   TextImportResponse,
 } from '../shared/ai-contract.js'
+import type { StorageAdminServerStatusResponse } from '../shared/storage-admin-contract.js'
 import type { SyncAnalyzeConflictRequest, SyncResolveConflictRequest } from '../shared/sync-contract.js'
+import { createPasswordHash } from './auth/password.js'
 import { createApp } from './app.js'
 import { CodexBridgeError } from './codex-bridge.js'
 import type { SyncRepository } from './repos/sync-repository.js'
 import { SyncService } from './services/sync-service.js'
+import type { StorageAdminService } from './storage-admin-service.js'
+
+const originalEnv = { ...process.env }
 
 const status: CodexStatus = {
   cliInstalled: true,
@@ -208,6 +216,95 @@ const baseAnalyzeConflictRequest: SyncAnalyzeConflictRequest<unknown> = {
   },
 }
 
+function createStorageAdminStatus(): StorageAdminServerStatusResponse {
+  return {
+    mode: 'local_postgres',
+    checkedAt: 1_710_000_000_000,
+    api: {
+      reachable: true,
+      checkedAt: 1_710_000_000_000,
+    },
+    database: {
+      driver: 'postgres',
+      configured: true,
+      reachable: true,
+      label: 'Local Postgres / brainflow',
+      lastError: null,
+      backupFormat: 'custom',
+      lastBackupAt: 1_709_999_999_000,
+    },
+    backup: {
+      available: true,
+      directory: 'backups/postgres',
+      lastError: null,
+    },
+    auth: {
+      mode: 'stub',
+      authenticated: true,
+      username: 'admin',
+    },
+    workspace: {
+      id: 'workspace_local',
+      name: 'Local Workspace',
+    },
+    workspaces: [
+      {
+        id: 'workspace_local',
+        userId: 'user_stub_default',
+        name: 'Local Workspace',
+        createdAt: 1_709_999_000_000,
+        updatedAt: 1_710_000_000_000,
+        documentCount: 1,
+        conversationCount: 1,
+      },
+    ],
+    runtime: {
+      canonicalOrigin: 'http://127.0.0.1:4173',
+    },
+  }
+}
+
+function createStorageAdminService(
+  overrides?: Partial<StorageAdminService>,
+): StorageAdminService {
+  return {
+    getStatus: vi.fn().mockResolvedValue(createStorageAdminStatus()),
+    createDatabaseBackup: vi.fn().mockResolvedValue({
+      filePath: '',
+      fileName: 'brainflow.dump',
+      createdAt: Date.now(),
+      format: 'custom',
+      contentType: 'application/octet-stream',
+    }),
+    createWorkspace: vi.fn().mockResolvedValue({
+      workspace: {
+        id: 'workspace_new',
+        userId: 'user_stub_default',
+        name: 'New Workspace',
+        createdAt: 1_710_000_000_100,
+        updatedAt: 1_710_000_000_100,
+        documentCount: 0,
+        conversationCount: 0,
+      },
+    }),
+    renameWorkspace: vi.fn().mockResolvedValue({
+      workspace: {
+        id: 'workspace_local',
+        userId: 'user_stub_default',
+        name: 'Renamed Workspace',
+        createdAt: 1_709_999_000_000,
+        updatedAt: 1_710_000_000_200,
+        documentCount: 1,
+        conversationCount: 1,
+      },
+    }),
+    deleteWorkspace: vi.fn().mockResolvedValue({
+      deletedWorkspaceId: 'workspace_local',
+    }),
+    ...overrides,
+  }
+}
+
 function createBridge(overrides?: Record<string, unknown>) {
   return {
     getStatus: vi.fn().mockResolvedValue(status),
@@ -233,7 +330,90 @@ function parseNdjsonPayload(payload: string): Array<Record<string, unknown>> {
     .map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
+function enableExternalAuth(): { username: string; password: string } {
+  const username = 'admin'
+  const password = 'brainflow-secret'
+  process.env.BRAINFLOW_AUTH_MODE = 'external'
+  process.env.BRAINFLOW_SESSION_SECRET = 'session-secret'
+  process.env.BRAINFLOW_ADMIN_USERNAME = username
+  process.env.BRAINFLOW_ADMIN_PASSWORD_HASH = createPasswordHash(password)
+  process.env.BRAINFLOW_CANONICAL_ORIGIN = 'http://127.0.0.1:4173'
+  return { username, password }
+}
+
+async function loginAsAdmin(app: ReturnType<typeof createApp>, username: string, password: string): Promise<string> {
+  const response = await app.request('/api/auth/login', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      username,
+      password,
+    }),
+  })
+
+  expect(response.status).toBe(200)
+  const cookie = response.headers.get('set-cookie')
+  expect(cookie).toBeTruthy()
+  return cookie as string
+}
+
+afterEach(() => {
+  process.env = { ...originalEnv }
+})
+
 describe('codex app', () => {
+  it('returns an anonymous external-auth session before login', async () => {
+    enableExternalAuth()
+    const app = createApp({ bridge: createBridge() })
+
+    const response = await app.request('/api/auth/session')
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      authMode: 'external',
+      authenticated: false,
+      userId: null,
+      username: null,
+      canonicalOrigin: 'http://127.0.0.1:4173',
+    })
+  })
+
+  it('creates a session cookie and allows protected access in external auth mode', async () => {
+    const { username, password } = enableExternalAuth()
+    const bridge = createBridge()
+    const app = createApp({ bridge })
+
+    const cookie = await loginAsAdmin(app, username, password)
+    const response = await app.request('/api/codex/status', {
+      headers: {
+        cookie,
+      },
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(status)
+    expect(bridge.getStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects protected requests without a valid external-auth session', async () => {
+    enableExternalAuth()
+    const bridge = createBridge()
+    const app = createApp({ bridge })
+
+    const response = await app.request('/api/codex/status')
+
+    expect(response.status).toBe(401)
+    expect(await response.json()).toEqual({
+      code: 'request_failed',
+      message: 'Authentication required.',
+      rawMessage: 'Authentication required.',
+      requestId: undefined,
+    })
+    expect(bridge.getStatus).not.toHaveBeenCalled()
+  })
+
   it('returns codex status through the proxy', async () => {
     const bridge = createBridge()
     const app = createApp({ bridge })
@@ -243,6 +423,258 @@ describe('codex app', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual(status)
     expect(bridge.getStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns local storage admin status through the storage route', async () => {
+    const storageStatus = createStorageAdminStatus()
+    const storageAdminService = createStorageAdminService({
+      getStatus: vi.fn().mockResolvedValue(storageStatus),
+    })
+    const app = createApp({ bridge: createBridge(), storageAdminService })
+
+    const response = await app.request('/api/storage/status')
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(storageStatus)
+    expect(storageAdminService.getStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authenticated: true,
+        authMode: 'stub',
+        userId: 'user_stub_default',
+      }),
+    )
+  })
+
+  it('rejects unauthenticated storage admin requests in external auth mode', async () => {
+    enableExternalAuth()
+    const storageAdminService = createStorageAdminService({
+      getStatus: vi.fn(),
+      createDatabaseBackup: vi.fn(),
+    })
+    const app = createApp({ bridge: createBridge(), storageAdminService })
+
+    const statusResponse = await app.request('/api/storage/status')
+    const backupResponse = await app.request('/api/storage/backup/database', {
+      method: 'POST',
+    })
+    const createResponse = await app.request('/api/storage/workspaces', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ name: 'New Workspace' }),
+    })
+    const renameResponse = await app.request('/api/storage/workspaces/workspace_local', {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ name: 'Renamed Workspace' }),
+    })
+    const deleteResponse = await app.request('/api/storage/workspaces/workspace_local', {
+      method: 'DELETE',
+    })
+
+    expect(statusResponse.status).toBe(401)
+    expect(await statusResponse.json()).toEqual({
+      code: 'request_failed',
+      message: 'Authentication required.',
+      rawMessage: 'Authentication required.',
+      requestId: undefined,
+    })
+    expect(backupResponse.status).toBe(401)
+    expect(await backupResponse.json()).toEqual({
+      code: 'request_failed',
+      message: 'Authentication required.',
+      rawMessage: 'Authentication required.',
+      requestId: undefined,
+    })
+    expect(createResponse.status).toBe(401)
+    expect(await createResponse.json()).toEqual({
+      code: 'request_failed',
+      message: 'Authentication required.',
+      rawMessage: 'Authentication required.',
+      requestId: undefined,
+    })
+    expect(renameResponse.status).toBe(401)
+    expect(await renameResponse.json()).toEqual({
+      code: 'request_failed',
+      message: 'Authentication required.',
+      rawMessage: 'Authentication required.',
+      requestId: undefined,
+    })
+    expect(deleteResponse.status).toBe(401)
+    expect(await deleteResponse.json()).toEqual({
+      code: 'request_failed',
+      message: 'Authentication required.',
+      rawMessage: 'Authentication required.',
+      requestId: undefined,
+    })
+    expect(storageAdminService.getStatus).not.toHaveBeenCalled()
+    expect(storageAdminService.createDatabaseBackup).not.toHaveBeenCalled()
+    expect(storageAdminService.createWorkspace).not.toHaveBeenCalled()
+    expect(storageAdminService.renameWorkspace).not.toHaveBeenCalled()
+    expect(storageAdminService.deleteWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('streams database backups as downloadable attachments', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'brainflow-backup-route-'))
+    const backupPath = join(tempDir, 'brainflow-20260411.dump')
+    await writeFile(backupPath, 'backup-payload')
+
+    const storageAdminService = createStorageAdminService({
+      createDatabaseBackup: vi.fn().mockResolvedValue({
+        filePath: backupPath,
+        fileName: 'brainflow-20260411.dump',
+        createdAt: 1_710_000_001_000,
+        format: 'custom',
+        contentType: 'application/octet-stream',
+      }),
+    })
+    const app = createApp({ bridge: createBridge(), storageAdminService })
+
+    try {
+      const response = await app.request('/api/storage/backup/database', {
+        method: 'POST',
+      })
+
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe('application/octet-stream')
+      expect(response.headers.get('content-disposition')).toBe(
+        'attachment; filename="brainflow-20260411.dump"',
+      )
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(response.headers.get('x-brainflow-backup-created-at')).toBe('1710000001000')
+      expect(await response.text()).toBe('backup-payload')
+      expect(storageAdminService.createDatabaseBackup).toHaveBeenCalledWith(
+        expect.objectContaining({
+          authenticated: true,
+          authMode: 'stub',
+          userId: 'user_stub_default',
+        }),
+      )
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('deletes a managed workspace through the storage admin route', async () => {
+    const storageAdminService = createStorageAdminService({
+      deleteWorkspace: vi.fn().mockResolvedValue({
+        deletedWorkspaceId: 'workspace_old',
+      }),
+    })
+    const app = createApp({ bridge: createBridge(), storageAdminService })
+
+    const response = await app.request('/api/storage/workspaces/workspace_old', {
+      method: 'DELETE',
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      deletedWorkspaceId: 'workspace_old',
+    })
+    expect(storageAdminService.deleteWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authenticated: true,
+        authMode: 'stub',
+        userId: 'user_stub_default',
+      }),
+      'workspace_old',
+    )
+  })
+
+  it('creates a managed workspace through the storage admin route', async () => {
+    const storageAdminService = createStorageAdminService({
+      createWorkspace: vi.fn().mockResolvedValue({
+        workspace: {
+          id: 'workspace_new',
+          userId: 'user_stub_default',
+          name: 'New Workspace',
+          createdAt: 1_710_000_000_100,
+          updatedAt: 1_710_000_000_100,
+          documentCount: 0,
+          conversationCount: 0,
+        },
+      }),
+    })
+    const app = createApp({ bridge: createBridge(), storageAdminService })
+
+    const response = await app.request('/api/storage/workspaces', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ name: '  New Workspace  ' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      workspace: {
+        id: 'workspace_new',
+        userId: 'user_stub_default',
+        name: 'New Workspace',
+        createdAt: 1_710_000_000_100,
+        updatedAt: 1_710_000_000_100,
+        documentCount: 0,
+        conversationCount: 0,
+      },
+    })
+    expect(storageAdminService.createWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authenticated: true,
+        authMode: 'stub',
+        userId: 'user_stub_default',
+      }),
+      'New Workspace',
+    )
+  })
+
+  it('renames a managed workspace through the storage admin route', async () => {
+    const storageAdminService = createStorageAdminService({
+      renameWorkspace: vi.fn().mockResolvedValue({
+        workspace: {
+          id: 'workspace_local',
+          userId: 'user_stub_default',
+          name: 'Renamed Workspace',
+          createdAt: 1_709_999_000_000,
+          updatedAt: 1_710_000_000_200,
+          documentCount: 1,
+          conversationCount: 1,
+        },
+      }),
+    })
+    const app = createApp({ bridge: createBridge(), storageAdminService })
+
+    const response = await app.request('/api/storage/workspaces/workspace_local', {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ name: ' Renamed Workspace ' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      workspace: {
+        id: 'workspace_local',
+        userId: 'user_stub_default',
+        name: 'Renamed Workspace',
+        createdAt: 1_709_999_000_000,
+        updatedAt: 1_710_000_000_200,
+        documentCount: 1,
+        conversationCount: 1,
+      },
+    })
+    expect(storageAdminService.renameWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authenticated: true,
+        authMode: 'stub',
+        userId: 'user_stub_default',
+      }),
+      'workspace_local',
+      'Renamed Workspace',
+    )
   })
 
   it('streams natural-language content first, then emits the final result', async () => {

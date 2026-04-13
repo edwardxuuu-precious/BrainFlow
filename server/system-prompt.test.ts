@@ -54,4 +54,39 @@ describe('system prompt store', () => {
       updatedAt: 0,
     })
   })
+
+  it('migrates stored legacy BrainFlow branding to Flow', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'brainflow-system-prompt-'))
+
+    const distServerDir = join(tempRoot, 'server', 'dist', 'server')
+    const promptDir = join(tempRoot, 'server', 'prompts')
+    const promptFile = join(promptDir, 'brainflow-system.md')
+    const settingsFile = join(tempRoot, 'settings.json')
+
+    await mkdir(distServerDir, { recursive: true })
+    await mkdir(promptDir, { recursive: true })
+    await writeFile(promptFile, '你是 Flow 内置的脑图助手。', 'utf8')
+    await writeFile(
+      settingsFile,
+      JSON.stringify(
+        {
+          businessPrompt: '你是 BrainFlow 内置的脑图助手。',
+          updatedAt: 123,
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+
+    const store = createSystemPromptStore({
+      moduleFilePath: join(distServerDir, 'system-prompt.js'),
+      settingsFile,
+    })
+
+    await expect(store.getSettings()).resolves.toMatchObject({
+      businessPrompt: '你是 Flow 内置的脑图助手。',
+      updatedAt: 123,
+    })
+  })
 })

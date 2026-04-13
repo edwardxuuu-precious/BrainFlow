@@ -304,7 +304,7 @@ describe('editor-store', () => {
     expect(useEditorStore.getState().editingSurface).toBeNull()
   })
 
-  it('persists active topic into workspace without marking content dirty', () => {
+  it('persists active topic into workspace without marking content dirty or queuing content saves', () => {
     const document = createMindMapDocument()
     const branchId = document.topics[document.rootTopicId].childIds[0]
 
@@ -315,7 +315,7 @@ describe('editor-store', () => {
     expect(useEditorStore.getState().selectedTopicIds).toEqual([branchId])
     expect(useEditorStore.getState().document?.workspace.selectedTopicId).toBe(branchId)
     expect(useEditorStore.getState().isDirty).toBe(false)
-    expect(useEditorStore.getState().hasPendingWorkspaceSave).toBe(true)
+    expect(useEditorStore.getState().hasPendingWorkspaceSave).toBe(false)
   })
 
   it('supports additive multi-selection without persisting the whole set', () => {
@@ -411,7 +411,7 @@ describe('editor-store', () => {
     expect(useEditorStore.getState().document?.workspace.hierarchyCollapsedTopicIds).toEqual([])
     expect(useEditorStore.getState().history).toHaveLength(0)
     expect(useEditorStore.getState().isDirty).toBe(false)
-    expect(useEditorStore.getState().hasPendingWorkspaceSave).toBe(true)
+    expect(useEditorStore.getState().hasPendingWorkspaceSave).toBe(false)
   })
 
   it('keeps workspace state when undoing and redoing content changes', () => {
@@ -464,7 +464,7 @@ describe('editor-store', () => {
     ])
     expect(useEditorStore.getState().history).toHaveLength(0)
     expect(useEditorStore.getState().isDirty).toBe(false)
-    expect(useEditorStore.getState().hasPendingWorkspaceSave).toBe(true)
+    expect(useEditorStore.getState().hasPendingWorkspaceSave).toBe(false)
   })
 
   it('preserves raw hierarchy collapse state when selecting a deep topic', () => {
@@ -564,7 +564,7 @@ describe('editor-store', () => {
     useEditorStore.getState().renameTopic(branchId, '重命名节点')
 
     expect(useEditorStore.getState().isDirty).toBe(true)
-    expect(useEditorStore.getState().hasPendingWorkspaceSave).toBe(true)
+    expect(useEditorStore.getState().hasPendingWorkspaceSave).toBe(false)
 
     useEditorStore.getState().markSaved()
 

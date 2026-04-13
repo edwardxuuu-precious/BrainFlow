@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { layoutMindMap } from '../editor/layout'
+import { cloudSyncIdb } from '../storage/local/cloud-sync-idb'
+import { cloudSyncOrchestrator } from '../storage/sync/cloud-sync-orchestrator'
 import { createMindMapDocument } from './document-factory'
 import {
   documentService,
@@ -9,11 +11,12 @@ import {
 import { defaultTheme, normalizeMindMapTheme } from './theme'
 
 const DB_NAME = 'brainflow-documents-v1'
+const SYNC_DB_NAME = 'brainflow-sync-v2'
 const STORE_NAME = 'documents'
 
-async function resetDatabase(): Promise<void> {
+async function deleteDatabase(name: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const request = indexedDB.deleteDatabase(DB_NAME)
+    const request = indexedDB.deleteDatabase(name)
     request.onerror = () => reject(request.error)
     request.onsuccess = () => resolve()
     request.onblocked = () => resolve()
@@ -70,7 +73,11 @@ async function readRawDocument(id: string): Promise<Record<string, unknown> | nu
 
 describe('documentService', () => {
   beforeEach(async () => {
-    await resetDatabase()
+    cloudSyncOrchestrator.resetForTesting()
+    await Promise.all([
+      deleteDatabase(DB_NAME),
+      deleteDatabase(SYNC_DB_NAME),
+    ])
     localStorage.clear()
   })
 
@@ -86,6 +93,24 @@ describe('documentService', () => {
     expect(list[1].id).toBe(first.id)
   })
 
+  it('normalizes titles on create and lazy-repairs persisted FLOW prefixes when reading', async () => {
+    const created = await documentService.createDocument('FLOW - FLOW - 项目计划')
+    expect(created.title).toBe('项目计划')
+
+    await documentService.createDocument('seed workspace')
+
+    const rawDocument = {
+      ...createMindMapDocument('原始标题'),
+      id: 'doc_flow_repair',
+      title: `FLOW - ${'C'.repeat(80)}`,
+    }
+
+    await cloudSyncOrchestrator.saveDocument(rawDocument)
+
+    const repaired = await documentService.getDocument(rawDocument.id)
+    expect(repaired?.title).toBe('C'.repeat(50))
+  })
+
   it('repairs the local index from IndexedDB when localStorage is invalid', async () => {
     const doc = await documentService.createDocument('修复索引')
     localStorage.setItem('brainflow:document-index:v1', 'broken-json')
@@ -94,6 +119,46 @@ describe('documentService', () => {
 
     expect(list).toHaveLength(1)
     expect(list[0].id).toBe(doc.id)
+  })
+
+  it('rebuilds stale local indexes from the current workspace cache only', async () => {
+    const current = await documentService.createDocument('Current workspace doc')
+    const otherWorkspaceDocument = createMindMapDocument('Other workspace doc')
+
+    await cloudSyncIdb.saveDocument({
+      id: otherWorkspaceDocument.id,
+      userId: 'user_stub_default',
+      workspaceId: 'workspace_other',
+      deviceId: 'device_other',
+      version: 1,
+      baseVersion: null,
+      contentHash: 'hash_other_workspace_document',
+      updatedAt: Date.now() + 500,
+      deletedAt: null,
+      syncStatus: 'synced',
+      payload: otherWorkspaceDocument,
+    })
+
+    localStorage.setItem(
+      'brainflow:document-index:v1',
+      JSON.stringify([
+        {
+          id: 'doc_stale_index',
+          title: 'Stale local index',
+          updatedAt: Date.now() + 1_000,
+          topicCount: 99,
+          previewColor: '#ff0000',
+        },
+      ]),
+    )
+
+    const list = await documentService.listDocuments()
+    const rebuiltIndex = JSON.parse(
+      localStorage.getItem('brainflow:document-index:v1') ?? '[]',
+    ) as Array<{ id: string }>
+
+    expect(list.map((entry) => entry.id)).toEqual([current.id])
+    expect(rebuiltIndex.map((entry) => entry.id)).toEqual([current.id])
   })
 
   it('normalizes legacy theme data while preserving explicit colors', async () => {
@@ -118,7 +183,7 @@ describe('documentService', () => {
     const normalizedTheme = normalizeMindMapTheme(legacy.theme)
 
     expect(loaded?.theme).toEqual(normalizedTheme)
-    expect(list[0]?.previewColor).toBe(defaultTheme.accent)
+    expect(list[0]?.previewColor).toBe(normalizedTheme.accent)
   })
 
   it('repairs missing workspace data and falls back invalid selections to the root topic', async () => {
@@ -203,11 +268,18 @@ describe('documentService', () => {
     const rawStored = await readRawDocument(legacy.id)
     const rawTopics = rawStored?.topics as Record<string, Record<string, unknown>> | undefined
     const rawMetadata = rawTopics?.[branchId]?.metadata as Record<string, unknown> | undefined
+    const cachedRecord = await cloudSyncIdb.getDocument(legacy.id)
+    const cachedTopics = cachedRecord?.payload.topics as Record<string, Record<string, unknown>> | undefined
+    const cachedMetadata = cachedTopics?.[branchId]?.metadata as Record<string, unknown> | undefined
 
     expect(rawMetadata).not.toBeNull()
-    expect('task' in (rawMetadata ?? {})).toBe(false)
-    expect('links' in (rawMetadata ?? {})).toBe(false)
-    expect('attachments' in (rawMetadata ?? {})).toBe(false)
+    expect('task' in (rawMetadata ?? {})).toBe(true)
+    expect('links' in (rawMetadata ?? {})).toBe(true)
+    expect('attachments' in (rawMetadata ?? {})).toBe(true)
+    expect(cachedMetadata).not.toBeNull()
+    expect('task' in (cachedMetadata ?? {})).toBe(false)
+    expect('links' in (cachedMetadata ?? {})).toBe(false)
+    expect('attachments' in (cachedMetadata ?? {})).toBe(false)
   })
 
   it('preserves updatedAt when only workspace state changes', async () => {
@@ -278,6 +350,8 @@ describe('documentService', () => {
       activeImportBundleId: null,
       activeKnowledgeViewId: null,
     })
+    expect(duplicate?.title.endsWith(' 副本')).toBe(true)
+    expect(duplicate?.title.length).toBeLessThanOrEqual(50)
   })
 
   it('filters invalid collapsed ids while preserving valid hierarchy collapse state', async () => {
@@ -401,5 +475,105 @@ describe('documentService', () => {
 
     expect(await documentService.getDocument(doc.id)).toBeNull()
     expect(getRecentDocumentId()).toBeNull()
+  })
+
+  describe('repairDuplicateTitles', () => {
+    it('repairs duplicate titles by adding suffix to later documents', async () => {
+      // 创建两个标题相同的文档（模拟历史遗留问题）
+      const doc1 = await documentService.createDocument('重复标题')
+      const doc2 = await documentService.createDocument('重复标题')
+      
+      // 修改 doc2 的标题使其与 doc1 完全相同（绕过唯一性检查）
+      await documentService.saveDocument({
+        ...doc2,
+        title: '重复标题',
+        updatedAt: doc1.updatedAt + 1000, // 确保 doc2 更新较晚
+      })
+
+      // 验证此时有两个相同标题的文档
+      const listBefore = await documentService.listDocuments()
+      const duplicatesBefore = listBefore.filter(d => d.title === '重复标题')
+      expect(duplicatesBefore).toHaveLength(2)
+
+      // 执行修复
+      const repairedCount = await documentService.repairDuplicateTitles()
+      expect(repairedCount).toBe(1)
+
+      // 验证修复后标题唯一
+      const listAfter = await documentService.listDocuments()
+      const titles = listAfter.map(d => d.title)
+      expect(new Set(titles).size).toBe(titles.length)
+      
+      // 最早的文档标题应保持不变
+      expect(listAfter.some(d => d.id === doc1.id && d.title === '重复标题')).toBe(true)
+      // 较晚的文档应有序号后缀
+      expect(listAfter.some(d => d.id === doc2.id && d.title === '重复标题 (2)')).toBe(true)
+    })
+
+    it('handles multiple duplicates of the same title', async () => {
+      // 创建三个相同标题的文档
+      const doc1 = await documentService.createDocument('三重重复')
+      const doc2 = await documentService.createDocument('三重重复')
+      const doc3 = await documentService.createDocument('三重重复')
+
+      // 强制设置相同标题
+      await documentService.saveDocument({ ...doc2, title: '三重重复', updatedAt: doc1.updatedAt + 1000 })
+      await documentService.saveDocument({ ...doc3, title: '三重重复', updatedAt: doc1.updatedAt + 2000 })
+
+      const repairedCount = await documentService.repairDuplicateTitles()
+      expect(repairedCount).toBe(2)
+
+      const listAfter = await documentService.listDocuments()
+      const titles = listAfter.filter(d => d.title.startsWith('三重重复')).map(d => d.title).sort()
+      expect(titles).toEqual(['三重重复', '三重重复 (2)', '三重重复 (3)'])
+    })
+
+    it('allocates a globally unique suffix when a numbered duplicate already exists', async () => {
+      const doc1 = await documentService.createDocument('Case 1')
+      const doc2 = await documentService.createDocument('Case 2')
+      const doc3 = await documentService.createDocument('Case 3')
+
+      await documentService.saveDocument({
+        ...doc2,
+        title: 'Case 1',
+        updatedAt: doc1.updatedAt + 1000,
+      })
+      await documentService.saveDocument({
+        ...doc3,
+        title: 'Case 1 (2)',
+        updatedAt: doc1.updatedAt + 2000,
+      })
+
+      const repairedCount = await documentService.repairDuplicateTitles()
+      expect(repairedCount).toBe(2)
+
+      const listAfter = await documentService.listDocuments()
+      const titles = listAfter
+        .map((doc) => doc.title)
+        .filter((title) => title.startsWith('Case 1'))
+        .sort()
+
+      expect(titles).toEqual(['Case 1', 'Case 1 (2)', 'Case 1 (3)'])
+    })
+
+    it('does not modify unique titles', async () => {
+      const doc1 = await documentService.createDocument('唯一标题1')
+      const doc2 = await documentService.createDocument('唯一标题2')
+
+      const repairedCount = await documentService.repairDuplicateTitles()
+      expect(repairedCount).toBe(0)
+
+      const list = await documentService.listDocuments()
+      expect(list.find(d => d.id === doc1.id)?.title).toBe('唯一标题1')
+      expect(list.find(d => d.id === doc2.id)?.title).toBe('唯一标题2')
+    })
+
+    it('returns 0 when there are no duplicates', async () => {
+      await documentService.createDocument('文档A')
+      await documentService.createDocument('文档B')
+      
+      const repairedCount = await documentService.repairDuplicateTitles()
+      expect(repairedCount).toBe(0)
+    })
   })
 })

@@ -15,6 +15,7 @@ playwright-report
 test-results
 output/choose-files/
 output/e2e/
+backups/
 
 # Editor directories and files
 .vscode/*

@@ -1,6 +1,7 @@
 import { Button, StatusPill } from '../../../components/ui'
 import { TextArea } from '../../../components/ui/Field'
-import type { AiSessionSummary, CodexSettings } from '../../../../shared/ai-contract'
+import type { AiSessionSummary, CodexSettings, AiProviderInfo } from '../../../../shared/ai-contract'
+import { ProviderCard } from './ProviderCard'
 import styles from './AiSettingsDialog.module.css'
 
 interface AiSettingsDialogProps {
@@ -20,6 +21,13 @@ interface AiSettingsDialogProps {
   onLoadArchivedSessions: () => void
   onRestoreArchivedSession: (documentId: string, sessionId: string) => void
   onDeleteArchivedSession: (documentId: string, sessionId: string) => void
+  // Provider 相关（可选）
+  availableProviders?: AiProviderInfo[]
+  currentProvider?: string
+  isLoadingProviders?: boolean
+  providerSwitchError?: string | null
+  onSwitchProvider?: (type: string) => void
+  onValidateProvider?: (type: string) => Promise<boolean>
 }
 
 function formatDateTime(timestamp: number | null): string {
@@ -52,6 +60,13 @@ export function AiSettingsDialog({
   onLoadArchivedSessions,
   onRestoreArchivedSession,
   onDeleteArchivedSession,
+  // Provider 相关
+  availableProviders,
+  currentProvider,
+  isLoadingProviders,
+  providerSwitchError,
+  onSwitchProvider,
+  onValidateProvider,
 }: AiSettingsDialogProps) {
   if (!open) {
     return null
@@ -89,6 +104,38 @@ export function AiSettingsDialog({
             <span>系统版本 {systemPromptVersion ?? '未加载'}</span>
           </div>
         </div>
+
+        {/* Provider 选择区域（仅在提供了 Provider props 时显示） */}
+        {availableProviders && currentProvider && onSwitchProvider && (
+          <section className={styles.providerSection} aria-label="AI Provider 选择">
+            <div className={styles.sectionHeader}>
+              <StatusPill tone="soft">AI Provider</StatusPill>
+              <p className={styles.sectionSubtitle}>
+                选择要使用的 AI 服务提供商。切换后会立即生效。
+              </p>
+            </div>
+            
+            {isLoadingProviders ? (
+              <p className={styles.loadingText}>正在加载可用 Providers...</p>
+            ) : (
+              <div className={styles.providerList}>
+                {availableProviders.map((provider) => (
+                  <ProviderCard
+                    key={provider.type}
+                    provider={provider}
+                    selected={currentProvider === provider.type}
+                    onSelect={() => onSwitchProvider(provider.type)}
+                    onTest={onValidateProvider ? () => onValidateProvider(provider.type) : undefined}
+                  />
+                ))}
+              </div>
+            )}
+            
+            {providerSwitchError && (
+              <p className={styles.providerError}>{providerSwitchError}</p>
+            )}
+          </section>
+        )}
 
         <div className={styles.body}>
           <TextArea

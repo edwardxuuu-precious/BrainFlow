@@ -1,17 +1,40 @@
 import type { Context } from 'hono'
+import { getAuthenticatedUserId, readAuthServerConfig } from './config.js'
+import { readSessionFromContext } from './session.js'
 
 export interface AuthContext {
-  userId: string
+  userId: string | null
+  username: string | null
   authMode: 'stub' | 'external'
+  authenticated: boolean
 }
 
 export function resolveAuthContext(c: Context): AuthContext {
-  const authMode = (process.env.BRAINFLOW_AUTH_MODE === 'external' ? 'external' : 'stub')
-  const headerUserId = c.req.header('x-user-id')
-  const stubUserId = process.env.BRAINFLOW_STUB_USER_ID?.trim() || 'user_stub_default'
+  const config = readAuthServerConfig()
+
+  if (config.authMode === 'stub') {
+    return {
+      userId: config.stubUserId,
+      username: config.adminUsername,
+      authMode: 'stub',
+      authenticated: true,
+    }
+  }
+
+  const session = readSessionFromContext(c, config)
+  if (!session || session.username !== config.adminUsername) {
+    return {
+      userId: null,
+      username: null,
+      authMode: 'external',
+      authenticated: false,
+    }
+  }
 
   return {
-    userId: authMode === 'external' ? headerUserId?.trim() || stubUserId : stubUserId,
-    authMode,
+    userId: session.userId || getAuthenticatedUserId(config),
+    username: session.username,
+    authMode: 'external',
+    authenticated: true,
   }
 }

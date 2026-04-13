@@ -6,7 +6,7 @@
   justify-content: center;
   gap: 10px;
   border: none;
-  border-radius: 0.5rem;
+  border-radius: 12px;
   padding: 0 16px;
   font-family: var(--font-body);
   font-size: var(--font-size-label);

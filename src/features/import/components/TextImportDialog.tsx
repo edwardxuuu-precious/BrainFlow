@@ -714,20 +714,6 @@ function createErrorDiagnostics(
   }
 }
 
-function ChevronIcon({ expanded }: { expanded: boolean }) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 160ms ease' }}
-    >
-      <path d="M4 6L8 10L12 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 function EmptyState({
   title,
   description,
@@ -798,13 +784,13 @@ export function TextImportDialog({
 }: TextImportDialogProps) {
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [showFileDetails, setShowFileDetails] = useState(false)
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
   const [showInternals, setShowInternals] = useState(false)
   const [showActivityTimeline, setShowActivityTimeline] = useState(false)
   const [reviewTab, setReviewTab] = useState<ReviewTab>(() => (isApplying ? 'merge' : 'draft'))
   const previousPreviewingRef = useRef(isPreviewing)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const showAdvancedSettings = false
 
   const handleChooseFilesClick = () => {
     const input = fileInputRef.current
@@ -853,7 +839,6 @@ export function TextImportDialog({
     if (!open) {
       setReviewTab('draft')
       setShowFileDetails(false)
-      setShowAdvancedSettings(false)
       setShowDetails(false)
       setShowInternals(false)
       setShowActivityTimeline(false)
@@ -978,9 +963,6 @@ export function TextImportDialog({
       ? 'Each file is classified independently before the batch preview is composed.'
       : primaryPlanningSummary?.rationale ??
         'The skill will detect the source type and build the map in source order when the preview starts.')
-  const showLowConfidenceNote = classification
-    ? classificationConfidence === 'low'
-    : Boolean(primaryPlanningSummary && !primaryPlanningSummary.isManual && primaryPlanningSummary.confidence === 'low')
   const activePhaseId = resolveSkillPhase({
     isApplying,
     isPreviewing,
@@ -1006,14 +988,8 @@ export function TextImportDialog({
     sourceFiles.length > 1
       ? `Imported ${sourceFiles.length} files`
       : sourceFiles.length === 1
-        ? `Imported: ${sourceFiles[0]?.sourceName ?? 'Unknown file'}`
+        ? sourceFiles[0]?.sourceName ?? 'Unknown file'
         : 'No file imported'
-  const sourceSummaryMeta =
-    sourceFiles.length > 1
-      ? 'Expand to view file list'
-      : sourceFiles.length === 1
-        ? `${sourceFiles[0]?.textLength ?? 0} chars`
-        : 'Import a file to continue'
   const showStatusProgress = Boolean(isPreviewing || statusText || previewReady || isApplying)
   const draftNodeCount = countPreviewNodes(draftTree)
   const pendingDecisionCount =
@@ -1023,7 +999,7 @@ export function TextImportDialog({
   const pendingWarningCount = preview?.warnings?.length ?? 0
   const canConfirmDraft = Boolean(previewReady && hasStructuredPreview && !draftConfirmed && !isPreviewing && !isApplying)
   const canOpenMergeTab = Boolean(draftConfirmed || isApplying)
-  const canShowDetails = Boolean(preview?.summary || modeHint || diagnostics || onRepair)
+  const canShowDetails = false
   const showStatusSection = Boolean(hasSourceInput || isPreviewing || isApplying || previewReady || sourceError)
   const showReviewSection = Boolean(previewReady || isApplying)
   const statusTypeSummary = archetypeOverride
@@ -1081,15 +1057,6 @@ export function TextImportDialog({
                   Import files
                 </Button>
               </div>
-              <button
-                type="button"
-                className={styles.toolbarToggle}
-                aria-expanded={showAdvancedSettings}
-                onClick={() => setShowAdvancedSettings((value) => !value)}
-              >
-                <span>More options</span>
-                <ChevronIcon expanded={showAdvancedSettings} />
-              </button>
             </div>
 
             <div className={styles.sourceSummaryStrip}>
@@ -1100,7 +1067,6 @@ export function TextImportDialog({
                 >
                   {sourceSummaryLabel}
                 </strong>
-                <span className={styles.sourceSummaryMeta}>{sourceSummaryMeta}</span>
               </div>
               {sourceFiles.length > 1 ? (
                 <button
@@ -1214,16 +1180,6 @@ export function TextImportDialog({
                   <span className={styles.inlineBadge}>{activePhaseLabel}</span>
                   <span className={styles.statusInlineMeta}>{statusTypeSummary}</span>
                 </div>
-                {showLowConfidenceNote && archetypeOverride === null ? (
-                  <button
-                    type="button"
-                    className={styles.inlineLinkButton}
-                    onClick={() => setShowAdvancedSettings(true)}
-                    disabled={isPreviewing || isApplying}
-                  >
-                    Pin type
-                  </button>
-                ) : null}
               </div>
 
               <p className={styles.statusLead}>{primaryStatusMessage}</p>

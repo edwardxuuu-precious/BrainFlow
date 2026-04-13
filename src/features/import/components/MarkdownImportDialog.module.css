@@ -51,7 +51,7 @@
   display: grid;
   gap: 6px;
   padding: 14px 16px;
-  border-radius: 16px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--document-panel) 78%, white 22%);
 }
 
@@ -65,7 +65,7 @@
 .summary {
   margin: 0;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: 12px;
 }
 
 .status {
@@ -95,7 +95,7 @@
   flex-direction: column;
   gap: 12px;
   padding: 18px;
-  border-radius: 18px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--document-panel) 86%, white 14%);
   overflow: auto;
 }

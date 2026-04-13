@@ -1,12 +1,20 @@
 import JSZip from 'jszip'
 import type { AiConversation } from '../../../../shared/ai-contract'
+import type {
+  LocalStorageAdminStatus,
+  StorageAdminServerStatusResponse,
+} from '../../../../shared/storage-admin-contract'
 import type { SyncConflictResolution } from '../../../../shared/sync-contract'
+import { buildDerivedDocumentTitle, generateUniqueTitle } from '../../documents/document-title'
 import type { MindMapDocument } from '../../documents/types'
+import { storageAdminApiClient } from '../cloud/storage-admin-api'
 import { computeContentHash } from '../core/content-hash'
 import { cloudSyncOrchestrator } from '../sync/cloud-sync-orchestrator'
 import { DocumentRepository } from './document-repository'
 import { ConversationRepository } from './conversation-repository'
 import { summarizeDocument } from '../adapters/indexeddb/local-index-adapter'
+import { cloudSyncIdb } from '../local/cloud-sync-idb'
+import { readLegacyWorkspaceSnapshotSummary } from '../local/legacy-reader'
 
 export interface ImportFailure {
   kind: 'manifest' | 'document' | 'conversation' | 'index'
@@ -38,6 +46,81 @@ export interface WorkspaceStorageStatus {
 
 const BACKUP_SCHEMA_VERSION = 'brainflow-backup-v2'
 const APP_VERSION = '0.0.0'
+const DEVICE_ID_KEY = 'brainflow-device-id'
+const WORKSPACE_ID_KEY = 'brainflow-cloud-workspace-id'
+const LEGACY_MIGRATION_COMPLETED_KEY = 'brainflow-legacy-migration-completed-v1'
+
+function readJsonStorage<T>(key: string): T | null {
+  if (typeof localStorage === 'undefined') {
+    return null
+  }
+
+  const raw = localStorage.getItem(key)
+  if (!raw) {
+    return null
+  }
+
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return null
+  }
+}
+
+function writeJsonStorage(key: string, value: unknown): void {
+  if (typeof localStorage === 'undefined') {
+    return
+  }
+
+  localStorage.setItem(key, JSON.stringify(value))
+}
+
+function readBooleanStorage(key: string): boolean {
+  if (typeof localStorage === 'undefined') {
+    return false
+  }
+
+  return localStorage.getItem(key) === 'true'
+}
+
+function createFallbackAdminServerStatus(message: string | null = null): StorageAdminServerStatusResponse {
+  const checkedAt = Date.now()
+  return {
+    mode: 'local_postgres',
+    checkedAt,
+    api: {
+      reachable: false,
+      checkedAt,
+    },
+    database: {
+      driver: 'postgres',
+      configured: false,
+      reachable: false,
+      label: null,
+      lastError: message,
+      backupFormat: 'custom',
+      lastBackupAt: null,
+    },
+    backup: {
+      available: false,
+      directory: null,
+      lastError: null,
+    },
+    auth: {
+      mode: 'stub',
+      authenticated: true,
+      username: null,
+    },
+    workspace: {
+      id: null,
+      name: null,
+    },
+    workspaces: [],
+    runtime: {
+      canonicalOrigin: null,
+    },
+  }
+}
 
 function buildDocumentCopyId(): string {
   return `doc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -78,14 +161,30 @@ export class WorkspaceStorageService {
   readonly documentRepository: DocumentRepository
   readonly conversationRepository: ConversationRepository
   private pendingImportReport: ImportReport | null = null
+  private adminServerStatus: StorageAdminServerStatusResponse | null = null
+  private legacySummaryPromise: Promise<Awaited<ReturnType<typeof readLegacyWorkspaceSnapshotSummary>>> | null = null
 
   constructor() {
     this.documentRepository = new DocumentRepository()
     this.conversationRepository = new ConversationRepository()
   }
 
-  initialize(): Promise<void> {
-    return cloudSyncOrchestrator.initialize()
+  async initialize(): Promise<void> {
+    await cloudSyncOrchestrator.initialize()
+    // 启动时自动修复重复标题（静默执行，不阻塞初始化）
+    void this.repairDuplicateTitlesOnStartup()
+  }
+
+  private async repairDuplicateTitlesOnStartup(): Promise<void> {
+    try {
+      const repairedCount = await this.documentRepository.repairDuplicateTitles()
+      if (repairedCount > 0) {
+        console.info(`[WorkspaceStorage] 已自动修复 ${repairedCount} 个重复标题`)
+      }
+    } catch (error) {
+      // 修复失败不应影响应用正常运行
+      console.error('[WorkspaceStorage] 修复重复标题失败:', error)
+    }
   }
 
   subscribe(listener: (status: WorkspaceStorageStatus) => void): () => void {
@@ -137,6 +236,11 @@ export class WorkspaceStorageService {
   async migrateLocalDataToCloud(workspaceName?: string): Promise<WorkspaceStorageStatus> {
     await cloudSyncOrchestrator.migrateLegacyToCloud(workspaceName)
     return this.getStatus()
+  }
+
+  async migrateLegacyDataToPrimaryStorage(workspaceName?: string): Promise<LocalStorageAdminStatus> {
+    await cloudSyncOrchestrator.migrateLegacyToCloud(workspaceName)
+    return this.getAdminStatus()
   }
 
   async exportBackup(): Promise<Blob> {
@@ -207,6 +311,46 @@ export class WorkspaceStorageService {
     downloadBlob(blob, `brainflow-backup-${stamp}.zip`)
   }
 
+  async downloadDatabaseBackup(): Promise<void> {
+    const { blob, meta } = await storageAdminApiClient.downloadDatabaseBackup()
+    downloadBlob(blob, meta.fileName)
+  }
+
+  async createWorkspace(name: string): Promise<LocalStorageAdminStatus> {
+    await storageAdminApiClient.createWorkspace({ name: name.trim() })
+    return this.refreshAdminStatus()
+  }
+
+  async renameWorkspace(workspaceId: string, name: string): Promise<LocalStorageAdminStatus> {
+    const response = await storageAdminApiClient.renameWorkspace(workspaceId, { name: name.trim() })
+    const currentWorkspaceId = readJsonStorage<string>(WORKSPACE_ID_KEY)
+
+    if (currentWorkspaceId === workspaceId) {
+      writeJsonStorage(WORKSPACE_ID_KEY, workspaceId)
+      await cloudSyncOrchestrator.updateCurrentWorkspaceSummary(workspaceId, {
+        name: response.workspace.name,
+      })
+    }
+
+    return this.refreshAdminStatus()
+  }
+
+  async switchWorkspace(workspaceId: string): Promise<LocalStorageAdminStatus> {
+    await cloudSyncOrchestrator.switchWorkspace(workspaceId)
+    this.pendingImportReport = null
+
+    const [status] = await Promise.all([
+      this.adminServerStatus ? this.getAdminStatus() : this.refreshAdminStatus(),
+      this.documentRepository.rebuildLocalIndex(),
+    ])
+    return status
+  }
+
+  async deleteWorkspace(workspaceId: string): Promise<LocalStorageAdminStatus> {
+    await storageAdminApiClient.deleteWorkspace(workspaceId)
+    return this.refreshAdminStatus()
+  }
+
   async importBackup(file: File): Promise<ImportReport> {
     const archive = await JSZip.loadAsync(await file.arrayBuffer())
     const failures: ImportFailure[] = []
@@ -257,9 +401,9 @@ export class WorkspaceStorageService {
       return report
     }
 
-    const existingDocumentIds = new Set(
-      (await this.documentRepository.listAllDocuments()).map((document) => document.id),
-    )
+    const existingDocuments = await this.documentRepository.listAllDocuments()
+    const existingDocumentIds = new Set(existingDocuments.map((document) => document.id))
+    const existingTitles = existingDocuments.map((document) => document.title)
     const documentIdRemap = new Map<string, string>()
     const duplicatedDocuments: Array<{ oldId: string; newId: string }> = []
     let importedDocuments = 0
@@ -274,15 +418,27 @@ export class WorkspaceStorageService {
           duplicatedDocuments.push({ oldId: document.id, newId: copyId })
           warnings.push(`Duplicate documentId ${document.id} imported as a copy.`)
 
+          // 生成唯一的副本标题
+          const copyBaseTitle = buildDerivedDocumentTitle(document.title, '（导入副本）')
+          const uniqueTitle = generateUniqueTitle(copyBaseTitle, existingTitles)
+          existingTitles.push(uniqueTitle)
+
           await this.documentRepository.saveDocument({
             ...structuredClone(document),
             id: copyId,
-            title: `${document.title}（导入副本）`,
+            title: uniqueTitle,
             createdAt: Date.now(),
             updatedAt: Date.now(),
           })
         } else {
-          await this.documentRepository.saveDocument(document)
+          // 即使是新文档，也要确保标题唯一
+          const uniqueTitle = generateUniqueTitle(document.title, existingTitles)
+          existingTitles.push(uniqueTitle)
+          
+          await this.documentRepository.saveDocument({
+            ...document,
+            title: uniqueTitle,
+          })
           existingDocumentIds.add(document.id)
         }
         importedDocuments += 1
@@ -343,6 +499,12 @@ export class WorkspaceStorageService {
     return this.getStatus()
   }
 
+  async discardLocalConflicts(conflictIds: string[]): Promise<WorkspaceStorageStatus> {
+    await cloudSyncOrchestrator.discardLocalConflicts(conflictIds)
+    await this.documentRepository.rebuildLocalIndex()
+    return this.getStatus()
+  }
+
   clearPendingImportReport(): void {
     this.pendingImportReport = null
   }
@@ -357,6 +519,80 @@ export class WorkspaceStorageService {
 
   async disconnectFolder(): Promise<WorkspaceStorageStatus> {
     return this.getStatus()
+  }
+
+  async getAdminStatus(): Promise<LocalStorageAdminStatus> {
+    const serverStatus = this.adminServerStatus ?? createFallbackAdminServerStatus()
+    return this.buildAdminStatus(serverStatus)
+  }
+
+  async refreshAdminStatus(): Promise<LocalStorageAdminStatus> {
+    try {
+      this.adminServerStatus = await storageAdminApiClient.getStatus()
+    } catch (error) {
+      this.adminServerStatus = createFallbackAdminServerStatus(
+        error instanceof Error ? error.message : '无法获取本机存储状态。',
+      )
+    }
+
+    return this.buildAdminStatus(this.adminServerStatus)
+  }
+
+  private getLegacySnapshotSummary() {
+    if (!this.legacySummaryPromise) {
+      this.legacySummaryPromise = readLegacyWorkspaceSnapshotSummary()
+    }
+
+    return this.legacySummaryPromise
+  }
+
+  private async buildAdminStatus(
+    serverStatus: StorageAdminServerStatusResponse,
+  ): Promise<LocalStorageAdminStatus> {
+    const syncStatus = cloudSyncOrchestrator.getStatus()
+    const browserWorkspaceId = readJsonStorage<string>(WORKSPACE_ID_KEY)
+    const [pendingOps, legacySummary] = await Promise.all([
+      cloudSyncIdb.listPendingOps(),
+      this.getLegacySnapshotSummary(),
+    ])
+    const legacyMigrationCompleted = readBooleanStorage(LEGACY_MIGRATION_COMPLETED_KEY)
+    const currentWorkspace =
+      (browserWorkspaceId
+        ? serverStatus.workspaces.find((workspace) => workspace.id === browserWorkspaceId) ?? null
+        : null) ??
+      (serverStatus.workspace.id
+        ? serverStatus.workspaces.find((workspace) => workspace.id === serverStatus.workspace.id) ?? null
+        : null)
+
+    return {
+      ...serverStatus,
+      workspace: currentWorkspace
+        ? {
+            id: currentWorkspace.id,
+            name: currentWorkspace.name,
+          }
+        : serverStatus.workspace,
+      browserCacheSummary: {
+        indexedDbAvailable: typeof indexedDB !== 'undefined',
+        deviceId: readJsonStorage<string>(DEVICE_ID_KEY),
+        workspaceId: browserWorkspaceId,
+        pendingOpCount: pendingOps.length,
+        lastLocalWriteAt: syncStatus.localSavedAt,
+        lastCloudSyncAt: syncStatus.cloudSyncedAt,
+        isOnline: syncStatus.isOnline,
+        isSyncing: syncStatus.isSyncing,
+        lastSyncError: syncStatus.state?.lastError ?? null,
+        conflictCount: syncStatus.conflicts.length,
+        legacyMigrationCompleted,
+      },
+      diagnostics: {
+        currentOrigin: typeof window === 'undefined' ? null : window.location.origin,
+        canonicalOrigin: serverStatus.runtime.canonicalOrigin,
+        legacyMigrationAvailable: !legacyMigrationCompleted && legacySummary.hasLegacyData,
+        legacyDocumentCount: legacySummary.documentCount,
+        legacyConversationCount: legacySummary.conversationCount,
+      },
+    }
   }
 }
 

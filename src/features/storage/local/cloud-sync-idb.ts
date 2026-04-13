@@ -18,6 +18,15 @@ const SYNC_STATE_STORE = 'sync_state'
 const DEVICE_INFO_STORE = 'device_info'
 const CONFLICTS_STORE = 'sync_conflicts'
 
+function deleteIndexedDbDatabase(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(name)
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve()
+    request.onblocked = () => resolve()
+  })
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
@@ -81,6 +90,10 @@ async function withStore<T>(
 }
 
 export class CloudSyncIdb {
+  deleteDatabase(): Promise<void> {
+    return deleteIndexedDbDatabase(DB_NAME)
+  }
+
   listDocuments(): Promise<SyncedDocumentRecord[]> {
     return withStore(DOCUMENTS_STORE, 'readonly', (store) => store.getAll()) as Promise<SyncedDocumentRecord[]>
   }
@@ -159,6 +172,10 @@ export class CloudSyncIdb {
 
   getSyncState(workspaceId: string): Promise<SyncStateRecord | null> {
     return withStore(SYNC_STATE_STORE, 'readonly', (store) => store.get(workspaceId)) as Promise<SyncStateRecord | null>
+  }
+
+  listSyncStates(): Promise<SyncStateRecord[]> {
+    return withStore(SYNC_STATE_STORE, 'readonly', (store) => store.getAll()) as Promise<SyncStateRecord[]>
   }
 
   saveSyncState(state: SyncStateRecord): Promise<void> {

@@ -312,7 +312,7 @@ function commitWorkspaceDocument(
     activeTopicId: selection.activeTopicId,
     selectedTopicIds: selection.selectedTopicIds,
     isDirty: state.isDirty,
-    hasPendingWorkspaceSave: true,
+    hasPendingWorkspaceSave: state.hasPendingWorkspaceSave,
   }
 }
 
@@ -575,8 +575,7 @@ export const useEditorStore = create<EditorState>((set) => ({
         editingTopicId: topicId,
         editingSurface: surface,
         isDirty: state.isDirty,
-        hasPendingWorkspaceSave:
-          state.hasPendingWorkspaceSave || nextDocument !== state.document,
+        hasPendingWorkspaceSave: state.hasPendingWorkspaceSave,
       }
     }),
 

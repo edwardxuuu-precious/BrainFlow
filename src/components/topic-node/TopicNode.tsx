@@ -51,6 +51,7 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
   const isActive = activeTopicId === id
   const hasNotePreview = data.notePreview.trim().length > 0
   const isLocked = data.aiLocked
+  const isDropTarget = data.dropTarget === true
   const labels = data.metadata.labels.slice(0, 2)
   const extraLabelCount = Math.max(0, data.metadata.labels.length - labels.length)
   const markers = data.metadata.markers.slice(0, 2)
@@ -72,8 +73,14 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
       return
     }
 
-    inputRef.current?.focus()
-    inputRef.current?.select()
+    const textarea = inputRef.current
+    if (textarea) {
+      textarea.focus()
+      textarea.select()
+      // 设置初始高度
+      textarea.style.height = 'auto'
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 150)}px`
+    }
   }, [isEditing])
 
   const commitRename = () => {
@@ -89,12 +96,14 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
         isActive ? styles.active : '',
         isEditing ? styles.editing : '',
         isLocked ? styles.locked : '',
+        isDropTarget ? styles.dropTarget : '',
         data.isRoot ? styles.root : '',
         topicType ? styles[topicType] : '',
       ].join(' ')}
       data-selected={isSelected ? 'true' : 'false'}
       data-active={isActive ? 'true' : 'false'}
       data-locked={isLocked ? 'true' : 'false'}
+      data-drop-target={isDropTarget ? 'true' : 'false'}
       data-variant={data.style.variant}
       data-emphasis={data.style.emphasis}
       style={
@@ -133,14 +142,22 @@ export function TopicNode({ id, data, selected }: NodeProps<MindMapFlowNode>) {
 
       <div className={styles.content}>
         {isEditing ? (
-          <input
-            ref={inputRef}
+          <textarea
+            ref={inputRef as React.RefObject<HTMLTextAreaElement>}
             defaultValue={data.title}
-            className={`${styles.input} nodrag nowheel nopan`}
+            className={`${styles.textarea} nodrag nowheel nopan`}
             aria-label="编辑主题标题"
+            rows={1}
+            onInput={(event) => {
+              // 自动调整高度
+              const target = event.target as HTMLTextAreaElement
+              target.style.height = 'auto'
+              target.style.height = `${Math.min(target.scrollHeight, 150)}px`
+            }}
             onBlur={commitRename}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') {
+              // Shift+Enter 换行，Enter 保存
+              if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault()
                 commitRename()
               }

@@ -55,7 +55,6 @@ import {
   normalizeDocumentStructureType,
 } from '../shared/text-import-layering.js'
 import {
-  createCodexRunner,
   type CodexExecutionObservation,
   type CodexJsonEvent,
   type CodexRunner,
@@ -65,6 +64,12 @@ import {
   type LoadedSystemPrompt,
   type SystemPromptStore,
 } from './system-prompt.js'
+import type {
+  AiProvider,
+  AiExecutionObservation,
+  AiStreamEvent,
+} from './providers/types.js'
+import { createProviderFromEnv, createCodexProvider } from './providers/index.js'
 
 type RawProposalOperation = {
   type?: string | null
@@ -3862,6 +3867,15 @@ function buildImportCodexProgressMessage(
 void buildImportObservationProgressMessage
 void buildImportCodexProgressMessage
 
+function extractAssistantDelta(event: CodexJsonEvent): string | null {
+  const delta =
+    event.item?.delta ??
+    event.item?.text_delta ??
+    event.delta
+
+  return typeof delta === 'string' && delta.trim().length > 0 ? delta : null
+}
+
 function normalizeBridgeError(error: unknown): CodexBridgeError {
   if (error instanceof CodexBridgeError) {
     return error
@@ -3927,30 +3941,56 @@ function buildChatScopeInstructions(request: AiChatRequest): string[] {
   }
 }
 
-function buildChatPrompt(request: AiChatRequest, prompt: LoadedSystemPrompt): string {
-  return [
-    prompt.fullPrompt,
-    '',
-    'Stage 1 goal:',
-    '- Reply in natural language only.',
-    '- Do not output JSON, code blocks, XML, YAML, or pseudo-schema.',
-    ...buildChatScopeInstructions(request),
-    '- Preserve the user’s original framing instead of forcing a methodology they did not ask for.',
-    '- Mention locked-node conflicts as suggestions instead of silently ignoring them.',
-    '',
-    'Current request context:',
-    JSON.stringify(
-      {
-        documentId: request.documentId,
-        sessionId: request.sessionId,
-        baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
-        context: request.context,
-        messages: buildHistory(request),
-      },
-      null,
-      2,
-    ),
-  ].join('\n')
+
+/**
+ * 构建对话消息列表（用于支持多轮对话的 Provider）
+ */
+function buildChatMessages(
+  request: AiChatRequest,
+  prompt: LoadedSystemPrompt,
+): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> {
+  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = []
+
+  // 添加系统提示词
+  messages.push({
+    role: 'system',
+    content: [
+      prompt.fullPrompt,
+      '',
+      'Scope instructions:',
+      ...buildChatScopeInstructions(request),
+      'Preserve the user\'s original framing instead of forcing a methodology they did not ask for.',
+      'Mention locked-node conflicts as suggestions instead of silently ignoring them.',
+    ].join('\n'),
+  })
+
+  // 添加历史消息
+  for (const message of request.messages) {
+    messages.push({
+      role: message.role,
+      content: message.content,
+    })
+  }
+
+  // 添加当前上下文作为最后一条用户消息（如果没有消息或最后一条是 assistant）
+  const lastMessage = request.messages[request.messages.length - 1]
+  if (!lastMessage || lastMessage.role === 'assistant') {
+    messages.push({
+      role: 'user',
+      content: `Current request context:\n${JSON.stringify(
+        {
+          documentId: request.documentId,
+          sessionId: request.sessionId,
+          baseDocumentUpdatedAt: request.baseDocumentUpdatedAt,
+          context: request.context,
+        },
+        null,
+        2,
+      )}`,
+    })
+  }
+
+  return messages
 }
 
 function buildPlanningPrompt(
@@ -4582,30 +4622,6 @@ function isRetryableImportError(error: CodexBridgeError): boolean {
   )
 }
 
-function extractAssistantDelta(event: CodexJsonEvent): string | null {
-  if (typeof event.delta === 'string' && event.delta) {
-    return event.delta
-  }
-
-  if (typeof event.item?.text_delta === 'string' && event.item.text_delta) {
-    return event.item.text_delta
-  }
-
-  if (typeof event.item?.delta === 'string' && event.item.delta) {
-    return event.item.delta
-  }
-
-  if (
-    event.type?.includes('delta') &&
-    typeof event.item?.message === 'string' &&
-    event.item.message
-  ) {
-    return event.item.message
-  }
-
-  return null
-}
-
 export interface CodexBridge {
   getStatus(): Promise<CodexStatus>
   revalidate(): Promise<CodexStatus>
@@ -4631,6 +4647,7 @@ export interface CodexBridge {
 }
 
 interface CreateCodexBridgeOptions {
+  provider?: AiProvider
   runner?: CodexRunner
   promptStore?: SystemPromptStore
   logInfo?: (message: string) => void
@@ -4649,33 +4666,34 @@ function createStatusRequestFailedIssue(message: string): CodexBridgeIssue {
 }
 
 export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBridge {
-  const runner = options?.runner ?? createCodexRunner()
+  // 支持注入 provider，或从 runner 创建（向后兼容），或从环境变量创建
+  const provider =
+    options?.provider ??
+    (options?.runner ? createCodexProvider({ runner: options.runner }) : createProviderFromEnv())
   const promptStore = options?.promptStore ?? createSystemPromptStore()
   const logInfo = options?.logInfo ?? console.log
   const logError = options?.logError ?? console.error
   const now = options?.now ?? Date.now
 
   const buildStatus = async (): Promise<CodexStatus> => {
-    const [runnerStatusResult, loadedPromptResult] = await Promise.allSettled([
-      runner.getStatus(),
+    const [providerStatusResult, loadedPromptResult] = await Promise.allSettled([
+      provider.getStatus(),
       promptStore.loadPrompt(),
     ])
 
-    const runnerStatus =
-      runnerStatusResult.status === 'fulfilled'
-        ? runnerStatusResult.value
+    const providerStatus =
+      providerStatusResult.status === 'fulfilled'
+        ? providerStatusResult.value
         : {
-            cliInstalled: false,
-            loggedIn: false,
-            authProvider: null,
             ready: false,
             issues: [
               createStatusRequestFailedIssue(
-                runnerStatusResult.reason instanceof Error
-                  ? `本机 Codex 状态检查失败：${runnerStatusResult.reason.message}`
-                  : '本机 Codex 状态检查失败，请查看 bridge 日志后重试。',
+                providerStatusResult.reason instanceof Error
+                  ? `AI Provider 状态检查失败：${providerStatusResult.reason.message}`
+                  : 'AI Provider 状态检查失败，请查看 bridge 日志后重试。',
               ),
             ],
+            metadata: {},
           }
 
     const promptIssue =
@@ -4688,8 +4706,8 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
         : null
 
     const issues = promptIssue
-      ? [...runnerStatus.issues, promptIssue]
-      : runnerStatus.issues
+      ? [...providerStatus.issues, promptIssue]
+      : providerStatus.issues
 
     const loadedPrompt =
       loadedPromptResult.status === 'fulfilled'
@@ -4700,10 +4718,19 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
             fullPrompt: '',
           }
 
+    // 将 provider metadata 转换为 CodexStatus 格式
+    const metadata = providerStatus.metadata
+    // 转换 issues 类型
+    const codexIssues: CodexBridgeIssue[] = issues.map((issue) => ({
+      code: issue.code as CodexBridgeIssue['code'],
+      message: issue.message,
+    }))
     return {
-      ...runnerStatus,
-      ready: runnerStatus.ready && promptIssue === null,
-      issues,
+      cliInstalled: (metadata.cliInstalled as boolean) ?? provider.name === 'codex',
+      loggedIn: (metadata.loggedIn as boolean) ?? providerStatus.ready,
+      authProvider: (metadata.authProvider as string) ?? (provider.name === 'codex' ? null : provider.name),
+      ready: providerStatus.ready && promptIssue === null,
+      issues: codexIssues,
       systemPromptSummary: loadedPrompt.summary,
       systemPromptVersion: loadedPrompt.version,
       systemPrompt: loadedPrompt.fullPrompt,
@@ -4722,7 +4749,7 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
       if (!status.ready) {
         throw new CodexBridgeError(
           'verification_required',
-          '当前 Codex 验证信息不可用，请尽快重新验证。',
+          `当前 ${provider.name} 不可用，请检查配置。`,
           status.issues,
         )
       }
@@ -4731,13 +4758,10 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
       let emittedDelta = false
 
       try {
-        const assistantMessage = await runner.executeMessage(buildChatPrompt(request, loadedPrompt), {
-          onEvent: (event) => {
-            const delta = extractAssistantDelta(event)
-            if (!delta) {
-              return
-            }
-
+        // 将消息转换为 AiMessage 格式
+        const messages = buildChatMessages(request, loadedPrompt)
+        const assistantMessage = await provider.executeStream(messages, {
+          onDelta: (delta) => {
             emittedDelta = true
             options?.onAssistantDelta?.(delta)
           },
@@ -4757,7 +4781,7 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
       if (!status.ready) {
         throw new CodexBridgeError(
           'verification_required',
-          '当前 Codex 验证信息不可用，请尽快重新验证。',
+          `当前 ${provider.name} 不可用，请检查配置。`,
           status.issues,
         )
       }
@@ -4765,7 +4789,7 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
       const loadedPrompt = await promptStore.loadPrompt()
 
       try {
-        const rawText = await runner.execute(
+        const rawText = await provider.executeStructured(
           buildPlanningPrompt(request, assistantMessage, loadedPrompt),
           RESPONSE_SCHEMA,
         )
@@ -4780,7 +4804,7 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
       if (!status.ready) {
         throw new CodexBridgeError(
           'verification_required',
-          '当前 Codex 验证信息不可用，请尽快重新验证。',
+          `当前 ${provider.name} 不可用，请检查配置。`,
           status.issues,
         )
       }
@@ -4788,7 +4812,7 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
       const loadedPrompt = await promptStore.loadPrompt()
 
       try {
-        const rawText = await runner.execute(
+        const rawText = await provider.executeStructured(
           buildSyncConflictAnalysisPrompt(request, loadedPrompt),
           SYNC_CONFLICT_ANALYSIS_RESPONSE_SCHEMA,
         )
@@ -4803,7 +4827,7 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
       if (!status.ready) {
         throw new CodexBridgeError(
           'verification_required',
-          '当前 Codex 验证信息不可用，请尽快重新验证。',
+          `当前 ${provider.name} 不可用，请检查配置。`,
           status.issues,
         )
       }
@@ -4812,11 +4836,11 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
       const attemptStartedAt = now()
 
       try {
-        const rawText = await runner.execute(
+        const rawText = await provider.executeStructured(
           buildTextImportSemanticAdjudicationPrompt(request, loadedPrompt),
           SEMANTIC_ADJUDICATION_RESPONSE_SCHEMA,
           {
-            onObservation: (event: CodexExecutionObservation) => {
+            onObservation: (event: AiExecutionObservation) => {
               logInfo(
           formatSemanticLog(request.jobId, {
             event: 'runner',
@@ -4826,8 +4850,6 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
             elapsedSinceLastEventMs: event.elapsedSinceLastEventMs,
             exitCode: event.exitCode,
             hadJsonEvent: event.hadJsonEvent,
-            stdoutLength: event.stdoutLength,
-            stderrLength: event.stderrLength,
                 }),
               )
             },
@@ -5011,11 +5033,11 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
             },
           })
 
-          const rawText = await runner.execute(
+          const rawText = await provider.executeStructured(
             prompt,
             DOCUMENT_TO_LOGIC_MAP_RESPONSE_SCHEMA,
             {
-              onEvent: (event: CodexJsonEvent) => {
+              onEvent: (event: AiStreamEvent) => {
                 emitImportTrace({
                   attempt: mode,
                   channel: 'codex',
@@ -5023,7 +5045,7 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
                   payload: event,
                 })
               },
-              onObservation: (event: CodexExecutionObservation) => {
+              onObservation: (event: AiExecutionObservation) => {
                 if (event.phase === 'heartbeat' && currentStage === waitingStage) {
                   const waitingMessage = buildImportWaitingStatusMessage(
                     mode,
@@ -5052,8 +5074,6 @@ export function createCodexBridge(options?: CreateCodexBridgeOptions): CodexBrid
                     stage: currentStage,
                     timestampMs: event.timestampMs,
                     kind: event.kind,
-                    stdoutLength: event.stdoutLength,
-                    stderrLength: event.stderrLength,
                     phase: event.phase,
                     promptLength: event.promptLength,
                     elapsedSinceLastEventMs: event.elapsedSinceLastEventMs,

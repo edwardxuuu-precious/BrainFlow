@@ -11,6 +11,8 @@ interface Particle {
   opacity: number
   age: number
   lifeSpan: number
+  hue: number
+  targetHue: number
 }
 
 export function NetworkConstellation() {
@@ -53,6 +55,8 @@ export function NetworkConstellation() {
       opacity: 0.4 + Math.random() * 0.6,
       age: Math.random() * 1000,
       lifeSpan: 600 + Math.random() * 1200,
+      hue: Math.random() * 360,
+      targetHue: Math.random() * 360,
     })
 
     const draw = () => {
@@ -64,7 +68,7 @@ export function NetworkConstellation() {
       const maxDist = 110
       const time = Date.now() * 0.001
 
-      // 连线
+      // 连线 - 使用渐变色彩
       for (let i = 0; i < particles.length; i++) {
         for (let j = i + 1; j < particles.length; j++) {
           const p1 = particles[i]
@@ -75,8 +79,12 @@ export function NetworkConstellation() {
 
           if (dist < maxDist) {
             const alpha = (1 - dist / maxDist) * 0.85
+            const gradient = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y)
+            gradient.addColorStop(0, `hsla(${p1.hue}, 70%, 55%, ${alpha})`)
+            gradient.addColorStop(1, `hsla(${p2.hue}, 70%, 55%, ${alpha})`)
+            
             ctx.beginPath()
-            ctx.strokeStyle = `rgba(30, 160, 190, ${alpha})`
+            ctx.strokeStyle = gradient
             ctx.lineWidth = 1.2
             ctx.moveTo(p1.x, p1.y)
             ctx.lineTo(p2.x, p2.y)
@@ -85,7 +93,7 @@ export function NetworkConstellation() {
         }
       }
 
-      // 粒子
+      // 粒子 - 多彩效果
       particles.forEach((p) => {
         p.x += p.vx
         p.y += p.vy
@@ -102,6 +110,14 @@ export function NetworkConstellation() {
           Object.assign(p, createParticle(width, height))
         }
 
+        // 颜色渐变动画
+        const hueDiff = p.targetHue - p.hue
+        if (Math.abs(hueDiff) > 1) {
+          p.hue += hueDiff * 0.02
+        } else {
+          p.targetHue = Math.random() * 360
+        }
+
         // 脉冲呼吸效果
         const pulse = Math.sin(time * 2 + p.pulseOffset)
         const radius = p.baseRadius + pulse * 0.6
@@ -109,8 +125,8 @@ export function NetworkConstellation() {
 
         ctx.beginPath()
         ctx.arc(p.x, p.y, Math.max(0.5, radius), 0, Math.PI * 2)
-        ctx.fillStyle = `rgba(25, 150, 180, ${Math.max(0.5, alpha)})`
-        ctx.shadowColor = 'rgba(25, 150, 180, 0.9)'
+        ctx.fillStyle = `hsla(${p.hue}, 75%, 55%, ${Math.max(0.5, alpha)})`
+        ctx.shadowColor = `hsla(${p.hue}, 75%, 60%, 0.9)`
         ctx.shadowBlur = 10 + pulse * 4
         ctx.fill()
         ctx.shadowBlur = 0

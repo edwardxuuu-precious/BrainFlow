@@ -6,26 +6,14 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import type { CodexSettings } from '../shared/ai-contract.js'
+import {
+  DEFAULT_BUSINESS_PROMPT,
+  DEFAULT_SYSTEM_PROMPT_FILENAME,
+  SAFETY_SYSTEM_PROMPT,
+  migrateLegacyPromptBranding,
+} from './system-prompt-defaults.js'
 
 const DEFAULT_SUMMARY_MAX_CHARS = 220
-const DEFAULT_SYSTEM_PROMPT_FILENAME = 'brainflow-system.md'
-
-const SAFETY_SYSTEM_PROMPT = `
-You are BrainFlow's embedded Codex assistant.
-
-Non-negotiable safety rules:
-- You may use the full mind-map context provided in the request, and treat the current selection only as a focus hint.
-- You must not read or infer repository contents, file-system contents, backend data, secrets, or external system state.
-- You must not propose or attempt shell commands, file edits, git actions, database writes, or background service mutations.
-- You may only return structured BrainFlow mind-map operations.
-- Allowed operations are create_child, create_sibling, update_topic, move_topic, and delete_topic.
-- Metadata and style changes are allowed only as local topic-field updates inside those operations.
-- You must never propose changing branch side, manual layout offsets, export settings, or any repo/backend behavior.
-- Prefer preserving the user's original framing; do not force a methodology unless the user explicitly asks for one.
-- Only delete or restructure existing nodes when the user explicitly asks to delete, replace, regroup, or reorganize content.
-- If the request is too ambiguous to apply safely, ask one minimal clarification question instead of guessing.
-- assistantMessage should answer the user's actual request directly, and proposal should represent local canvas changes only.
-`.trim()
 
 export interface LoadedSystemPrompt {
   fullPrompt: string
@@ -114,7 +102,11 @@ function resolveSettingsFile(): string {
 }
 
 async function loadDefaultBusinessPrompt(defaultPromptFile: string): Promise<string> {
-  return (await readFile(defaultPromptFile, 'utf8')).trim()
+  try {
+    return migrateLegacyPromptBranding((await readFile(defaultPromptFile, 'utf8')).trim())
+  } catch {
+    return DEFAULT_BUSINESS_PROMPT
+  }
 }
 
 async function readStoredPrompt(
@@ -148,6 +140,26 @@ function toSettings(businessPrompt: string, updatedAt: number): CodexSettings {
   }
 }
 
+async function writeStoredPrompt(
+  settingsFile: string,
+  businessPrompt: string,
+  updatedAt: number,
+): Promise<void> {
+  await mkdir(dirname(settingsFile), { recursive: true })
+  await writeFile(
+    settingsFile,
+    JSON.stringify(
+      {
+        businessPrompt,
+        updatedAt,
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  )
+}
+
 export function createSystemPromptStore(
   options: CreateSystemPromptStoreOptions = {},
 ): SystemPromptStore {
@@ -158,7 +170,11 @@ export function createSystemPromptStore(
     async getSettings() {
       const stored = await readStoredPrompt(settingsFile)
       if (stored) {
-        return toSettings(stored.businessPrompt, stored.updatedAt)
+        const migratedPrompt = migrateLegacyPromptBranding(stored.businessPrompt)
+        if (migratedPrompt !== stored.businessPrompt) {
+          await writeStoredPrompt(settingsFile, migratedPrompt, stored.updatedAt)
+        }
+        return toSettings(migratedPrompt, stored.updatedAt)
       }
 
       const defaultPrompt = await loadDefaultBusinessPrompt(defaultPromptFile)
@@ -169,19 +185,7 @@ export function createSystemPromptStore(
       const nextPrompt = businessPrompt.trim()
       const updatedAt = Date.now()
 
-      await mkdir(dirname(settingsFile), { recursive: true })
-      await writeFile(
-        settingsFile,
-        JSON.stringify(
-          {
-            businessPrompt: nextPrompt,
-            updatedAt,
-          },
-          null,
-          2,
-        ),
-        'utf8',
-      )
+      await writeStoredPrompt(settingsFile, nextPrompt, updatedAt)
 
       return toSettings(nextPrompt, updatedAt)
     },

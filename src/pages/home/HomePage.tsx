@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { NetworkConstellation } from '../../components/illustrations/NetworkConstellation'
 import { Button, SearchField, StatusPill, SurfacePanel, ToolbarGroup } from '../../components/ui'
@@ -7,7 +7,13 @@ import {
   getRecentDocumentId,
   setRecentDocumentId,
 } from '../../features/documents/document-service'
+import { generateUniqueTitle, normalizeDocumentTitle } from '../../features/documents/document-title'
 import type { DocumentService, DocumentSummary, MindMapDocument } from '../../features/documents/types'
+import {
+  workspaceStorageService,
+  type WorkspaceStorageStatus,
+} from '../../features/storage/services/workspace-storage-service'
+import { HomeHeader } from './HomeHeader'
 import styles from './HomePage.module.css'
 
 interface HomePageProps {
@@ -679,7 +685,7 @@ const HOME_QUOTES = [
 function buildRenamedDocument(document: MindMapDocument, title: string): MindMapDocument {
   return {
     ...document,
-    title,
+    title: normalizeDocumentTitle(title),
     updatedAt: Date.now(),
   }
 }
@@ -693,8 +699,24 @@ function formatUpdatedAt(timestamp: number): string {
   }).format(timestamp)
 }
 
+function buildDocumentRefreshSignature(
+  status: Partial<WorkspaceStorageStatus> | null | undefined,
+): string {
+  return [
+    status?.mode ?? 'local-only',
+    status?.workspaceName ?? '',
+    status?.localSavedAt ?? '',
+    status?.cloudSyncedAt ?? '',
+  ].join('|')
+}
+
 export function HomePage({ service = documentService }: HomePageProps) {
   const navigate = useNavigate()
+
+  useEffect(() => {
+    document.title = 'FLOW'
+  }, [])
+
   const [documents, setDocuments] = useState<DocumentSummary[]>([])
   const [query, setQuery] = useState('')
   const [recentId, setRecentIdState] = useState<string | null>(() => getRecentDocumentId())
@@ -707,6 +729,11 @@ export function HomePage({ service = documentService }: HomePageProps) {
   const [deleteError, setDeleteError] = useState('')
   const [brandQuote] = useState(() => HOME_QUOTES[Math.floor(Math.random() * HOME_QUOTES.length)] ?? HOME_QUOTES[0])
   const deferredQuery = useDeferredValue(query)
+  const storageRefreshSignatureRef = useRef(
+    buildDocumentRefreshSignature(
+      typeof window === 'undefined' ? null : workspaceStorageService.getStatus(),
+    ),
+  )
 
   const recentDocument = useMemo(
     () => documents.find((document) => document.id === recentId) ?? documents[0] ?? null,
@@ -721,20 +748,40 @@ export function HomePage({ service = documentService }: HomePageProps) {
     return documents.filter((document) => document.title.toLowerCase().includes(normalizedQuery))
   }, [deferredQuery, documents])
 
-  const refreshDocuments = useCallback(async () => {
-    setLoading(true)
+  const refreshDocuments = useCallback(async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
+    if (showLoading) {
+      setLoading(true)
+    }
+
     const nextDocuments = await service.listDocuments()
-    setDocuments(nextDocuments)
-    setRecentIdState(getRecentDocumentId())
-    setLoading(false)
+    storageRefreshSignatureRef.current = buildDocumentRefreshSignature(
+      typeof window === 'undefined' ? null : workspaceStorageService.getStatus(),
+    )
+    startTransition(() => {
+      setDocuments(nextDocuments)
+      setRecentIdState(getRecentDocumentId())
+      setLoading(false)
+    })
   }, [service])
 
   useEffect(() => {
     const frameId = window.setTimeout(() => {
-      void refreshDocuments()
+      void refreshDocuments({ showLoading: true })
     }, 0)
 
     return () => window.clearTimeout(frameId)
+  }, [refreshDocuments])
+
+  useEffect(() => {
+    return workspaceStorageService.subscribe((nextStatus) => {
+      const nextSignature = buildDocumentRefreshSignature(nextStatus)
+      if (nextSignature === storageRefreshSignatureRef.current) {
+        return
+      }
+
+      storageRefreshSignatureRef.current = nextSignature
+      void refreshDocuments()
+    })
   }, [refreshDocuments])
 
   const openDocument = (id: string) => {
@@ -754,21 +801,29 @@ export function HomePage({ service = documentService }: HomePageProps) {
   }
 
   const commitRename = async (documentId: string) => {
-    const normalizedTitle = draftTitle.trim()
-    setEditingId(null)
-
-    if (!normalizedTitle) {
-      setDraftTitle('')
-      return
-    }
-
     const document = await service.getDocument(documentId)
-    if (!document || document.title === normalizedTitle) {
+    if (!document) {
+      setEditingId(null)
       await refreshDocuments()
       return
     }
 
-    await service.saveDocument(buildRenamedDocument(document, normalizedTitle))
+    // 获取所有其他文档的标题，确保重命名后的标题唯一
+    const otherDocuments = documents.filter(doc => doc.id !== documentId)
+    const existingTitles = otherDocuments.map(doc => doc.title)
+    
+    // 生成唯一标题（如果当前输入的标题与其他文档重复，会自动添加序号）
+    const uniqueTitle = generateUniqueTitle(draftTitle, existingTitles)
+    
+    setEditingId(null)
+
+    // 如果标题没有变化，直接返回
+    if (document.title === uniqueTitle) {
+      await refreshDocuments()
+      return
+    }
+
+    await service.saveDocument(buildRenamedDocument(document, uniqueTitle))
     await refreshDocuments()
   }
 
@@ -814,24 +869,14 @@ export function HomePage({ service = documentService }: HomePageProps) {
 
   return (
     <main className={styles.page}>
-      <header className={styles.topbar}>
-        <div className={styles.topbarBrand}>
-          <span className={styles.wordmark}>BrainFlow</span>
-        </div>
-        <div className={styles.brandQuote}>
-          <span className={styles.brandQuoteText}>{brandQuote.text}</span>
-        </div>
-        <Button tone="ghost" size="sm" iconStart="settings" onClick={() => navigate('/settings')}>
-          数据存储与同步
-        </Button>
-      </header>
+      <HomeHeader brandQuote={brandQuote} />
 
       <section className={styles.hero}>
         <div className={styles.heroCopy}>
 
           <div className={styles.heroText}>
             <h1 className={styles.title}>你的思考，只属于你</h1>
-            <p className={styles.subtitle}>BrainFlow 让发散的思维自然生长成结构。</p>
+            <p className={styles.subtitle}>让发散的思维自然生长成结构</p>
           </div>
           <ToolbarGroup className={styles.heroActions}>
             <Button tone="primary" size="lg" iconStart="add" onClick={handleCreate}>
@@ -916,6 +961,7 @@ export function HomePage({ service = documentService }: HomePageProps) {
                             aria-label="重命名脑图"
                             className={styles.renameInput}
                             value={draftTitle}
+                            maxLength={50}
                             autoFocus
                             onChange={(event) => setDraftTitle(event.target.value)}
                             onBlur={() => void commitRename(document.id)}
@@ -1035,10 +1081,8 @@ export function HomePage({ service = documentService }: HomePageProps) {
           <span className={styles.footerValue}>IndexedDB / localStorage</span>
         </div>
         <div className={styles.footerSection}>
-          <span className={styles.footerLabel}>工作区状态</span>
-          <span className={styles.footerValue}>
-            {loading ? '正在准备…' : `${documents.length} 份脑图 · Atelier Slate`}
-          </span>
+          <span className={styles.footerLabel}>当前工作区</span>
+          <span className={styles.footerValue}>{documents.length} 份脑图</span>
         </div>
       </footer>
     </main>

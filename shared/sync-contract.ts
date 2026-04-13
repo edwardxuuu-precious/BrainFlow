@@ -8,6 +8,8 @@ export type SyncStatus =
   | 'conflict'
   | 'sync_error'
 
+// `use_cloud` is a legacy protocol name. In the current product it means
+// "adopt the authoritative main-database record", which is the local Postgres-backed sync store.
 export type SyncConflictResolution = 'use_cloud' | 'save_local_copy' | 'merged_payload'
 export type SyncConflictAnalysisStatus = 'pending' | 'ready'
 export type SyncConflictAnalysisSource = 'heuristic' | 'ai' | 'heuristic_fallback'
@@ -48,6 +50,8 @@ export interface SyncConflictRecord<TPayload> {
   entityId: string
   deviceId: string
   localRecord: SyncEnvelope<TPayload> | null
+  // Legacy protocol field name. This is the authoritative record from the sync backend,
+  // which currently maps to the local Postgres main database rather than an external cloud service.
   cloudRecord: SyncEnvelope<TPayload> | null
   localPayload: TPayload | null
   cloudPayload: TPayload | null

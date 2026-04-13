@@ -1,3 +1,4 @@
+import { DEFAULT_DOCUMENT_TITLE, normalizeDocumentTitle } from './document-title'
 import { defaultTheme } from './theme'
 import { createDefaultTopicMetadata, createDefaultTopicStyle } from './topic-defaults'
 import type { MindMapDocument, TopicNode } from './types'
@@ -34,7 +35,8 @@ function createTopic(
   }
 }
 
-export function createMindMapDocument(title = '未命名脑图'): MindMapDocument {
+export function createMindMapDocument(title = DEFAULT_DOCUMENT_TITLE): MindMapDocument {
+  const safeTitle = normalizeDocumentTitle(title)
   const now = Date.now()
   const rootId = createId('topic')
   const leftId = createId('topic')
@@ -48,7 +50,7 @@ export function createMindMapDocument(title = '未命名脑图'): MindMapDocumen
 
   return {
     id: createId('doc'),
-    title,
+    title: safeTitle,
     rootTopicId: rootId,
     topics: {
       [rootId]: root,

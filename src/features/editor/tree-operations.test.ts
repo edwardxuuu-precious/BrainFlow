@@ -42,6 +42,46 @@ describe('tree-operations', () => {
     expect(resolveTopicSide(moved, leftBranchId)).toBe(resolveTopicSide(moved, rightBranchId))
   })
 
+  it('resets the dragged topic offset but preserves semantic layout fields after a move', () => {
+    const document = createMindMapDocument()
+    const rootId = document.rootTopicId
+    const [rightBranchId, leftBranchId] = document.topics[rootId].childIds
+    document.topics[leftBranchId].layout = {
+      offsetX: 44,
+      offsetY: 18,
+      semanticGroupKey: 'story-beat',
+      priority: 'primary',
+    }
+
+    const moved = moveTopic(document, leftBranchId, rightBranchId, 0)
+
+    expect(moved.topics[leftBranchId].layout).toEqual({
+      offsetX: 0,
+      offsetY: 0,
+      semanticGroupKey: 'story-beat',
+      priority: 'primary',
+    })
+  })
+
+  it('reorders siblings within the same parent without off-by-one errors', () => {
+    const document = createMindMapDocument()
+    const branchId = document.topics[document.rootTopicId].childIds[0]
+    const withFirstChild = addChild(document, branchId).document
+    const firstChildId = withFirstChild.topics[branchId].childIds[0]
+    const withSecondChild = addChild(withFirstChild, branchId).document
+    const secondChildId = withSecondChild.topics[branchId].childIds[1]
+    const withThirdChild = addChild(withSecondChild, branchId).document
+    const thirdChildId = withThirdChild.topics[branchId].childIds[2]
+
+    const moved = moveTopic(withThirdChild, secondChildId, branchId, 2)
+
+    expect(moved.topics[branchId].childIds).toEqual([
+      firstChildId,
+      thirdChildId,
+      secondChildId,
+    ])
+  })
+
   it('removes a subtree and keeps root protected', () => {
     const document = createMindMapDocument()
     const firstBranchId = document.topics[document.rootTopicId].childIds[0]

@@ -1,13 +1,15 @@
 import { createMindMapDocument } from '../../documents/document-factory'
+import {
+  buildDerivedDocumentTitle,
+  generateUniqueTitle,
+  normalizeDocumentTitle,
+} from '../../documents/document-title'
 import type { DocumentService, DocumentSummary, MindMapDocument } from '../../documents/types'
 import {
   BrowserLocalIndexAdapter,
   summarizeDocument,
 } from '../adapters/indexeddb/local-index-adapter'
-import {
-  documentService as legacyDocumentService,
-  normalizeDocument,
-} from '../adapters/indexeddb/legacy-document-local-service'
+import { normalizeDocument } from '../adapters/indexeddb/legacy-document-local-service'
 import { cloudSyncOrchestrator } from '../sync/cloud-sync-orchestrator'
 
 function sortSummaries(index: DocumentSummary[]): DocumentSummary[] {
@@ -22,37 +24,29 @@ export class DocumentRepository implements DocumentService {
   }
 
   async createDocument(title?: string): Promise<MindMapDocument> {
-    const document = createMindMapDocument(title)
+    const allDocuments = await this.listAllDocuments()
+    const existingTitles = allDocuments.map((doc) => doc.title)
+    const uniqueTitle = generateUniqueTitle(title, existingTitles)
+
+    const document = createMindMapDocument(uniqueTitle)
     await this.saveDocument(document)
     await this.localIndexAdapter.setRecentDocumentId(document.id)
     return document
   }
 
   async listDocuments(): Promise<DocumentSummary[]> {
-    const index = await this.localIndexAdapter.loadDocumentIndex()
-    if (index.length > 0) {
-      return sortSummaries(index)
-    }
-
     const documents = await this.listAllDocuments()
     return this.localIndexAdapter.rebuildFromDocuments(documents)
   }
 
   async getDocument(id: string): Promise<MindMapDocument | null> {
     const document = await cloudSyncOrchestrator.getDocument(id)
-    if (document) {
-      return normalizeDocument(document)
-    }
-
-    return legacyDocumentService.getDocument(id)
+    return document ? normalizeDocument(document) : null
   }
 
   async saveDocument(doc: MindMapDocument): Promise<void> {
     const normalized = normalizeDocument(doc)
-    await Promise.all([
-      cloudSyncOrchestrator.saveDocument(normalized),
-      legacyDocumentService.saveDocument(normalized),
-    ])
+    await cloudSyncOrchestrator.saveDocument(normalized)
     const index = await this.localIndexAdapter.loadDocumentIndex()
     const summary = summarizeDocument(normalized)
     const nextIndex = [...index.filter((entry) => entry.id !== summary.id), summary]
@@ -60,10 +54,7 @@ export class DocumentRepository implements DocumentService {
   }
 
   async deleteDocument(id: string): Promise<void> {
-    await Promise.all([
-      cloudSyncOrchestrator.deleteDocument(id),
-      legacyDocumentService.deleteDocument(id),
-    ])
+    await cloudSyncOrchestrator.deleteDocument(id)
     const index = await this.localIndexAdapter.loadDocumentIndex()
     const nextIndex = index.filter((entry) => entry.id !== id)
     await this.localIndexAdapter.saveDocumentIndex(nextIndex)
@@ -80,10 +71,15 @@ export class DocumentRepository implements DocumentService {
       throw new Error('Document not found')
     }
 
+    const allDocuments = await this.listAllDocuments()
+    const existingTitles = allDocuments.map((doc) => doc.title)
+    const duplicateBaseTitle = buildDerivedDocumentTitle(original.title, ' 副本')
+    const uniqueTitle = generateUniqueTitle(duplicateBaseTitle, existingTitles)
+
     const duplicated: MindMapDocument = {
       ...structuredClone(original),
       id: createMindMapDocument().id,
-      title: `${original.title} 副本`,
+      title: uniqueTitle,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }
@@ -93,32 +89,10 @@ export class DocumentRepository implements DocumentService {
   }
 
   async listAllDocuments(): Promise<MindMapDocument[]> {
-    const [cloudDocuments, legacyIndex] = await Promise.all([
-      cloudSyncOrchestrator.listDocuments(),
-      legacyDocumentService.listDocuments(),
-    ])
-    const merged = new Map<string, MindMapDocument>()
-
-    cloudDocuments.forEach((document) => {
-      merged.set(document.id, normalizeDocument(document))
-    })
-
-    const missingLegacyIds = legacyIndex
-      .map((summary) => summary.id)
-      .filter((id) => !merged.has(id))
-
-    if (missingLegacyIds.length > 0) {
-      const legacyDocuments = await Promise.all(
-        missingLegacyIds.map((legacyId) => legacyDocumentService.getDocument(legacyId)),
-      )
-      legacyDocuments.forEach((document) => {
-        if (document) {
-          merged.set(document.id, document)
-        }
-      })
-    }
-
-    return [...merged.values()].sort((left, right) => right.updatedAt - left.updatedAt)
+    const cloudDocuments = await cloudSyncOrchestrator.listDocuments()
+    return cloudDocuments
+      .map((document) => normalizeDocument(document))
+      .sort((left, right) => right.updatedAt - left.updatedAt)
   }
 
   getRecentDocumentId(): Promise<string | null> {
@@ -139,5 +113,33 @@ export class DocumentRepository implements DocumentService {
 
     await this.localIndexAdapter.setRecentDocumentId(summaries[0]?.id ?? null)
     return summaries
+  }
+
+  async repairDuplicateTitles(): Promise<number> {
+    const documents = await this.listAllDocuments()
+    const sortedDocuments = [...documents].sort((a, b) => a.updatedAt - b.updatedAt)
+    const usedTitles: string[] = []
+    let repairedCount = 0
+
+    for (const doc of sortedDocuments) {
+      const normalizedTitle = normalizeDocumentTitle(doc.title)
+      const newTitle = usedTitles.includes(normalizedTitle)
+        ? generateUniqueTitle(doc.title, usedTitles)
+        : normalizedTitle
+
+      usedTitles.push(newTitle)
+
+      if (newTitle !== doc.title) {
+        const repairedDoc: MindMapDocument = {
+          ...doc,
+          title: newTitle,
+          updatedAt: Date.now(),
+        }
+        await this.saveDocument(repairedDoc)
+        repairedCount += 1
+      }
+    }
+
+    return repairedCount
   }
 }

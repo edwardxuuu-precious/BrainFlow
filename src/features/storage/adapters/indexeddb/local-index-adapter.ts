@@ -1,4 +1,5 @@
 import type { DocumentSummary, MindMapDocument } from '../../../documents/types'
+import { normalizeDocumentTitle } from '../../../documents/document-title'
 import { defaultTheme } from '../../../documents/theme'
 import type { LocalIndexAdapter } from '../../core/storage-types'
 
@@ -12,7 +13,7 @@ function sortSummaries(index: DocumentSummary[]): DocumentSummary[] {
 function toSummary(doc: MindMapDocument): DocumentSummary {
   return {
     id: doc.id,
-    title: doc.title,
+    title: normalizeDocumentTitle(doc.title),
     updatedAt: doc.updatedAt,
     topicCount: Object.keys(doc.topics).length,
     previewColor: doc.theme.accent,
@@ -32,6 +33,7 @@ export class BrowserLocalIndexAdapter implements LocalIndexAdapter {
         ? sortSummaries(
             parsed.map((entry) => ({
               ...entry,
+              title: normalizeDocumentTitle(entry.title),
               previewColor: defaultTheme.accent,
             })),
           )

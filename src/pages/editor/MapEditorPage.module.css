@@ -233,10 +233,11 @@
 }
 
 .wordmark {
-  font-family: var(--font-display);
+  font-family: 'Orbitron', sans-serif;
   font-size: var(--font-size-display-sm);
-  font-style: italic;
-  font-weight: 700;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
   line-height: 1;
 }
 

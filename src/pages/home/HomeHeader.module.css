@@ -1,0 +1,310 @@
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px 0 24px;
+  gap: 24px;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.wordmark {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1;
+  color: var(--on-surface);
+}
+
+.quote {
+  font-size: var(--font-size-body-sm);
+  color: var(--on-surface-variant);
+  font-style: italic;
+  max-width: 400px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+/* 工作区选择器 */
+.workspaceSelector {
+  position: relative;
+}
+
+.workspaceButton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--divider);
+  border-radius: 12px;
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  font-size: var(--font-size-body-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.workspaceButton:hover {
+  background: var(--surface-container-high);
+  border-color: var(--outline);
+}
+
+.workspaceButton:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.workspaceButton svg {
+  color: var(--on-surface-variant);
+}
+
+.workspaceName {
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+  transition: transform 200ms ease;
+}
+
+/* 下拉菜单 */
+.dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 240px;
+  max-width: 320px;
+  background: var(--surface-container-high);
+  border: 1px solid var(--divider);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 100;
+  overflow: hidden;
+  animation: dropdownIn 150ms ease;
+}
+
+@keyframes dropdownIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.dropdownHeader {
+  padding: 12px 16px;
+  font-size: var(--font-size-label);
+  font-weight: 600;
+  color: var(--on-surface-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--divider);
+}
+
+.dropdownItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: var(--on-surface);
+  font-size: var(--font-size-body-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.dropdownItem:hover {
+  background: var(--surface-container-highest);
+}
+
+.dropdownItem:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.dropdownItem:disabled:hover {
+  background: transparent;
+}
+
+.dropdownItemActive {
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.dropdownItemActive svg {
+  color: var(--primary);
+}
+
+.dropdownItemName {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dropdownEmpty {
+  padding: 16px;
+  text-align: center;
+  color: var(--on-surface-variant);
+  font-size: var(--font-size-body-sm);
+}
+
+.dropdownDivider {
+  height: 1px;
+  margin: 8px 0;
+  background: var(--divider);
+}
+
+/* 设置按钮 */
+.settingsButton {
+  padding: 8px !important;
+}
+
+/* 对话框 */
+.dialogOverlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
+  z-index: 200;
+  animation: overlayIn 150ms ease;
+}
+
+@keyframes overlayIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.dialog {
+  width: 90%;
+  max-width: 400px;
+  padding: 24px;
+  background: var(--surface-container-high);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+  animation: dialogIn 200ms ease;
+}
+
+@keyframes dialogIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.dialogTitle {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: var(--font-size-display-sm);
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.dialogDescription {
+  margin: 0 0 16px;
+  font-size: var(--font-size-body-sm);
+  color: var(--on-surface-variant);
+  line-height: 1.5;
+}
+
+.dialogInput {
+  width: 100%;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  border: 1px solid var(--divider);
+  border-radius: 12px;
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+  font-size: var(--font-size-body-md);
+  outline: none;
+  transition: border-color 150ms ease;
+}
+
+.dialogInput:focus {
+  border-color: var(--primary);
+}
+
+.dialogError {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  border-radius: 12px;
+  color: var(--error);
+  font-size: var(--font-size-body-sm);
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+/* 响应式 */
+@media (max-width: 640px) {
+  .header {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .brand {
+    flex: 1 1 100%;
+  }
+
+  .quote {
+    max-width: 100%;
+  }
+
+  .actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .workspaceName {
+    max-width: 120px;
+  }
+
+  .dropdown {
+    right: -60px;
+  }
+}

@@ -1,9 +1,10 @@
-import { create } from 'zustand'
+﻿import { create } from 'zustand'
 import type {
   AiApplySummary,
   AiConversation,
   AiExecutionError,
   AiMessage,
+  AiProviderInfo,
   AiRunStage,
   AiSessionSummary,
   AiStatusFeedback,
@@ -15,13 +16,22 @@ import { getEditorSnapshot, useEditorStore } from '../editor/editor-store'
 import { applyAiProposal } from './ai-proposal'
 import { buildAiContext } from './ai-context'
 import {
+  type AiProviderConfig,
   type CodexRequestFailureKind,
+  deleteAiProviderConfig,
+  fetchAvailableProviders,
   fetchCodexSettings,
   fetchCodexStatus,
+  getAiProviderConfig,
+  getStoredProvider,
+  getStoredWorkspaceId,
   revalidateCodexStatus,
   resetCodexSettings,
   saveCodexSettings,
+  setAiProviderConfig,
+  setStoredProvider,
   streamCodexChat,
+  validateProvider,
 } from './ai-client'
 import {
   archiveAiConversation,
@@ -52,6 +62,12 @@ interface StatusRequestOptions {
   successFeedback?: (status: CodexStatus) => AiStatusFeedback
 }
 
+interface ProviderConfigInput {
+  apiKey: string
+  model?: string
+  baseUrl?: string
+}
+
 interface AiState {
   documentId: string | null
   documentTitle: string
@@ -67,6 +83,13 @@ interface AiState {
   hasCheckedStatus: boolean
   settings: CodexSettings | null
   settingsError: string | null
+  availableProviders: AiProviderInfo[]
+  currentProvider: string
+  isLoadingProviders: boolean
+  providerSwitchError: string | null
+  providerConfigs: Record<string, AiProviderConfig>
+  isLoadingProviderConfig: boolean
+  providerConfigError: string | null
   isHydrating: boolean
   isCheckingStatus: boolean
   isLoadingSettings: boolean
@@ -93,6 +116,17 @@ interface AiState {
   loadSettings: () => Promise<void>
   saveSettings: (businessPrompt: string) => Promise<void>
   resetSettings: () => Promise<void>
+  loadAvailableProviders: () => Promise<void>
+  switchProvider: (providerType: string) => Promise<boolean>
+  validateCurrentProvider: () => Promise<boolean>
+  testProvider: (providerType: string, workspaceId?: string) => Promise<boolean>
+  loadProviderConfig: (providerType: string, workspaceId: string) => Promise<void>
+  saveProviderConfig: (
+    providerType: string,
+    workspaceId: string,
+    config: ProviderConfigInput,
+  ) => Promise<boolean>
+  deleteProviderConfig: (providerType: string, workspaceId: string) => Promise<boolean>
   clearLastAppliedChange: () => void
   undoLastAppliedChange: () => void
   sendMessage: (
@@ -105,6 +139,13 @@ interface AiState {
 type AiSetState = (partial: Partial<AiState>) => void
 
 const DEFAULT_SESSION_TITLE = '新对话'
+const EMPTY_PROVIDER_CONFIG: AiProviderConfig = {
+  hasConfig: false,
+  model: null,
+  baseUrl: null,
+}
+
+let providerConfigPendingCount = 0
 
 function deriveStatusFailureKind(error: unknown): CodexRequestFailureKind | null {
   if (
@@ -117,6 +158,92 @@ function deriveStatusFailureKind(error: unknown): CodexRequestFailureKind | null
   }
 
   return null
+}
+
+function getProviderDisplayName(type: string): string {
+  switch (type) {
+    case 'deepseek':
+      return 'DeepSeek'
+    case 'kimi-code':
+      return 'Kimi Code'
+    case 'codex':
+    default:
+      return 'Codex'
+  }
+}
+
+function getStatusCheckingText(providerType: string): string {
+  if (providerType === 'codex') {
+    return '正在检查本机 Codex 状态…'
+  }
+
+  return `正在检查 ${getProviderDisplayName(providerType)} 状态…`
+}
+
+function getStatusRevalidateText(providerType: string): string {
+  if (providerType === 'codex') {
+    return '正在重新验证本机 Codex 登录状态…'
+  }
+
+  return `正在重新验证 ${getProviderDisplayName(providerType)} 配置状态…`
+}
+
+function createRefreshFeedback(providerType: string, ready: boolean): AiStatusFeedback {
+  if (providerType === 'codex') {
+    return ready
+      ? {
+          tone: 'success',
+          message: '已重新检查，本机 Codex 当前可用。',
+        }
+      : {
+          tone: 'warning',
+          message: '已重新检查，但当前 Codex 仍不可用。',
+        }
+  }
+
+  const providerName = getProviderDisplayName(providerType)
+  return ready
+    ? {
+        tone: 'success',
+        message: `已重新检查，${providerName} 当前可用。`,
+      }
+    : {
+        tone: 'warning',
+        message: `已重新检查，但当前 ${providerName} 仍不可用。`,
+      }
+}
+
+function createRevalidateFeedback(providerType: string, ready: boolean): AiStatusFeedback {
+  if (providerType === 'codex') {
+    return ready
+      ? {
+          tone: 'success',
+          message: '已重新验证，本机 Codex 当前可用。',
+        }
+      : {
+          tone: 'warning',
+          message: '已重新验证，但当前 Codex 仍不可用。',
+        }
+  }
+
+  const providerName = getProviderDisplayName(providerType)
+  return ready
+    ? {
+        tone: 'success',
+        message: `已重新验证，${providerName} 当前可用。`,
+      }
+    : {
+        tone: 'warning',
+        message: `已重新验证，但当前 ${providerName} 仍不可用。`,
+      }
+}
+
+function createProviderUnavailableMessage(providerType: string): string {
+  if (providerType === 'codex') {
+    return '当前 Codex 验证信息不可用，请尽快重新验证。'
+  }
+
+  return `${getProviderDisplayName(providerType)} 当前不可用，请先完成配置或测试连接。`
 }
 
 function createMessage(role: AiMessage['role'], content: string): AiMessage {
@@ -292,11 +419,13 @@ function createExecutionError(
   code: AiExecutionError['code'],
   message: string,
   stage?: AiRunStage,
+  providerType?: string,
 ): AiExecutionError {
   return {
     code,
     message,
     stage,
+    providerType: providerType as AiExecutionError['providerType'],
   }
 }
 
@@ -329,6 +458,26 @@ function toStatusMessage(summary: AiApplySummary | null): string {
   return summary?.summary ?? ''
 }
 
+function beginProviderConfigRequest(set: AiSetState): void {
+  providerConfigPendingCount += 1
+  set({ isLoadingProviderConfig: true })
+}
+
+function finishProviderConfigRequest(set: AiSetState): void {
+  providerConfigPendingCount = Math.max(0, providerConfigPendingCount - 1)
+  if (providerConfigPendingCount === 0) {
+    set({ isLoadingProviderConfig: false })
+  }
+}
+
+function buildProviderStatusErrorMessage(state: AiState, providerType: string): string {
+  return (
+    state.status?.issues[0]?.message ??
+    state.statusError ??
+    createProviderUnavailableMessage(providerType)
+  )
+}
+
 export const useAiStore = create<AiState>((set, get) => ({
   documentId: null,
   documentTitle: '',
@@ -344,6 +493,13 @@ export const useAiStore = create<AiState>((set, get) => ({
   hasCheckedStatus: false,
   settings: null,
   settingsError: null,
+  availableProviders: [],
+  currentProvider: getStoredProvider(),
+  isLoadingProviders: false,
+  providerSwitchError: null,
+  providerConfigs: {},
+  isLoadingProviderConfig: false,
+  providerConfigError: null,
   isHydrating: false,
   isCheckingStatus: false,
   isLoadingSettings: false,
@@ -361,7 +517,7 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   hydrate: async (documentId, documentTitle, sessionId) => {
     const currentState = get()
-    const shouldRefreshCodexState =
+    const shouldRefreshStatus =
       currentState.documentId !== documentId || !currentState.hasCheckedStatus
 
     set({
@@ -372,7 +528,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       streamingText: '',
       lastExecutionError: null,
       lastAppliedChange: null,
-      hasCheckedStatus: shouldRefreshCodexState ? false : currentState.hasCheckedStatus,
+      hasCheckedStatus: shouldRefreshStatus ? false : currentState.hasCheckedStatus,
     })
 
     const { conversation, sessionList } = await ensureSession(documentId, documentTitle, sessionId)
@@ -384,28 +540,34 @@ export const useAiStore = create<AiState>((set, get) => ({
       activeSessionTitle: conversation.title,
       sessionList,
       messages: conversation.messages,
-      isHydrating: shouldRefreshCodexState,
+      isHydrating: shouldRefreshStatus,
       isSending: false,
       runStage: 'idle',
       streamingStatusText: '',
       streamingText: '',
       error: null,
-      statusFailureKind: shouldRefreshCodexState ? null : currentState.statusFailureKind,
+      statusFailureKind: shouldRefreshStatus ? null : currentState.statusFailureKind,
       statusFeedback: null,
-      hasCheckedStatus: shouldRefreshCodexState ? false : currentState.hasCheckedStatus,
+      hasCheckedStatus: shouldRefreshStatus ? false : currentState.hasCheckedStatus,
       lastExecutionError: null,
       lastAppliedChange: null,
     })
 
-    if (shouldRefreshCodexState) {
+    if (shouldRefreshStatus) {
+      const providerType = get().currentProvider
       await Promise.all([
-        applyStatusRequest(fetchCodexStatus, set),
+        applyStatusRequest(() => fetchCodexStatus({ providerType }), set),
         applySettingsRequest(fetchCodexSettings, set),
       ])
       set({
         isHydrating: false,
       })
+      return
     }
+
+    set({
+      isHydrating: false,
+    })
   },
 
   createSession: async () => {
@@ -583,22 +745,14 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   refreshStatus: async () => {
+    const providerType = get().currentProvider
     set({
       runStage: 'checking_status',
-      streamingStatusText: '正在检查本机 Codex 状态…',
+      streamingStatusText: getStatusCheckingText(providerType),
     })
 
-    await applyStatusRequest(fetchCodexStatus, set, {
-      successFeedback: (status) =>
-        status.ready
-          ? {
-              tone: 'success',
-              message: '已重新检查，本机 Codex 当前可用。',
-            }
-          : {
-              tone: 'warning',
-              message: '已重新检查，但当前 Codex 仍不可用。',
-            },
+    await applyStatusRequest(() => fetchCodexStatus({ providerType }), set, {
+      successFeedback: (status) => createRefreshFeedback(providerType, status.ready),
     })
 
     set({
@@ -608,22 +762,14 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   revalidateStatus: async () => {
+    const providerType = get().currentProvider
     set({
       runStage: 'checking_status',
-      streamingStatusText: '正在重新验证本机 Codex 登录状态…',
+      streamingStatusText: getStatusRevalidateText(providerType),
     })
 
-    await applyStatusRequest(revalidateCodexStatus, set, {
-      successFeedback: (status) =>
-        status.ready
-          ? {
-              tone: 'success',
-              message: '已重新验证，本机 Codex 当前可用。',
-            }
-          : {
-              tone: 'warning',
-              message: '已重新验证，但当前 Codex 仍不可用。',
-            },
+    await applyStatusRequest(() => revalidateCodexStatus({ providerType }), set, {
+      successFeedback: (status) => createRevalidateFeedback(providerType, status.ready),
     })
 
     set({
@@ -638,12 +784,244 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   saveSettings: async (businessPrompt) => {
     await applySettingsRequest(() => saveCodexSettings(businessPrompt), set, { saving: true })
-    await applyStatusRequest(fetchCodexStatus, set)
+    await applyStatusRequest(() => fetchCodexStatus({ providerType: get().currentProvider }), set)
   },
 
   resetSettings: async () => {
     await applySettingsRequest(resetCodexSettings, set, { saving: true })
-    await applyStatusRequest(fetchCodexStatus, set)
+    await applyStatusRequest(() => fetchCodexStatus({ providerType: get().currentProvider }), set)
+  },
+
+  loadAvailableProviders: async () => {
+    set({
+      isLoadingProviders: true,
+    })
+
+    try {
+      const providers = await fetchAvailableProviders()
+      set({
+        availableProviders: providers,
+        isLoadingProviders: false,
+      })
+    } catch (error) {
+      set({
+        isLoadingProviders: false,
+        providerSwitchError: error instanceof Error ? error.message : '可用 AI 列表加载失败。',
+      })
+    }
+  },
+
+  switchProvider: async (providerType) => {
+    if (!providerType) {
+      return false
+    }
+
+    setStoredProvider(providerType)
+    const nextProvider = getStoredProvider()
+    const providerName = getProviderDisplayName(nextProvider)
+
+    set({
+      currentProvider: nextProvider,
+      providerSwitchError: null,
+      statusFeedback: null,
+    })
+
+    await Promise.all([
+      get().loadAvailableProviders(),
+      applyStatusRequest(
+        () => fetchCodexStatus({ providerType: nextProvider }),
+        set,
+        {
+          successFeedback: (status) =>
+            status.ready
+              ? {
+                  tone: 'success',
+                  message:
+                    nextProvider === 'codex'
+                      ? '已切换到 Codex，并立即生效。'
+                      : `已切换到 ${providerName}，并立即生效。`,
+                }
+              : {
+                  tone: 'warning',
+                  message: `${providerName} 已设为默认 AI，但当前尚不可用。`,
+                },
+        },
+      ),
+    ])
+
+    const state = get()
+    if (!state.status?.ready) {
+      set({
+        providerSwitchError: buildProviderStatusErrorMessage(state, nextProvider),
+      })
+      return false
+    }
+
+    set({
+      providerSwitchError: null,
+    })
+    return true
+  },
+
+  validateCurrentProvider: async () => {
+    return get().testProvider(get().currentProvider, getStoredWorkspaceId())
+  },
+
+  testProvider: async (providerType, workspaceId) => {
+    if (!providerType) {
+      return false
+    }
+
+    set({
+      providerSwitchError: null,
+    })
+
+    try {
+      const result = await validateProvider(providerType, workspaceId)
+      await get().loadAvailableProviders()
+
+      if (get().currentProvider === providerType) {
+        await applyStatusRequest(() => fetchCodexStatus({ providerType }), set)
+      }
+
+      if (!result.valid) {
+        set({
+          providerSwitchError:
+            result.error ?? `${getProviderDisplayName(providerType)} 连接测试失败。`,
+        })
+        return false
+      }
+
+      set({
+        providerSwitchError: null,
+      })
+      return true
+    } catch (error) {
+      set({
+        providerSwitchError: error instanceof Error ? error.message : 'Provider 测试失败。',
+      })
+      return false
+    }
+  },
+
+  loadProviderConfig: async (providerType, workspaceId) => {
+    if (!workspaceId) {
+      return
+    }
+
+    beginProviderConfigRequest(set)
+    try {
+      const config = await getAiProviderConfig(providerType, workspaceId)
+      set((state) => ({
+        providerConfigs: {
+          ...state.providerConfigs,
+          [providerType]: config,
+        },
+      }))
+    } catch (error) {
+      set({
+        providerConfigError:
+          error instanceof Error ? error.message : 'Provider 配置读取失败。',
+      })
+    } finally {
+      finishProviderConfigRequest(set)
+    }
+  },
+
+  saveProviderConfig: async (providerType, workspaceId, config) => {
+    if (!workspaceId) {
+      set({
+        providerConfigError: '请先选择工作区，再保存 API 配置。',
+      })
+      return false
+    }
+
+    beginProviderConfigRequest(set)
+    set({
+      providerConfigError: null,
+    })
+
+    try {
+      const result = await setAiProviderConfig(
+        {
+          provider: providerType,
+          apiKey: config.apiKey,
+          model: config.model,
+          baseUrl: config.baseUrl,
+        },
+        workspaceId,
+      )
+
+      set((state) => ({
+        providerConfigs: {
+          ...state.providerConfigs,
+          [providerType]: {
+            hasConfig: result.success,
+            model: config.model ?? state.providerConfigs[providerType]?.model ?? null,
+            baseUrl: config.baseUrl ?? state.providerConfigs[providerType]?.baseUrl ?? null,
+          },
+        },
+        providerConfigError: result.valid
+          ? null
+          : (result.error ?? `${getProviderDisplayName(providerType)} 配置校验失败。`),
+      }))
+
+      await get().loadAvailableProviders()
+
+      if (get().currentProvider === providerType) {
+        await applyStatusRequest(() => fetchCodexStatus({ providerType }), set)
+      }
+
+      return result.valid
+    } catch (error) {
+      set({
+        providerConfigError:
+          error instanceof Error ? error.message : 'Provider 配置保存失败。',
+      })
+      return false
+    } finally {
+      finishProviderConfigRequest(set)
+    }
+  },
+
+  deleteProviderConfig: async (providerType, workspaceId) => {
+    if (!workspaceId) {
+      set({
+        providerConfigError: '请先选择工作区，再删除 API 配置。',
+      })
+      return false
+    }
+
+    beginProviderConfigRequest(set)
+    set({
+      providerConfigError: null,
+    })
+
+    try {
+      await deleteAiProviderConfig(providerType, workspaceId)
+      set((state) => ({
+        providerConfigs: {
+          ...state.providerConfigs,
+          [providerType]: EMPTY_PROVIDER_CONFIG,
+        },
+      }))
+
+      await get().loadAvailableProviders()
+
+      if (get().currentProvider === providerType) {
+        await applyStatusRequest(() => fetchCodexStatus({ providerType }), set)
+      }
+
+      return true
+    } catch (error) {
+      set({
+        providerConfigError:
+          error instanceof Error ? error.message : 'Provider 配置删除失败。',
+      })
+      return false
+    } finally {
+      finishProviderConfigRequest(set)
+    }
   },
 
   clearLastAppliedChange: () => set({ lastAppliedChange: null }),
@@ -679,7 +1057,23 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
 
     const currentState = get()
+    const currentProvider = currentState.currentProvider
+    const currentProviderName = getProviderDisplayName(currentProvider)
     if (!currentState.status?.ready) {
+      if (currentProvider !== 'codex') {
+        const message = buildProviderStatusErrorMessage(currentState, currentProvider)
+        set({
+          error: message,
+          lastExecutionError: createExecutionError(
+            'provider_unavailable',
+            message,
+            'error',
+            currentProvider,
+          ),
+        })
+        return
+      }
+
       const requestFailedIssue = currentState.status?.issues.find((issue) => issue.code === 'request_failed')
       const cliMissingIssue = currentState.status?.issues.find((issue) => issue.code === 'cli_missing')
 
@@ -690,7 +1084,12 @@ export const useAiStore = create<AiState>((set, get) => ({
           '本机 Codex bridge 在线，但状态检查失败，请查看 bridge 日志后重试。'
         set({
           error: message,
-          lastExecutionError: createExecutionError('request_failed', message, 'error'),
+          lastExecutionError: createExecutionError(
+            'request_failed',
+            message,
+            'error',
+            currentProvider,
+          ),
         })
         return
       }
@@ -701,7 +1100,12 @@ export const useAiStore = create<AiState>((set, get) => ({
           '当前未连接到本机 Codex 服务，请先恢复 bridge 后再试。'
         set({
           error: message,
-          lastExecutionError: createExecutionError('request_failed', message, 'error'),
+          lastExecutionError: createExecutionError(
+            'request_failed',
+            message,
+            'error',
+            currentProvider,
+          ),
         })
         return
       }
@@ -709,17 +1113,24 @@ export const useAiStore = create<AiState>((set, get) => ({
       if (cliMissingIssue) {
         set({
           error: cliMissingIssue.message,
-          lastExecutionError: createExecutionError('cli_missing', cliMissingIssue.message, 'error'),
+          lastExecutionError: createExecutionError(
+            'cli_missing',
+            cliMissingIssue.message,
+            'error',
+            currentProvider,
+          ),
         })
         return
       }
 
+      const message = createProviderUnavailableMessage(currentProvider)
       set({
-        error: '当前 Codex 验证信息不可用，请尽快重新验证。',
+        error: message,
         lastExecutionError: createExecutionError(
           'verification_required',
-          '当前 Codex 验证信息不可用，请尽快重新验证。',
+          message,
           'error',
+          currentProvider,
         ),
       })
       return
@@ -850,7 +1261,7 @@ export const useAiStore = create<AiState>((set, get) => ({
           if (event.type === 'assistant_delta') {
             set((state) => ({
               runStage: 'streaming',
-              streamingStatusText: 'Codex 正在输出回复…',
+              streamingStatusText: `${currentProviderName} 正在输出回复…`,
               streamingText: state.streamingText + event.delta,
             }))
             return
@@ -874,6 +1285,7 @@ export const useAiStore = create<AiState>((set, get) => ({
                 event.code,
                 event.message,
                 event.stage ?? 'error',
+                currentProvider,
               ),
             })
 
@@ -882,7 +1294,9 @@ export const useAiStore = create<AiState>((set, get) => ({
             if (
               event.code === 'verification_required' ||
               event.code === 'subscription_required' ||
-              event.code === 'login_required'
+              event.code === 'login_required' ||
+              event.code === 'authentication_failed' ||
+              event.code === 'provider_unavailable'
             ) {
               void get().revalidateStatus()
             }
@@ -956,6 +1370,7 @@ export const useAiStore = create<AiState>((set, get) => ({
                 'request_failed',
                 error instanceof Error ? error.message : 'AI 改动应用失败。',
                 'applying_changes',
+                currentProvider,
               )
             }
           }
@@ -982,8 +1397,18 @@ export const useAiStore = create<AiState>((set, get) => ({
             return mergedState
           })
         },
+        {
+          providerType: currentProvider,
+        },
       )
     } catch (error) {
+      const errorCode =
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error
+          ? (error as { code?: AiExecutionError['code'] }).code
+          : undefined
+
       set({
         isSending: false,
         runStage: 'error',
@@ -991,17 +1416,19 @@ export const useAiStore = create<AiState>((set, get) => ({
         streamingText: '',
         error: null,
         lastExecutionError: createExecutionError(
-          'code' in Object(error) ? (error as { code?: AiExecutionError['code'] }).code : undefined,
-          error instanceof Error ? error.message : 'Codex 对话请求失败。',
+          errorCode,
+          error instanceof Error ? error.message : 'AI 对话请求失败。',
           get().runStage,
+          currentProvider,
         ),
       })
 
       if (
-        'code' in Object(error) &&
-        ((error as { code?: AiExecutionError['code'] }).code === 'verification_required' ||
-          (error as { code?: AiExecutionError['code'] }).code === 'subscription_required' ||
-          (error as { code?: AiExecutionError['code'] }).code === 'login_required')
+        errorCode === 'verification_required' ||
+        errorCode === 'subscription_required' ||
+        errorCode === 'login_required' ||
+        errorCode === 'authentication_failed' ||
+        errorCode === 'provider_unavailable'
       ) {
         void get().revalidateStatus()
       }
@@ -1010,6 +1437,7 @@ export const useAiStore = create<AiState>((set, get) => ({
 }))
 
 export function resetAiStore(): void {
+  providerConfigPendingCount = 0
   useAiStore.setState({
     documentId: null,
     documentTitle: '',
@@ -1025,6 +1453,13 @@ export function resetAiStore(): void {
     hasCheckedStatus: false,
     settings: null,
     settingsError: null,
+    availableProviders: [],
+    currentProvider: getStoredProvider(),
+    isLoadingProviders: false,
+    providerSwitchError: null,
+    providerConfigs: {},
+    isLoadingProviderConfig: false,
+    providerConfigError: null,
     isHydrating: false,
     isCheckingStatus: false,
     isLoadingSettings: false,

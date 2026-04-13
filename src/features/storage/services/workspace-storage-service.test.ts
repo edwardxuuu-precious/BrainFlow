@@ -25,6 +25,8 @@ describe('workspaceStorageService', () => {
 
     const documents = await workspaceStorageService.documentRepository.listAllDocuments()
     expect(documents).toHaveLength(2)
+    expect(documents.some((entry) => entry.title.endsWith('（导入副本）'))).toBe(true)
+    expect(documents.every((entry) => entry.title.length <= 50)).toBe(true)
 
     const sessions = await workspaceStorageService.conversationRepository.listAllSessions({
       includeArchived: true,

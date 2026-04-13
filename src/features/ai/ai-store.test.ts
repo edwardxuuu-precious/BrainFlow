@@ -11,6 +11,13 @@ vi.mock('./ai-client', () => ({
   saveCodexSettings: vi.fn(),
   resetCodexSettings: vi.fn(),
   streamCodexChat: vi.fn(),
+  fetchAvailableProviders: vi.fn(),
+  validateProvider: vi.fn(),
+  getStoredProvider: vi.fn(() => 'codex'),
+  setStoredProvider: vi.fn(),
+  getAiProviderConfig: vi.fn(),
+  setAiProviderConfig: vi.fn(),
+  deleteAiProviderConfig: vi.fn(),
 }))
 
 vi.mock('./ai-storage', () => ({
@@ -33,12 +40,19 @@ vi.mock('./ai-storage', () => ({
 }))
 
 import {
+  deleteAiProviderConfig,
+  fetchAvailableProviders,
   fetchCodexSettings,
   fetchCodexStatus,
+  getAiProviderConfig,
+  getStoredProvider,
   revalidateCodexStatus,
   resetCodexSettings,
   saveCodexSettings,
+  setAiProviderConfig,
+  setStoredProvider,
   streamCodexChat,
+  validateProvider,
 } from './ai-client'
 import { getAiConversation, saveAiConversation } from './ai-storage'
 import { resetAiStore, useAiStore } from './ai-store'
@@ -72,6 +86,12 @@ describe('ai-store', () => {
     vi.mocked(fetchCodexSettings).mockResolvedValue(settings)
     vi.mocked(saveCodexSettings).mockResolvedValue(settings)
     vi.mocked(resetCodexSettings).mockResolvedValue(settings)
+    vi.mocked(fetchAvailableProviders).mockResolvedValue([])
+    vi.mocked(validateProvider).mockResolvedValue({ valid: true })
+    vi.mocked(getStoredProvider).mockReturnValue('codex')
+    vi.mocked(getAiProviderConfig).mockResolvedValue({ hasConfig: false, model: null, baseUrl: null })
+    vi.mocked(setAiProviderConfig).mockResolvedValue({ success: true, valid: true, error: null })
+    vi.mocked(deleteAiProviderConfig).mockResolvedValue({ success: true })
     vi.mocked(listAiSessions).mockResolvedValue([
       {
         documentId: 'doc_1',
@@ -357,5 +377,45 @@ describe('ai-store', () => {
         stage: 'planning_changes',
       }),
     )
+  })
+
+  it('persists the selected provider and refreshes status immediately on switch', async () => {
+    vi.mocked(getStoredProvider).mockReturnValue('kimi-code')
+
+    await useAiStore.getState().switchProvider('kimi-code')
+
+    expect(vi.mocked(setStoredProvider)).toHaveBeenCalledWith('kimi-code')
+    expect(useAiStore.getState().currentProvider).toBe('kimi-code')
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchCodexStatus)).toHaveBeenCalledWith({
+        providerType: 'kimi-code',
+      })
+    })
+  })
+
+  it('keeps provider config errors visible when validation fails after save', async () => {
+    vi.mocked(setAiProviderConfig).mockResolvedValueOnce({
+      success: true,
+      valid: false,
+      error: 'API Key 无效',
+    })
+    useAiStore.setState({
+      currentProvider: 'kimi-code',
+    })
+
+    const result = await useAiStore.getState().saveProviderConfig('kimi-code', 'workspace_1', {
+      apiKey: 'bad-key',
+      model: 'kimi-code',
+    })
+
+    expect(result).toBe(false)
+    expect(useAiStore.getState().providerConfigError).toBe('API Key 无效')
+    expect(vi.mocked(fetchAvailableProviders)).toHaveBeenCalled()
+    await waitFor(() => {
+      expect(vi.mocked(fetchCodexStatus)).toHaveBeenCalledWith({
+        providerType: 'kimi-code',
+      })
+    })
   })
 })
